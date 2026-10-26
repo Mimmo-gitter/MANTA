@@ -1,0 +1,61 @@
+# =============================================================================
+# MANTA Web Portal .gitignore
+# Stack: Next.js 15 (App Router), React 19, TypeScript, Tailwind CSS,
+#        shadcn/ui, TanStack Query v5, Recharts, Tremor, React Flow, Playwright
+# =============================================================================
+
+# Dependencies (npm / pnpm / yarn / bun)
+node_modules/
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+.pnpm-store/
+
+# Next.js 15 & Turbopack build outputs
+/.next/
+.next/
+/out/
+out/
+/build
+/dist
+.turbo/
+.turbopack/
+
+# TypeScript & Linting caches
+*.tsbuildinfo
+next-env.d.ts
+.eslintcache
+.stylelintcache
+
+# Testing & E2E (Playwright, Vitest/Jest coverage)
+/coverage
+coverage/
+.nyc_output/
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+/playwright/.auth/
+
+# Vercel deployment metadata
+.vercel/
+.vercel
+
+# Environment variables & certs
+.env
+.env.*
+!.env.example
+*.pem
+
+# Debug logs & misc
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+storybook-static/
+.DS_Store
+Thumbs.db

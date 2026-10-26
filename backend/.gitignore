@@ -1,0 +1,99 @@
+# =============================================================================
+# MANTA Backend .gitignore
+# Stack: Python 3.12+, FastAPI, uvloop, ARQ, SQLAlchemy/Alembic, asyncpg,
+#        pgvector, Presidio, Tree-sitter, SCIP, Ruff, Mypy, Pytest, Mutmut
+# =============================================================================
+
+# Byte-compiled / optimized / native C-extensions (uvloop, asyncpg, tree-sitter)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+*.dll
+*.dylib
+
+# Virtual environments & Python package managers (uv, venv, pip, poetry)
+.venv/
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+.uv/
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Distribution / packaging (anchored where needed)
+/build/
+/develop-eggs/
+/dist/
+/downloads/
+/eggs/
+.eggs/
+/lib/
+/lib64/
+/parts/
+/sdist/
+/var/
+/wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Static analysis & type checking (Ruff, Mypy)
+.ruff_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pyre/
+.pytype/
+
+# 4-Tier Testing, Coverage & Diff-Targeted Mutation Testing (pytest, mutmut)
+.pytest_cache/
+pytestdebug.log
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+*.cover
+*.py,cover
+.hypothesis/
+.tox/
+.nox/
+.mutmut-cache
+.mutmut-cache/
+mutants/
+
+# Benchmarks & Load Testing (Locust <50ms ACK, pgvector Recall@k benchmarks)
+.benchmarks/
+locust_stats*.csv
+locust_failures*.csv
+locust_exceptions*.csv
+locust_report*.html
+
+# Static Code Intelligence (SCIP) & Sandbox workdirs
+*.scip
+.scip_cache/
+.sandbox_work/
+sandbox_tmp/
+
+# Presidio / spaCy / HuggingFace local caches (bge-small-en-v1.5, etc.)
+.cache/
+models_cache/
+*.safetensors
+*.onnx
+*.pt
+*.bin
+
+# Environment variables, local secrets & runtime state
+.env
+.env.*
+!.env.example
+*.pid
+*.sock
+*.log
+*.db
+*.sqlite
+*.sqlite3
