@@ -1,0 +1,157 @@
+{
+  "id": "manta",
+  "realm": "manta",
+  "displayName": "MANTA Intelligence Platform",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": true,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "roles": {
+    "realm": [
+      {
+        "id": "role-developer",
+        "name": "DEVELOPER",
+        "description": "Software engineer with refactoring and PR access",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "id": "role-scrum-master",
+        "name": "SCRUM_MASTER",
+        "description": "Scrum Master with delivery and reviewer assignment access",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "id": "role-solution-architect",
+        "name": "SOLUTION_ARCHITECT",
+        "description": "Solution Architect with ADR sign-off and architecture review gates",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "id": "role-delivery-exec",
+        "name": "DELIVERY_EXEC",
+        "description": "Executive with DORA and high-level platform oversight",
+        "composite": false,
+        "clientRole": false
+      },
+      {
+        "id": "role-tenant-admin",
+        "name": "TENANT_ADMIN",
+        "description": "Tenant administrator with full administrative privileges",
+        "composite": false,
+        "clientRole": false
+      }
+    ]
+  },
+  "clients": [
+    {
+      "id": "client-manta-portal",
+      "clientId": "manta-portal",
+      "name": "MANTA Web Portal",
+      "description": "Next.js frontend web portal client",
+      "rootUrl": "http://localhost:3000",
+      "baseUrl": "/",
+      "surrogateAuthRequired": false,
+      "enabled": true,
+      "alwaysDisplayInConsole": false,
+      "clientAuthenticatorType": "client-secret",
+      "redirectUris": [
+        "http://localhost:3000/*",
+        "http://localhost:8000/*",
+        "http://localhost:8080/*"
+      ],
+      "webOrigins": [
+        "*"
+      ],
+      "notBefore": 0,
+      "bearerOnly": false,
+      "consentRequired": false,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false,
+      "publicClient": true,
+      "frontchannelLogout": true,
+      "protocol": "openid-connect",
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:3000/*##http://localhost:8080/*"
+      },
+      "fullScopeAllowed": true
+    },
+    {
+      "id": "client-manta-backend",
+      "clientId": "manta-backend",
+      "name": "MANTA Backend API",
+      "description": "FastAPI resource server for JWT token verification",
+      "enabled": true,
+      "bearerOnly": true,
+      "protocol": "openid-connect"
+    }
+  ],
+  "users": [
+    {
+      "id": "user-admin",
+      "username": "admin",
+      "email": "admin@manta.local",
+      "firstName": "Manta",
+      "lastName": "Admin",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "TENANT_ADMIN",
+        "SOLUTION_ARCHITECT"
+      ]
+    },
+    {
+      "id": "user-dev",
+      "username": "developer",
+      "email": "dev@manta.local",
+      "firstName": "Dev",
+      "lastName": "Engineer",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "dev123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "DEVELOPER"
+      ]
+    },
+    {
+      "id": "user-architect",
+      "username": "architect",
+      "email": "architect@manta.local",
+      "firstName": "Solution",
+      "lastName": "Architect",
+      "enabled": true,
+      "emailVerified": true,
+      "credentials": [
+        {
+          "type": "password",
+          "value": "architect123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "SOLUTION_ARCHITECT"
+      ]
+    }
+  ]
+}
