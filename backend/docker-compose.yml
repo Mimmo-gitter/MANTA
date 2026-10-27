@@ -1,0 +1,100 @@
+services:
+  # 1. PostgreSQL 16 with pgvector extension
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: manta_postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-manta_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-manta_password}
+      POSTGRES_DB: ${POSTGRES_DB:-manta_db}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - manta_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-manta_user} -d ${POSTGRES_DB:-manta_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  # 2. PgBouncer Connection Pooler
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: manta_pgbouncer
+    environment:
+      DB_USER: ${POSTGRES_USER:-manta_user}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-manta_password}
+      DB_HOST: postgres
+      DB_NAME: ${POSTGRES_DB:-manta_db}
+      LISTEN_PORT: 5432
+      AUTH_TYPE: scram-sha-256
+      POOL_MODE: session
+      MAX_CLIENT_CONN: 100
+      DEFAULT_POOL_SIZE: 20
+    ports:
+      - "${PGBOUNCER_PORT:-6432}:5432"
+    networks:
+      - manta_net
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -p 5432 -U ${POSTGRES_USER:-manta_user} -d ${POSTGRES_DB:-manta_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  # 3. Redis / Valkey 7 In-Memory Store
+  valkey:
+    image: valkey/valkey:7-alpine
+    container_name: manta_valkey
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    volumes:
+      - valkeydata:/data
+    networks:
+      - manta_net
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  # 4. FastAPI Backend Application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: manta_app
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://manta_user:manta_password@pgbouncer:5432/manta_db}
+      - REDIS_URL=${REDIS_URL:-redis://valkey:6379/0}
+    ports:
+      - "${APP_PORT:-8000}:8000"
+    networks:
+      - manta_net
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  pgdata:
+  valkeydata:
+
+networks:
+  manta_net:
+    driver: bridge
