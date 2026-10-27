@@ -1,7 +1,7 @@
 # Keycloak Local Identity Provider Setup
 
 ## Overview
-This document describes the local Keycloak identity provider configuration for MANTA, pre-loaded with the `manta` test realm and default client configurations for seamless local development and automated OIDC/OAuth2 testing.
+This document describes the local Keycloak identity provider configuration for MANTA, pre-loaded with the `manta` test realm, claim mappers, and multi-tenant test users for seamless local development and automated OIDC/OAuth2 testing.
 
 ## Local Ports & Endpoints
 | Component / Service | Local URL | Description |
@@ -27,8 +27,10 @@ KEYCLOAK_REALM=manta
 ## Pre-Loaded Test Realm (`manta`)
 The realm definition is maintained in `infra/keycloak/realm-export.json` and mounted into `/opt/keycloak/data/import/realm-export.json` in the container. When Keycloak boots with `start-dev --import-realm`, it automatically provisions:
 
-### 1. Clients
+### 1. Clients & Protocol Mappers
 - **`manta-portal`**: Public client configured for Next.js frontend authentication (PKCE S256, Authorization Code Flow, redirect URIs: `http://localhost:3000/*`, `http://localhost:8000/*`, `http://localhost:8080/*`).
+  - **`tenant_id` claim mapper**: (`oidc-usermodel-attribute-mapper`) maps user attribute `tenant_id` into the JWT ID and Access Tokens as a string claim, enabling database Row-Level Security (RLS) enforcement.
+  - **`audience` mapper**: (`oidc-audience-mapper`) injects `manta-backend` into the `aud` claim so FastAPI token verification accepts the token.
 - **`manta-backend`**: Bearer-only client for backend API resource server verification.
 
 ### 2. RBAC Roles (Architecture Blueprint Section 6.2)
@@ -38,12 +40,22 @@ The realm definition is maintained in `infra/keycloak/realm-export.json` and mou
 - `DELIVERY_EXEC`: Platform and DORA metric oversight.
 - `TENANT_ADMIN`: Full administrative control across the tenant.
 
-### 3. Seed Test Users
-| Username | Password | Roles | Purpose |
-|---|---|---|---|
-| `admin` | `admin123` | `TENANT_ADMIN`, `SOLUTION_ARCHITECT` | Full admin access & architecture gate |
-| `developer` | `dev123` | `DEVELOPER` | Standard developer workflows |
-| `architect` | `architect123` | `SOLUTION_ARCHITECT` | Architecture Decision Records & verification |
+### 3. Multi-Tenant Test Users
+The test realm pre-seeds users across two distinct tenants to validate multi-tenant isolation:
+
+#### Tenant Alpha (`11111111-1111-1111-1111-111111111111`)
+| Username | Password | Roles | `tenant_id` | Purpose |
+|---|---|---|---|---|
+| `alpha_admin` | `admin123` | `TENANT_ADMIN`, `SOLUTION_ARCHITECT` | `11111111-1111-1111-1111-111111111111` | Tenant A administrator & ADR gate |
+| `alpha_dev` | `dev123` | `DEVELOPER` | `11111111-1111-1111-1111-111111111111` | Tenant A developer |
+| `alpha_scrum` | `scrum123` | `SCRUM_MASTER` | `11111111-1111-1111-1111-111111111111` | Tenant A scrum master |
+
+#### Tenant Beta (`22222222-2222-2222-2222-222222222222`)
+| Username | Password | Roles | `tenant_id` | Purpose |
+|---|---|---|---|---|
+| `beta_admin` | `admin123` | `TENANT_ADMIN` | `22222222-2222-2222-2222-222222222222` | Tenant B administrator |
+| `beta_dev` | `dev123` | `DEVELOPER` | `22222222-2222-2222-2222-222222222222` | Tenant B developer |
+| `beta_exec` | `exec123` | `DELIVERY_EXEC` | `22222222-2222-2222-2222-222222222222` | Tenant B executive |
 
 ## Running Keycloak via Docker Compose
 To start the entire local stack including Keycloak:
@@ -60,6 +72,27 @@ docker compose ps keycloak
 Check OIDC discovery document:
 ```bash
 curl -s http://localhost:8080/realms/manta/.well-known/openid-configuration
+```
+
+## Token Issuance & Claim Testing
+To request a token for a tenant user via Direct Access Grants (Resource Owner Password Credentials) for testing:
+```bash
+curl -s -X POST http://localhost:8080/realms/manta/protocol/openid-connect/token \
+  -d "client_id=manta-portal" \
+  -d "grant_type=password" \
+  -d "username=alpha_dev" \
+  -d "password=dev123"
+```
+The decoded access token will include:
+```json
+{
+  "iss": "http://localhost:8080/realms/manta",
+  "aud": ["manta-backend", "account"],
+  "tenant_id": "11111111-1111-1111-1111-111111111111",
+  "realm_access": {
+    "roles": ["DEVELOPER"]
+  }
+}
 ```
 
 ## Reproducibility from Scratch

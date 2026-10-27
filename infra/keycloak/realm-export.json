@@ -53,7 +53,7 @@
       "id": "client-manta-portal",
       "clientId": "manta-portal",
       "name": "MANTA Web Portal",
-      "description": "Next.js frontend web portal client",
+      "description": "Next.js frontend web portal client with PKCE",
       "rootUrl": "http://localhost:3000",
       "baseUrl": "/",
       "surrogateAuthRequired": false,
@@ -82,6 +82,36 @@
         "pkce.code.challenge.method": "S256",
         "post.logout.redirect.uris": "http://localhost:3000/*##http://localhost:8080/*"
       },
+      "protocolMappers": [
+        {
+          "id": "mapper-tenant-id",
+          "name": "tenant_id",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "consentRequired": false,
+          "config": {
+            "user.attribute": "tenant_id",
+            "claim.name": "tenant_id",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "multivalued": "false"
+          }
+        },
+        {
+          "id": "mapper-audience-backend",
+          "name": "audience-manta-backend",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "manta-backend",
+            "id.token.claim": "false",
+            "access.token.claim": "true"
+          }
+        }
+      ],
       "fullScopeAllowed": true
     },
     {
@@ -96,13 +126,18 @@
   ],
   "users": [
     {
-      "id": "user-admin",
-      "username": "admin",
-      "email": "admin@manta.local",
-      "firstName": "Manta",
+      "id": "user-alpha-admin",
+      "username": "alpha_admin",
+      "email": "admin@alpha.manta.local",
+      "firstName": "Alpha",
       "lastName": "Admin",
       "enabled": true,
       "emailVerified": true,
+      "attributes": {
+        "tenant_id": [
+          "11111111-1111-1111-1111-111111111111"
+        ]
+      },
       "credentials": [
         {
           "type": "password",
@@ -116,13 +151,18 @@
       ]
     },
     {
-      "id": "user-dev",
-      "username": "developer",
-      "email": "dev@manta.local",
-      "firstName": "Dev",
-      "lastName": "Engineer",
+      "id": "user-alpha-dev",
+      "username": "alpha_dev",
+      "email": "dev@alpha.manta.local",
+      "firstName": "Alpha",
+      "lastName": "Developer",
       "enabled": true,
       "emailVerified": true,
+      "attributes": {
+        "tenant_id": [
+          "11111111-1111-1111-1111-111111111111"
+        ]
+      },
       "credentials": [
         {
           "type": "password",
@@ -135,22 +175,148 @@
       ]
     },
     {
-      "id": "user-architect",
-      "username": "architect",
-      "email": "architect@manta.local",
-      "firstName": "Solution",
-      "lastName": "Architect",
+      "id": "user-alpha-scrum",
+      "username": "alpha_scrum",
+      "email": "scrum@alpha.manta.local",
+      "firstName": "Alpha",
+      "lastName": "ScrumMaster",
       "enabled": true,
       "emailVerified": true,
+      "attributes": {
+        "tenant_id": [
+          "11111111-1111-1111-1111-111111111111"
+        ]
+      },
       "credentials": [
         {
           "type": "password",
-          "value": "architect123",
+          "value": "scrum123",
           "temporary": false
         }
       ],
       "realmRoles": [
+        "SCRUM_MASTER"
+      ]
+    },
+    {
+      "id": "user-beta-admin",
+      "username": "beta_admin",
+      "email": "admin@beta.manta.local",
+      "firstName": "Beta",
+      "lastName": "Admin",
+      "enabled": true,
+      "emailVerified": true,
+      "attributes": {
+        "tenant_id": [
+          "22222222-2222-2222-2222-222222222222"
+        ]
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "TENANT_ADMIN"
+      ]
+    },
+    {
+      "id": "user-beta-dev",
+      "username": "beta_dev",
+      "email": "dev@beta.manta.local",
+      "firstName": "Beta",
+      "lastName": "Developer",
+      "enabled": true,
+      "emailVerified": true,
+      "attributes": {
+        "tenant_id": [
+          "22222222-2222-2222-2222-222222222222"
+        ]
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "dev123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "DEVELOPER"
+      ]
+    },
+    {
+      "id": "user-beta-exec",
+      "username": "beta_exec",
+      "email": "exec@beta.manta.local",
+      "firstName": "Beta",
+      "lastName": "DeliveryExec",
+      "enabled": true,
+      "emailVerified": true,
+      "attributes": {
+        "tenant_id": [
+          "22222222-2222-2222-2222-222222222222"
+        ]
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "exec123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "DELIVERY_EXEC"
+      ]
+    },
+    {
+      "id": "user-admin-default",
+      "username": "admin",
+      "email": "admin@manta.local",
+      "firstName": "Manta",
+      "lastName": "Admin",
+      "enabled": true,
+      "emailVerified": true,
+      "attributes": {
+        "tenant_id": [
+          "11111111-1111-1111-1111-111111111111"
+        ]
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "admin123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "TENANT_ADMIN",
         "SOLUTION_ARCHITECT"
+      ]
+    },
+    {
+      "id": "user-developer-default",
+      "username": "developer",
+      "email": "dev@manta.local",
+      "firstName": "Dev",
+      "lastName": "Engineer",
+      "enabled": true,
+      "emailVerified": true,
+      "attributes": {
+        "tenant_id": [
+          "11111111-1111-1111-1111-111111111111"
+        ]
+      },
+      "credentials": [
+        {
+          "type": "password",
+          "value": "dev123",
+          "temporary": false
+        }
+      ],
+      "realmRoles": [
+        "DEVELOPER"
       ]
     }
   ]
