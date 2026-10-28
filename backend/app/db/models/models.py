@@ -11,7 +11,6 @@ from sqlalchemy import (
     ForeignKey,
     DateTime,
     UniqueConstraint,
-    CheckConstraint,
     Index,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB, INET
