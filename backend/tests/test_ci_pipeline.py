@@ -9,7 +9,7 @@ class TestCIProtection(unittest.TestCase):
         - DELIBERATE_FAILURE = True:  Pipeline fails (RED)   -> PR merge is BLOCKED.
         - DELIBERATE_FAILURE = False: Pipeline passes (GREEN) -> PR merge is ALLOWED.
         """
-        DELIBERATE_FAILURE = True
+        DELIBERATE_FAILURE = False
 
         self.assertFalse(
             DELIBERATE_FAILURE,
