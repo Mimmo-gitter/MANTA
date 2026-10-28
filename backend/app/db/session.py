@@ -1,8 +1,9 @@
-import uuid
-from typing import AsyncGenerator
 from contextlib import asynccontextmanager
-from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from typing import AsyncGenerator
+import uuid
+
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 try:
     from app.config import settings
@@ -10,7 +11,11 @@ except ImportError:
     from backend.app.core.config import settings
 
 # Retrieve database connection string
-DATABASE_URL = getattr(settings, "DATABASE_URL", None) or getattr(settings, "ASYNC_DATABASE_URL", "postgresql+asyncpg://manta_user:manta_password@localhost:5432/manta_db")
+DATABASE_URL = getattr(settings, "DATABASE_URL", None) or getattr(
+    settings,
+    "ASYNC_DATABASE_URL",
+    "postgresql+asyncpg://manta_user:manta_password@localhost:5432/manta_db",
+)
 
 # 1. Asynchronous Engine for FastAPI / Workers (routed through PgBouncer)
 # statement_cache_size=0 is strictly required when using PgBouncer in transaction pooling mode

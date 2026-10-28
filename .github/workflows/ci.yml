@@ -90,6 +90,9 @@ jobs:
   web-checks:
     name: Web Portal Lint & Build
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -102,13 +105,13 @@ jobs:
           cache-dependency-path: web/package-lock.json
 
       - name: Install web dependencies
-        run: npm --prefix web ci
+        run: npm ci
 
       - name: Run Next.js lint
-        run: npm --prefix web run lint
+        run: npm run lint
 
       - name: Build Next.js application
-        run: npm --prefix web run build
+        run: npm run build
 
   ci-gate:
     name: CI Status Check
