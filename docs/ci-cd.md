@@ -2,10 +2,10 @@
 
 ## 1. Overview & Architecture
 
-The MANTA Engineering Intelligence Platform enforces a deterministic, automated CI pipeline via GitHub Actions (`.github/workflows/ci.yml`). Every change submitted via push or pull request to the `develop` or `main` branches is automatically guarded against regressions, syntax errors, test failures, and broken container builds.
+The MANTA Engineering Intelligence Platform enforces a deterministic, automated CI pipeline via GitHub Actions (`.github/workflows/ci.yml`). Every change submitted via push (to `develop`, `main`, or feature/fix branches) or pull request is automatically guarded against regressions, syntax errors, test failures, and broken container builds.
 
 ```
-       Git Push / Pull Request (develop / main)
+       Git Push / Pull Request (develop / main / feature/** / fix/**)
                          │
                          ▼
              GitHub Actions CI Pipeline
