@@ -40,9 +40,7 @@ class TestKeycloakRealmExport(unittest.TestCase):
             "TENANT_ADMIN",
         }
         realm_roles = {
-            role["name"]
-            for role in data.get("roles", {}).get("realm", [])
-            if "name" in role
+            role["name"] for role in data.get("roles", {}).get("realm", []) if "name" in role
         }
         missing_roles = expected_roles - realm_roles
         self.assertEqual(
@@ -85,7 +83,9 @@ class TestKeycloakRealmExport(unittest.TestCase):
         mappers = portal.get("protocolMappers", [])
 
         tenant_mapper = next((m for m in mappers if m.get("name") == "tenant_id"), None)
-        self.assertIsNotNone(tenant_mapper, "tenant_id claim mapper must be configured on manta-portal")
+        self.assertIsNotNone(
+            tenant_mapper, "tenant_id claim mapper must be configured on manta-portal"
+        )
         self.assertEqual(tenant_mapper.get("protocolMapper"), "oidc-usermodel-attribute-mapper")
 
         config = tenant_mapper.get("config", {})
@@ -104,7 +104,9 @@ class TestKeycloakRealmExport(unittest.TestCase):
         aud_mapper = next(
             (m for m in mappers if m.get("protocolMapper") == "oidc-audience-mapper"), None
         )
-        self.assertIsNotNone(aud_mapper, "Audience protocol mapper must be configured on manta-portal")
+        self.assertIsNotNone(
+            aud_mapper, "Audience protocol mapper must be configured on manta-portal"
+        )
         config = aud_mapper.get("config", {})
         self.assertEqual(config.get("included.client.audience"), "manta-backend")
         self.assertEqual(config.get("access.token.claim"), "true")

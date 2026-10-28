@@ -38,10 +38,12 @@ AsyncSessionLocal = async_sessionmaker(
     autoflush=False,
 )
 
+
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
     """Dependency injection for FastAPI endpoints."""
     async with AsyncSessionLocal() as session:
         yield session
+
 
 @asynccontextmanager
 async def get_tenant_db_context(tenant_id: uuid.UUID) -> AsyncGenerator[AsyncSession, None]:

@@ -14,7 +14,7 @@ class TestCIProtection(unittest.TestCase):
         self.assertFalse(
             DELIBERATE_FAILURE,
             "Deliberate test failure! Verify that GitHub Actions turns RED "
-            "and GitHub blocks merging into develop."
+            "and GitHub blocks merging into develop.",
         )
 
 
