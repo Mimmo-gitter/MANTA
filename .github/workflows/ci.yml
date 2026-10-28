@@ -93,6 +93,8 @@ jobs:
     defaults:
       run:
         working-directory: web
+    env:
+      ESLINT_USE_FLAT_CONFIG: "false"
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
