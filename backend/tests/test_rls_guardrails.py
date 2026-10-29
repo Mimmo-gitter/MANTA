@@ -2,6 +2,7 @@
 SCRUM-293: Automated guardrail tests verifying that ROW LEVEL SECURITY (RLS)
 and FORCE ROW LEVEL SECURITY are strictly enabled on every tenant-scoped table.
 """
+
 from typing import Set
 import pytest
 from sqlalchemy import text
@@ -11,9 +12,9 @@ from app.db.session import async_engine
 
 # Global tables that are intentionally exempt from tenant RLS isolation
 GLOBAL_EXEMPT_TABLES: Set[str] = {
-    "alembic_version",          # Alembic internal migration tracker
+    "alembic_version",  # Alembic internal migration tracker
     "processed_outbox_events",  # Global event consumer deduplication table
-    "roles",                    # System-wide platform RBAC role definitions
+    "roles",  # System-wide platform RBAC role definitions
 }
 
 

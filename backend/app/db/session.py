@@ -11,6 +11,7 @@ try:
 except ImportError:
     from backend.app.core.config import settings
 
+
 def get_application_database_url() -> str:
     url = getattr(settings, "DATABASE_URL", None) or getattr(
         settings,
@@ -101,4 +102,3 @@ async def get_tenant_db(
     """
     async with get_tenant_db_context(tenant_id) as session:
         yield session
-
