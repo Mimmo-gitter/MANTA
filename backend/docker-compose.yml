@@ -75,6 +75,8 @@ services:
     environment:
       - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://manta_user:manta_password@pgbouncer:5432/manta_db}
       - REDIS_URL=${REDIS_URL:-redis://valkey:6379/0}
+      - KEYCLOAK_URL=${KEYCLOAK_INTERNAL_URL:-http://keycloak:8080}
+      - KEYCLOAK_REALM=${KEYCLOAK_REALM:-manta}
     ports:
       - "${APP_PORT:-8000}:8000"
     networks:
