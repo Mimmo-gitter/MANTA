@@ -11,16 +11,17 @@ try:
 except ImportError:
     from backend.app.core.config import settings
 
+
 def get_application_database_url() -> str:
     url = getattr(settings, "DATABASE_URL", None) or getattr(
         settings,
         "ASYNC_DATABASE_URL",
-        "postgresql+asyncpg://eng_app_user:password@localhost:5432/manta_db",
+        "postgresql+asyncpg://eng_app_user:eng_app_pass_change_in_prod@localhost:5432/manta_db",
     )
     # Ensure application runtime runs as eng_app_user so PostgreSQL RLS is strictly enforced
     # (manta_user is a superuser and always bypasses RLS)
     if "manta_user:manta_password" in url:
-        return url.replace("manta_user:manta_password", "eng_app_user:password")
+        return url.replace("manta_user:manta_password", "eng_app_user:eng_app_pass_change_in_prod")
     return url
 
 
@@ -100,4 +101,3 @@ async def get_tenant_db(
     """
     async with get_tenant_db_context(tenant_id) as session:
         yield session
-

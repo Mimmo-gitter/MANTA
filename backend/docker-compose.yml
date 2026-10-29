@@ -21,7 +21,7 @@ services:
       retries: 5
       start_period: 10s
 
-  # 2. PgBouncer Connection Pooler
+  # 2. PgBouncer Connection Pooler (transaction pooling + DISCARD ALL)
   pgbouncer:
     image: edoburu/pgbouncer:latest
     container_name: manta_pgbouncer
@@ -32,7 +32,10 @@ services:
       DB_NAME: ${POSTGRES_DB:-manta_db}
       LISTEN_PORT: 5432
       AUTH_TYPE: scram-sha-256
-      POOL_MODE: session
+      AUTH_USER: ${POSTGRES_USER:-manta_user}
+      POOL_MODE: transaction
+      SERVER_RESET_QUERY: DISCARD ALL
+      SERVER_RESET_QUERY_ALWAYS: 1
       MAX_CLIENT_CONN: 100
       DEFAULT_POOL_SIZE: 20
     ports:
@@ -73,7 +76,8 @@ services:
       dockerfile: Dockerfile
     container_name: manta_app
     environment:
-      - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://manta_user:manta_password@pgbouncer:5432/manta_db}
+      - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://eng_app_user:eng_app_pass_change_in_prod@pgbouncer:5432/manta_db}
+      - MIGRATION_DATABASE_URL=${MIGRATION_DATABASE_URL:-postgresql+asyncpg://manta_user:manta_password@postgres:5432/manta_db}
       - REDIS_URL=${REDIS_URL:-redis://valkey:6379/0}
     ports:
       - "${APP_PORT:-8000}:8000"

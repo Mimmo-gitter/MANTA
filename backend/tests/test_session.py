@@ -1,6 +1,6 @@
 import uuid
 import pytest
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -18,6 +18,7 @@ TENANT_BETA = uuid.UUID("22222222-2222-2222-2222-222222222222")
 
 class DummyRequest:
     """Mock Request object for testing tenant ID extraction."""
+
     def __init__(self, state_tid=None, header_tid=None):
         self.state = type("State", (), {})()
         if state_tid is not None:
@@ -98,9 +99,7 @@ async def test_get_tenant_db_dependency_in_fastapi():
             )
             return {"current_tenant_id": current_tid}
 
-        async with AsyncClient(
-            transport=ASGITransport(app=test_app), base_url="http://test"
-        ) as ac:
+        async with AsyncClient(transport=ASGITransport(app=test_app), base_url="http://test") as ac:
             # 1. Successful request with X-Tenant-ID header
             response = await ac.get(
                 "/test-tenant-context",

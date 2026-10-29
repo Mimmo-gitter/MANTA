@@ -9,6 +9,7 @@ Verifies:
 5. Unauthenticated / empty context isolation (returns 0 rows by default; fail-safe closed).
 6. Transaction pooling safety (set_config local=true is purged upon transaction completion).
 """
+
 import uuid
 import pytest
 from sqlalchemy import delete, select, text, update
@@ -224,9 +225,7 @@ async def test_project_cross_tenant_delete_isolation():
 
         # Tenant A attempts to delete Project B
         async with get_tenant_db_context(TENANT_A_ID) as session:
-            delete_result = await session.execute(
-                delete(Project).where(Project.id == PROJECT_B_ID)
-            )
+            delete_result = await session.execute(delete(Project).where(Project.id == PROJECT_B_ID))
             assert delete_result.rowcount == 0, "Tenant A deleted Tenant B's project!"
 
         # Tenant B confirms Project B still exists

@@ -73,13 +73,15 @@ def upgrade() -> None:
             IF NOT EXISTS (SELECT FROM pg_catalog.pg_roles WHERE rolname = 'eng_app_user') THEN
                 CREATE ROLE eng_app_user WITH 
                     LOGIN 
-                    PASSWORD 'password' 
+                    PASSWORD 'eng_app_pass_change_in_prod' 
                     NOSUPERUSER 
                     NOBYPASSRLS 
                     NOCREATEDB 
                     NOCREATEROLE;
             ELSE
                 ALTER ROLE eng_app_user WITH 
+                    LOGIN 
+                    PASSWORD 'eng_app_pass_change_in_prod' 
                     NOSUPERUSER 
                     NOBYPASSRLS 
                     NOCREATEDB 
