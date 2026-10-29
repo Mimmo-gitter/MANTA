@@ -14,7 +14,7 @@ The MANTA Engineering Intelligence Platform operates as a high-concurrency multi
   ┌──────────────────────────────────────────────────────────────┐
   │                 FastAPI Application Pods                     │
   │   SQLAlchemy 2.0 + asyncpg (statement_cache_size=0)          │
-  │   SET LOCAL app.current_tenant_id = :tenant_id               │
+  │   SELECT set_config('app.current_tenant_id', :id, true)      │
   └──────────────────────────────┬───────────────────────────────┘
                                  │
                                  │ TCP (up to 200 client conns)
@@ -105,20 +105,20 @@ async_engine = create_async_engine(
 )
 ```
 
-### 2. Transaction-Local Tenant Context (`SET LOCAL`)
-All tenant-scoped operations must use `SET LOCAL`, which automatically expires upon transaction termination:
+### 2. Transaction-Local Tenant Context (`set_config(..., is_local=true)`)
+All tenant-scoped operations must use `set_config(..., is_local=true)` (the parameterized, injection-safe SQL equivalent of `SET LOCAL`), which automatically expires upon transaction termination (PostgreSQL's `SET` utility command does not accept bind parameters `$1`):
 ```python
 @asynccontextmanager
 async def get_tenant_db_context(tenant_id: uuid.UUID) -> AsyncGenerator[AsyncSession, None]:
     async with AsyncSessionLocal() as session:
         async with session.begin():
             await session.execute(
-                text("SET LOCAL app.current_tenant_id = :tenant_id"),
+                text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
                 {"tenant_id": str(tenant_id)},
             )
             yield session
 ```
-`DISCARD ALL` via `server_reset_query_always = 1` serves as the authoritative fail-safe defense-in-depth layer if an unexpected crash or raw query bypasses `SET LOCAL`.
+`DISCARD ALL` via `server_reset_query_always = 1` serves as the authoritative fail-safe defense-in-depth layer if an unexpected crash or raw query bypasses transaction-local scoping.
 
 ---
 
