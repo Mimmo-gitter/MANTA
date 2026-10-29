@@ -33,33 +33,41 @@ async def setup_test_tenants():
     async with get_tenant_db_context(TENANT_A_ID) as session:
         existing_a = await session.get(Tenant, TENANT_A_ID)
         if not existing_a:
-            session.add(
-                Tenant(
-                    id=TENANT_A_ID,
-                    slug="tenant-alpha-rls",
-                    name="Tenant Alpha Corp",
-                    tier="enterprise",
-                    status="active",
-                    max_projects=10,
-                    ai_processing_mode="cloud_zdr",
-                    retention_days=90,
-                )
+            await session.execute(
+                text(
+                    """
+                    SELECT * FROM provision_tenant(
+                        p_name => 'Tenant Alpha Corp',
+                        p_slug => 'tenant-alpha-rls',
+                        p_admin_email => 'admin@alpha-rls.com',
+                        p_admin_name => 'Admin Alpha',
+                        p_tier => 'enterprise',
+                        p_ai_processing_mode => 'cloud_zdr',
+                        p_tenant_id => :tid
+                    )
+                    """
+                ),
+                {"tid": TENANT_A_ID},
             )
 
     async with get_tenant_db_context(TENANT_B_ID) as session:
         existing_b = await session.get(Tenant, TENANT_B_ID)
         if not existing_b:
-            session.add(
-                Tenant(
-                    id=TENANT_B_ID,
-                    slug="tenant-beta-rls",
-                    name="Tenant Beta Ltd",
-                    tier="starter",
-                    status="active",
-                    max_projects=5,
-                    ai_processing_mode="local",
-                    retention_days=30,
-                )
+            await session.execute(
+                text(
+                    """
+                    SELECT * FROM provision_tenant(
+                        p_name => 'Tenant Beta Ltd',
+                        p_slug => 'tenant-beta-rls',
+                        p_admin_email => 'admin@beta-rls.com',
+                        p_admin_name => 'Admin Beta',
+                        p_tier => 'starter',
+                        p_ai_processing_mode => 'local',
+                        p_tenant_id => :tid
+                    )
+                    """
+                ),
+                {"tid": TENANT_B_ID},
             )
 
 
