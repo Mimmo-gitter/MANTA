@@ -61,13 +61,14 @@ async def get_tenant_db_context(
 ) -> AsyncGenerator[AsyncSession, None]:
     """
     Acquires an async session and enforces Row-Level Security tenant context
-    using transaction-local 'SELECT set_config('app.current_tenant_id', :tid, true)'.
+    using transaction-local 'set_config(..., is_local=true)' (equivalent to SET LOCAL).
+    Note: PostgreSQL SET does not accept bind parameters ($1), so set_config is required.
     """
     async with AsyncSessionLocal() as session:
         async with session.begin():
             await session.execute(
-                text("SELECT set_config('app.current_tenant_id', :tid, true)"),
-                {"tid": str(tenant_id)},
+                text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
+                {"tenant_id": str(tenant_id)},
             )
             yield session
 
