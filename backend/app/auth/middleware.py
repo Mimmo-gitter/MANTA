@@ -1,8 +1,9 @@
 import logging
+
+import jwt
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
-import jwt
 
 from app.auth.errors import AuthError, JWKSUnavailable
 from app.auth.jwks import JWKSClient
@@ -60,8 +61,14 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
             token = extract_bearer_token(request.headers.get("Authorization"))
             kid = read_kid(token)
             key = await client.get_signing_key(kid)
-            claims = decode_token(token, key, audience=settings.OIDC_AUDIENCE)
+            claims = decode_token(
+                token,
+                key,
+                audience=settings.OIDC_AUDIENCE,
+                issuer=settings.allowed_issuers,
+            )
             request.state.claims = claims
+            request.state.tenant_id = claims["tenant_id"]
         except JWKSUnavailable:
             logger.warning("JWKS unavailable during token verification")
             return JSONResponse(

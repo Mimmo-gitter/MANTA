@@ -1,4 +1,6 @@
 from typing import Any
+import uuid
+
 from pydantic import BaseModel
 
 
@@ -8,9 +10,13 @@ class TokenClaims(BaseModel):
     sub: str
     email: str | None = None
     preferred_username: str | None = None
-    tenant_id: str | None = None
+    tenant_id: str  # Guaranteed non-empty canonical UUID string
     roles: list[str] = []
     raw: dict[str, Any] = {}
+
+    @property
+    def tenant_uuid(self) -> uuid.UUID:
+        return uuid.UUID(self.tenant_id)
 
     @classmethod
     def from_claims(cls, claims: dict[str, Any]) -> "TokenClaims":
@@ -27,7 +33,7 @@ class TokenClaims(BaseModel):
             sub=claims.get("sub", ""),
             email=claims.get("email"),
             preferred_username=claims.get("preferred_username"),
-            tenant_id=claims.get("tenant_id"),
+            tenant_id=claims.get("tenant_id", ""),
             roles=roles,
             raw=claims,
         )
