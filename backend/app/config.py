@@ -17,6 +17,7 @@ class Settings(BaseSettings):
     OIDC_AUDIENCE: str = "manta-backend"
     OIDC_JWKS_CACHE_TTL_SECONDS: int = 21600  # 6 hours per §6.1
     OIDC_JWKS_HTTP_TIMEOUT_SECONDS: float = 5.0
+    OIDC_JWKS_MIN_REFRESH_INTERVAL_SECONDS: float = 10.0  # Rate-limit cooldown for unknown kid
 
     # OIDC Issuer Configuration (Architecture Blueprint v3.0 §6.1)
     OIDC_ISSUER: str | None = None  # Explicit production issuer override
