@@ -19,6 +19,7 @@ PUBLIC_PATHS = frozenset(
         "/docs/oauth2-redirect",
         "/redoc",
         "/openapi.json",
+        "/tenants/register",
     }
 )
 PUBLIC_PATH_PREFIXES: tuple[str, ...] = ()
