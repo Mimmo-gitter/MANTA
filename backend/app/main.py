@@ -2,6 +2,7 @@ from fastapi import FastAPI
 
 from app.auth import JWKSClient, JWTAuthMiddleware, auth_router
 from app.config import settings
+from app.tenants import router as tenants_router
 
 app = FastAPI(
     title="Engineering Intelligence Platform",
@@ -21,6 +22,9 @@ app.add_middleware(JWTAuthMiddleware)
 
 # Include authentication endpoints
 app.include_router(auth_router)
+
+# Include tenant registration endpoints (SCRUM-289)
+app.include_router(tenants_router)
 
 
 @app.get("/health")
