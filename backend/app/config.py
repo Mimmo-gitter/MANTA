@@ -4,7 +4,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    DATABASE_URL: str = "postgresql+asyncpg://eng_app_user:password@localhost:5432/eng_intel"
+    DATABASE_URL: str = (
+        "postgresql+asyncpg://eng_app_user:eng_app_pass_change_in_prod@localhost:5432/manta_db"
+    )
+    MIGRATION_DATABASE_URL: str | None = None
     REDIS_URL: str = "redis://localhost:6379"
 
     # OIDC / JWKS (Architecture Blueprint v3.0 §6.1)
