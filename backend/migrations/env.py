@@ -90,8 +90,20 @@ def _run_migrations_with_tracking() -> None:
         migration_logger.removeHandler(tracker)
 
 
+def get_migration_url() -> str:
+    url = getattr(settings, "MIGRATION_DATABASE_URL", None) or os.getenv("MIGRATION_DATABASE_URL")
+    if url:
+        return url
+    base_url = settings.DATABASE_URL
+    if "eng_app_user" in base_url:
+        admin_user = os.getenv("POSTGRES_USER", "manta_user")
+        admin_pass = os.getenv("POSTGRES_PASSWORD", "manta_password")
+        return re.sub(r"://[^@]+@", f"://{admin_user}:{admin_pass}@", base_url)
+    return base_url
+
+
 def run_migrations_offline() -> None:
-    url = settings.DATABASE_URL
+    url = get_migration_url()
     context.configure(
         url=url,
         target_metadata=target_metadata,
@@ -108,7 +120,7 @@ def do_run_migrations(connection: Connection) -> None:
 
 async def run_async_migrations() -> None:
     configuration = config.get_section(config.config_ini_section, {})
-    configuration["sqlalchemy.url"] = settings.DATABASE_URL
+    configuration["sqlalchemy.url"] = get_migration_url()
     connectable = async_engine_from_config(
         configuration,
         prefix="sqlalchemy.",
