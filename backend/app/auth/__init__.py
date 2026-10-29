@@ -1,4 +1,4 @@
-from app.auth.dependencies import get_current_claims, get_current_user
+from app.auth.dependencies import get_current_claims, get_current_tenant_id, get_current_user
 from app.auth.errors import AuthError, JWKSUnavailable, SigningKeyNotFound
 from app.auth.jwks import JWKSClient
 from app.auth.middleware import JWTAuthMiddleware
@@ -13,6 +13,7 @@ __all__ = [
     "JWTAuthMiddleware",
     "TokenClaims",
     "get_current_claims",
+    "get_current_tenant_id",
     "get_current_user",
     "auth_router",
 ]
