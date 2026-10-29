@@ -77,9 +77,22 @@ def extract_failing_revision(output: str) -> str:
     return "unknown"
 
 
+def get_db_url() -> str:
+    """Get the administrative database URL for migration operations and checks."""
+    url = getattr(settings, "MIGRATION_DATABASE_URL", None) or os.getenv("MIGRATION_DATABASE_URL")
+    if url:
+        return url
+    base_url = settings.DATABASE_URL
+    if "eng_app_user" in base_url:
+        admin_user = os.getenv("POSTGRES_USER", "manta_user")
+        admin_pass = os.getenv("POSTGRES_PASSWORD", "manta_password")
+        return re.sub(r"://[^@]+@", f"://{admin_user}:{admin_pass}@", base_url)
+    return base_url
+
+
 async def wait_for_postgres(max_retries: int = 30, delay_seconds: float = 1.0) -> None:
     """Wait until PostgreSQL accepts TCP connections and authenticates."""
-    engine = create_async_engine(settings.DATABASE_URL, poolclass=pool.NullPool)
+    engine = create_async_engine(get_db_url(), poolclass=pool.NullPool)
     last_error: Optional[Exception] = None
     try:
         for attempt in range(1, max_retries + 1):
@@ -107,7 +120,7 @@ async def wait_for_postgres(max_retries: int = 30, delay_seconds: float = 1.0) -
 
 async def verify_downgrade_base_clean() -> None:
     """Verify that `downgrade base` left no orphaned application tables or active revisions."""
-    engine = create_async_engine(settings.DATABASE_URL, poolclass=pool.NullPool)
+    engine = create_async_engine(get_db_url(), poolclass=pool.NullPool)
     version_exists_sql = (
         "SELECT EXISTS (SELECT 1 FROM information_schema.tables "
         "WHERE table_schema = 'public' AND table_name = 'alembic_version')"
