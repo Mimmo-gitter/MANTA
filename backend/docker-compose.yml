@@ -21,20 +21,19 @@ services:
       retries: 5
       start_period: 10s
 
-  # 2. PgBouncer Connection Pooler
+  # 2. PgBouncer Connection Pooler (transaction pooling + DISCARD ALL)
+  # All pooling settings live in infra/pgbouncer/pgbouncer.ini (see docs/pgbouncer.md).
+  # DB_USER / DB_PASSWORD / AUTH_TYPE are only used by the image entrypoint to
+  # generate userlist.txt at startup, so no credentials are committed to the repo.
   pgbouncer:
-    image: edoburu/pgbouncer:latest
+    image: edoburu/pgbouncer:v1.26.1-p0
     container_name: manta_pgbouncer
     environment:
       DB_USER: ${POSTGRES_USER:-manta_user}
       DB_PASSWORD: ${POSTGRES_PASSWORD:-manta_password}
-      DB_HOST: postgres
-      DB_NAME: ${POSTGRES_DB:-manta_db}
-      LISTEN_PORT: 5432
       AUTH_TYPE: scram-sha-256
-      POOL_MODE: session
-      MAX_CLIENT_CONN: 100
-      DEFAULT_POOL_SIZE: 20
+    volumes:
+      - ../infra/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
     ports:
       - "${PGBOUNCER_PORT:-6432}:5432"
     networks:
