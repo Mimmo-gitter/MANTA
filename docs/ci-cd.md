@@ -10,12 +10,12 @@ The MANTA Engineering Intelligence Platform enforces a deterministic, automated 
                          ▼
              GitHub Actions CI Pipeline
                          │
-         ┌───────────────┼───────────────┬────────────────┐
-         ▼               ▼               ▼                ▼
-   Backend Lint    Backend Tests   Docker Build      Web Checks
-   (Ruff check)      (pytest)      (Buildx gha)   (ESLint & Build)
-         │               │               │                │
-         └───────────────┼───────────────┴────────────────┘
+         ┌───────────────┼───────────────┬────────────────┬────────────────┐
+         ▼               ▼               ▼                ▼                ▼
+   Backend Lint    Backend Tests   PgBouncer Test   Docker Build      Web Checks
+   (Ruff check)      (pytest)      (Pooler Live)    (Buildx gha)   (ESLint & Build)
+         │               │               │                │                │
+         └───────────────┼───────────────┴────────────────┴────────────────┘
                          ▼
                 CI Status Check (ci-gate)
                          │
@@ -33,7 +33,8 @@ The MANTA Engineering Intelligence Platform enforces a deterministic, automated 
 | Stage | Job Name | Primary Tool | Caching Mechanism | Purpose |
 |---|---|---|---|---|
 | **Backend Lint** | `backend-lint` | Ruff (`format --check`, `check`) | GitHub Actions pip cache (`backend/requirements.txt`) | Enforces PEP 8 style, import sorting (`isort`), code cleanliness, and Python 3.12 compatibility. |
-| **Backend Tests** | `backend-test` | `pytest`, `pytest-asyncio` | GitHub Actions pip cache (`backend/requirements.txt`) | Executes the backend test suite (`backend/tests`), verifying API endpoints and identity configuration. |
+| **Backend Tests** | `backend-test` | `pytest`, `pytest-asyncio` | GitHub Actions pip cache (`backend/requirements.txt`) | Executes the backend test suite (`backend/tests`), verifying API endpoints, identity configuration, and static pooler settings. |
+| **PgBouncer Tests** | `pgbouncer-integration` | `docker compose`, `pytest` | GitHub Actions pip cache (`backend/requirements.txt`) | Spins up live Postgres & PgBouncer containers to verify that `pool_mode=transaction` and `server_reset_query_always=1` purge session state across clients. |
 | **Docker Build** | `backend-docker-build` | Docker Buildx (`docker/build-push-action`) | GitHub Actions cache backend (`type=gha`, `mode=max`) | Validates multi-stage Docker image compilation and dependency resolution without pushing unverified images. |
 | **Web Checks** | `web-checks` | Next.js 15, ESLint | GitHub Actions npm cache (`web/package-lock.json`) | Verifies web portal TypeScript types, ESLint compliance, and production static site builds. |
 | **Unified Status Gate** | `ci-gate` | Bash status evaluator | N/A | Consolidates upstream results; exits `1` if any stage fails or cancels, emitting a unified status check to GitHub. |
