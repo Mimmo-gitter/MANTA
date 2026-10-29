@@ -11,12 +11,20 @@ try:
 except ImportError:
     from backend.app.core.config import settings
 
-# Retrieve database connection string
-DATABASE_URL = getattr(settings, "DATABASE_URL", None) or getattr(
-    settings,
-    "ASYNC_DATABASE_URL",
-    "postgresql+asyncpg://eng_app_user:password@localhost:5432/manta_db",
-)
+def get_application_database_url() -> str:
+    url = getattr(settings, "DATABASE_URL", None) or getattr(
+        settings,
+        "ASYNC_DATABASE_URL",
+        "postgresql+asyncpg://eng_app_user:password@localhost:5432/manta_db",
+    )
+    # Ensure application runtime runs as eng_app_user so PostgreSQL RLS is strictly enforced
+    # (manta_user is a superuser and always bypasses RLS)
+    if "manta_user:manta_password" in url:
+        return url.replace("manta_user:manta_password", "eng_app_user:password")
+    return url
+
+
+DATABASE_URL = get_application_database_url()
 
 # 1. Asynchronous Engine for FastAPI / Workers (routed through PgBouncer)
 # statement_cache_size=0 is strictly required when using PgBouncer in transaction pooling mode
