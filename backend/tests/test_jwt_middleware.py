@@ -53,12 +53,14 @@ def generate_rsa_keypair(kid: str) -> tuple[rsa.RSAPrivateKey, dict[str, Any]]:
     """Generate RSA private key and matching JWK dictionary."""
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     jwk_dict = json.loads(RSAAlgorithm.to_jwk(private_key.public_key()))
-    jwk_dict.update({
-        "kid": kid,
-        "kty": "RSA",
-        "alg": "RS256",
-        "use": "sig",
-    })
+    jwk_dict.update(
+        {
+            "kid": kid,
+            "kty": "RSA",
+            "alg": "RS256",
+            "use": "sig",
+        }
+    )
     return private_key, jwk_dict
 
 
@@ -262,9 +264,7 @@ async def test_unknown_or_missing_kid_rejected_with_401(auth_setup):
         )
         assert resp1.status_code == 401
 
-        resp2 = await ac.get(
-            "/api/v1/auth/me", headers={"Authorization": f"Bearer {token_no_kid}"}
-        )
+        resp2 = await ac.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token_no_kid}"})
         assert resp2.status_code == 401
 
 
@@ -434,20 +434,22 @@ async def test_jwks_with_non_signature_keys_ignored():
 async def test_dependency_injection_get_current_claims_and_user(auth_setup):
     """Verifies get_current_claims and get_current_user dependencies directly."""
     # 1. When request.state has claims
-    fake_request = Request({
-        "type": "http",
-        "method": "GET",
-        "path": "/test",
-        "headers": [],
-        "state": {
-            "claims": {
-                "sub": "user-dep-test",
-                "email": "dep@nure.ua",
-                "tenant_id": "22222222-2222-2222-2222-222222222222",
-                "realm_access": {"roles": ["SOLUTION_ARCHITECT"]},
-            }
-        },
-    })
+    fake_request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/test",
+            "headers": [],
+            "state": {
+                "claims": {
+                    "sub": "user-dep-test",
+                    "email": "dep@nure.ua",
+                    "tenant_id": "22222222-2222-2222-2222-222222222222",
+                    "realm_access": {"roles": ["SOLUTION_ARCHITECT"]},
+                }
+            },
+        }
+    )
     claims = get_current_claims(fake_request)
     assert claims["sub"] == "user-dep-test"
 
@@ -458,13 +460,15 @@ async def test_dependency_injection_get_current_claims_and_user(auth_setup):
     assert user.roles == ["SOLUTION_ARCHITECT"]
 
     # 2. When request.state lacks claims (e.g. bypassed route incorrectly injecting dep)
-    empty_request = Request({
-        "type": "http",
-        "method": "GET",
-        "path": "/test",
-        "headers": [],
-        "state": {},
-    })
+    empty_request = Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/test",
+            "headers": [],
+            "state": {},
+        }
+    )
     with pytest.raises(Exception) as exc_info:
         get_current_claims(empty_request)
     assert "401" in str(exc_info.value)
