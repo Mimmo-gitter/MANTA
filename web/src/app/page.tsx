@@ -1,4 +1,5 @@
-import { Activity, ShieldCheck, GitPullRequest, Layers, AlertTriangle } from "lucide-react";
+import Link from "next/link";
+import { Activity, ShieldCheck, GitPullRequest, Layers, AlertTriangle, LogIn } from "lucide-react";
 
 export default function Home() {
   return (
@@ -14,11 +15,19 @@ export default function Home() {
               <p className="text-xs text-slate-500">AI-Augmented Engineering Intelligence Platform</p>
             </div>
           </div>
-          <div className="flex items-center space-x-2">
+          <div className="flex items-center space-x-3">
             <span className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
               <ShieldCheck className="mr-1 h-3.5 w-3.5" />
               RLS Isolated
             </span>
+            <Link
+              href="/login"
+              data-testid="header-signin-button"
+              className="inline-flex items-center justify-center rounded-lg bg-blue-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-blue-500 transition-colors"
+            >
+              <LogIn className="mr-1.5 h-3.5 w-3.5" />
+              Sign In
+            </Link>
           </div>
         </div>
       </header>
