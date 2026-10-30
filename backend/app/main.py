@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.auth import JWKSClient, JWTAuthMiddleware, auth_router
 from app.config import settings
 from app.tenants import router as tenants_router
+from app.webhooks import webhooks_router
 
 app = FastAPI(
     title="Engineering Intelligence Platform",
@@ -38,6 +39,9 @@ app.include_router(auth_router)
 
 # Include tenant registration endpoints (SCRUM-289)
 app.include_router(tenants_router)
+
+# Include webhook intake endpoints (SCRUM-335)
+app.include_router(webhooks_router)
 
 
 @app.get("/health")

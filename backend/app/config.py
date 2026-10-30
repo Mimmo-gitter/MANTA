@@ -26,6 +26,13 @@ class Settings(BaseSettings):
     # CORS Configuration
     CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
 
+    # Secret & Credential Encryption (SCRUM-321)
+    # Master key (32-byte / 256-bit hex string) used for AES-256-GCM
+    ENCRYPTION_MASTER_KEY: str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+    # Optional JSON-encoded keyring for rotation: '{"primary": "hex...", "old-key": "hex..."}'
+    ENCRYPTION_KEYRING_JSON: str | None = None
+    ACTIVE_ENCRYPTION_KEY_ID: str = "primary"
+
     @property
     def cors_origins(self) -> list[str]:
         return [orig.strip() for orig in self.CORS_ORIGINS.split(",") if orig.strip()]
