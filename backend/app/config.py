@@ -23,6 +23,13 @@ class Settings(BaseSettings):
     OIDC_ISSUER: str | None = None  # Explicit production issuer override
     OIDC_EXTRA_ISSUERS: str | None = None  # Comma-separated list of additional trusted issuers
 
+    # CORS Configuration
+    CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
+
+    @property
+    def cors_origins(self) -> list[str]:
+        return [orig.strip() for orig in self.CORS_ORIGINS.split(",") if orig.strip()]
+
     @property
     def jwks_url(self) -> str:
         return self.OIDC_JWKS_URL or (

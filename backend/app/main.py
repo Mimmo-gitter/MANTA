@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.auth import JWKSClient, JWTAuthMiddleware, auth_router
 from app.config import settings
@@ -17,8 +18,20 @@ app.state.jwks_client = JWKSClient(
     min_refresh_interval_seconds=settings.OIDC_JWKS_MIN_REFRESH_INTERVAL_SECONDS,
 )
 
-# Register JWT authentication middleware (denies unauthenticated requests on non-public paths)
+# Register JWT authentication middleware FIRST (denies unauthenticated requests on non-public paths)
 app.add_middleware(JWTAuthMiddleware)
+
+# Register CORS middleware LAST so it wraps outermost in Starlette's middleware stack.
+# This ensures that ALL responses (including preflight OPTIONS and 401/403/500 errors from inner middlewares)
+# have CORS headers (Access-Control-Allow-Origin, etc.) attached.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origins,
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$",
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Include authentication endpoints
 app.include_router(auth_router)
