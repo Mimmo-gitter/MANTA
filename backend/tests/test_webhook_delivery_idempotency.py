@@ -12,6 +12,9 @@ Verifies:
 8. Unsupported providers return HTTP 400.
 """
 
+import hashlib
+import hmac
+import json
 import uuid
 from httpx import ASGITransport, AsyncClient
 import pytest
@@ -21,6 +24,13 @@ from app.db.session import async_engine, get_tenant_db_context
 from app.integrations.crypto import encryption_service
 from app.main import app
 from app.webhooks.delivery import extract_delivery_id
+
+
+@pytest.fixture(autouse=True)
+async def cleanup_engine():
+    """Teardown database engine connections per test event loop."""
+    yield
+    await async_engine.dispose()
 
 
 def test_extract_delivery_id_github():
@@ -116,56 +126,51 @@ async def test_webhook_github_idempotency_lifecycle():
         "pusher": {"name": "developer"},
     }
 
-    try:
-        # First Delivery
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            res1 = await ac.post(
-                "/api/v1/webhooks/github",
-                json=webhook_body,
-                headers=headers,
-            )
-
-        assert res1.status_code == 202, res1.text
-        data1 = res1.json()
-        assert data1["status"] == "accepted"
-        assert data1["duplicate"] is False
-        assert data1["provider"] == "github"
-        assert data1["delivery_id"] == github_delivery_id
-        assert data1["event_id"] is not None
-
-        # Redelivery (Same delivery ID and headers)
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            res2 = await ac.post(
-                "/api/v1/webhooks/github",
-                json=webhook_body,
-                headers=headers,
-            )
-
-        assert res2.status_code == 202, res2.text
-        data2 = res2.json()
-        assert data2["status"] == "accepted"
-        assert data2["duplicate"] is True, "Second delivery must be identified as duplicate"
-        assert data2["provider"] == "github"
-        assert data2["delivery_id"] == github_delivery_id
-        assert data2["event_id"] == data1["event_id"], (
-            "Duplicate must resolve to the existing event_id"
+    # First Delivery
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res1 = await ac.post(
+            "/api/v1/webhooks/github",
+            json=webhook_body,
+            headers=headers,
         )
 
-        # Direct DB verification: ensure no duplicate rows created
-        async with get_tenant_db_context(tenant_id) as session:
-            rows_res = await session.execute(
-                text(
-                    "SELECT id, provider, provider_delivery_id, status FROM webhook_events "
-                    "WHERE provider = 'github' AND provider_delivery_id = :del_id"
-                ),
-                {"del_id": github_delivery_id},
-            )
-            rows = rows_res.mappings().all()
-            assert len(rows) == 1, f"Expected exactly 1 staged event row, found {len(rows)}"
-            assert rows[0]["provider_delivery_id"] == github_delivery_id
-            assert rows[0]["status"] == "staged"
-    finally:
-        await async_engine.dispose()
+    assert res1.status_code == 202, res1.text
+    data1 = res1.json()
+    assert data1["status"] == "accepted"
+    assert data1["duplicate"] is False
+    assert data1["provider"] == "github"
+    assert data1["delivery_id"] == github_delivery_id
+    assert data1["event_id"] is not None
+
+    # Redelivery (Same delivery ID and headers)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res2 = await ac.post(
+            "/api/v1/webhooks/github",
+            json=webhook_body,
+            headers=headers,
+        )
+
+    assert res2.status_code == 202, res2.text
+    data2 = res2.json()
+    assert data2["status"] == "accepted"
+    assert data2["duplicate"] is True, "Second delivery must be identified as duplicate"
+    assert data2["provider"] == "github"
+    assert data2["delivery_id"] == github_delivery_id
+    assert data2["event_id"] == data1["event_id"], "Duplicate must resolve to the existing event_id"
+
+    # Direct DB verification: ensure no duplicate rows created
+    async with get_tenant_db_context(tenant_id) as session:
+        rows_res = await session.execute(
+            text(
+                "SELECT id, provider, provider_delivery_id, status FROM webhook_events "
+                "WHERE provider = 'github' AND provider_delivery_id = :del_id"
+            ),
+            {"del_id": github_delivery_id},
+        )
+        rows = rows_res.mappings().all()
+        assert len(rows) == 1, f"Expected exactly 1 staged event row, found {len(rows)}"
+        assert rows[0]["provider_delivery_id"] == github_delivery_id
+        assert rows[0]["status"] == "staged"
 
 
 @pytest.mark.asyncio
@@ -185,56 +190,53 @@ async def test_webhook_jira_and_slack_idempotency():
         assert reg_res.status_code == 201, reg_res.text
         tenant_id = uuid.UUID(reg_res.json()["tenant_id"])
 
-    try:
-        # Jira test
-        jira_id = f"jira-delivery-{uuid.uuid4().hex[:12]}"
-        jira_headers = {
-            "X-Atlassian-Webhook-Identifier": jira_id,
-            "X-Tenant-ID": str(tenant_id),
-        }
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            j1 = await ac.post(
-                "/api/v1/webhooks/jira",
-                json={"issue": {"key": "SCRUM-335"}},
-                headers=jira_headers,
-            )
-            assert j1.status_code == 202
-            assert j1.json()["duplicate"] is False
+    # Jira test
+    jira_id = f"jira-delivery-{uuid.uuid4().hex[:12]}"
+    jira_headers = {
+        "X-Atlassian-Webhook-Identifier": jira_id,
+        "X-Tenant-ID": str(tenant_id),
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        j1 = await ac.post(
+            "/api/v1/webhooks/jira",
+            json={"issue": {"key": "SCRUM-335"}},
+            headers=jira_headers,
+        )
+        assert j1.status_code == 202
+        assert j1.json()["duplicate"] is False
 
-            j2 = await ac.post(
-                "/api/v1/webhooks/jira",
-                json={"issue": {"key": "SCRUM-335"}},
-                headers=jira_headers,
-            )
-            assert j2.status_code == 202
-            assert j2.json()["duplicate"] is True
+        j2 = await ac.post(
+            "/api/v1/webhooks/jira",
+            json={"issue": {"key": "SCRUM-335"}},
+            headers=jira_headers,
+        )
+        assert j2.status_code == 202
+        assert j2.json()["duplicate"] is True
 
-        # Slack test (with event_id in payload)
-        slack_evt_id = f"Ev_{uuid.uuid4().hex[:10]}"
-        slack_payload = {
-            "event_id": slack_evt_id,
-            "event": {"type": "app_mention", "text": "ping"},
-        }
-        slack_headers = {"X-Tenant-ID": str(tenant_id)}
+    # Slack test (with event_id in payload)
+    slack_evt_id = f"Ev_{uuid.uuid4().hex[:10]}"
+    slack_payload = {
+        "event_id": slack_evt_id,
+        "event": {"type": "app_mention", "text": "ping"},
+    }
+    slack_headers = {"X-Tenant-ID": str(tenant_id)}
 
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            s1 = await ac.post(
-                "/api/v1/webhooks/slack",
-                json=slack_payload,
-                headers=slack_headers,
-            )
-            assert s1.status_code == 202
-            assert s1.json()["duplicate"] is False
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        s1 = await ac.post(
+            "/api/v1/webhooks/slack",
+            json=slack_payload,
+            headers=slack_headers,
+        )
+        assert s1.status_code == 202
+        assert s1.json()["duplicate"] is False
 
-            s2 = await ac.post(
-                "/api/v1/webhooks/slack",
-                json=slack_payload,
-                headers=slack_headers,
-            )
-            assert s2.status_code == 202
-            assert s2.json()["duplicate"] is True
-    finally:
-        await async_engine.dispose()
+        s2 = await ac.post(
+            "/api/v1/webhooks/slack",
+            json=slack_payload,
+            headers=slack_headers,
+        )
+        assert s2.status_code == 202
+        assert s2.json()["duplicate"] is True
 
 
 @pytest.mark.asyncio
@@ -256,7 +258,8 @@ async def test_integration_bound_webhook_intake():
         tenant_id = uuid.UUID(reg_res.json()["tenant_id"])
 
     integration_id = uuid.uuid4()
-    secret_encrypted = encryption_service.encrypt("whsec_super_secret_github_token")
+    raw_secret = "whsec_super_secret_github_token"
+    secret_encrypted = encryption_service.encrypt(raw_secret)
 
     # Insert active integration record under tenant
     async with get_tenant_db_context(tenant_id) as session:
@@ -277,37 +280,42 @@ async def test_integration_bound_webhook_intake():
         await session.commit()
 
     delivery_id = str(uuid.uuid4())
-    headers = {"X-GitHub-Delivery": delivery_id, "X-Tenant-ID": str(tenant_id)}
     payload = {"action": "opened", "issue": {"number": 42}}
+    raw_body = json.dumps(payload).encode("utf-8")
+    mac = hmac.new(raw_secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
+    headers = {
+        "Content-Type": "application/json",
+        "X-GitHub-Delivery": delivery_id,
+        "X-Hub-Signature-256": f"sha256={mac}",
+        "X-Tenant-ID": str(tenant_id),
+    }
 
-    try:
-        # First call: stages new webhook
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            res1 = await ac.post(
-                f"/api/v1/webhooks/integrations/{integration_id}",
-                json=payload,
-                headers=headers,
-            )
-            assert res1.status_code == 202, res1.text
-            assert res1.json()["duplicate"] is False
-            assert res1.json()["delivery_id"] == delivery_id
+    # First call: stages new webhook
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res1 = await ac.post(
+            f"/api/v1/webhooks/integrations/{integration_id}",
+            content=raw_body,
+            headers=headers,
+        )
+        assert res1.status_code == 202, res1.text
+        assert res1.json()["duplicate"] is False
+        assert res1.json()["delivery_id"] == delivery_id
 
-            # Redelivery call: detected duplicate
-            res2 = await ac.post(
-                f"/api/v1/webhooks/integrations/{integration_id}",
-                json=payload,
-                headers=headers,
-            )
-            assert res2.status_code == 202, res2.text
-            assert res2.json()["duplicate"] is True
+        # Redelivery call: detected duplicate
+        res2 = await ac.post(
+            f"/api/v1/webhooks/integrations/{integration_id}",
+            content=raw_body,
+            headers=headers,
+        )
+        assert res2.status_code == 202, res2.text
+        assert res2.json()["duplicate"] is True
 
-        # Non-existent integration returns 404
-        dummy_integration_id = uuid.uuid4()
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            res_404 = await ac.post(
-                f"/api/v1/webhooks/integrations/{dummy_integration_id}",
-                json=payload,
-            )
-            assert res_404.status_code == 404
-    finally:
-        await async_engine.dispose()
+    # Non-existent integration returns 404
+    dummy_integration_id = uuid.uuid4()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res_404 = await ac.post(
+            f"/api/v1/webhooks/integrations/{dummy_integration_id}",
+            content=raw_body,
+            headers=headers,
+        )
+        assert res_404.status_code == 404
