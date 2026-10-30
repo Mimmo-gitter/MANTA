@@ -1,36 +1,10 @@
-import Link from "next/link";
-import { Activity, ShieldCheck, GitPullRequest, Layers, AlertTriangle, LogIn } from "lucide-react";
+import { Activity, GitPullRequest, Layers, AlertTriangle } from "lucide-react";
+import { DashboardHeader } from "@/components/dashboard/dashboard-header";
 
 export default function Home() {
   return (
     <main className="flex min-h-screen flex-col bg-slate-50 text-slate-900">
-      <header className="border-b border-slate-200 bg-white px-6 py-4 shadow-sm">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-blue-600 text-white font-bold">
-              M
-            </div>
-            <div>
-              <h1 className="text-xl font-bold tracking-tight text-slate-900">MANTA</h1>
-              <p className="text-xs text-slate-500">AI-Augmented Engineering Intelligence Platform</p>
-            </div>
-          </div>
-          <div className="flex items-center space-x-3">
-            <span className="inline-flex items-center rounded-full bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-600/20">
-              <ShieldCheck className="mr-1 h-3.5 w-3.5" />
-              RLS Isolated
-            </span>
-            <Link
-              href="/login"
-              data-testid="header-signin-button"
-              className="inline-flex items-center justify-center rounded-lg bg-blue-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-blue-500 transition-colors"
-            >
-              <LogIn className="mr-1.5 h-3.5 w-3.5" />
-              Sign In
-            </Link>
-          </div>
-        </div>
-      </header>
+      <DashboardHeader />
 
       <section className="flex-1 p-8 max-w-7xl mx-auto w-full space-y-6">
         <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
