@@ -227,7 +227,10 @@ class TenantLoadTestRunner:
                 is_other_id = str(row["tenant_id"]) == str(other_tenant["id"])
                 is_rls_isolated = row["visible_tenants_count"] == 1
 
-                if not (is_caller_id and is_caller_name and is_guc_match and is_rls_isolated) or is_other_id:
+                if (
+                    not (is_caller_id and is_caller_name and is_guc_match and is_rls_isolated)
+                    or is_other_id
+                ):
                     result_meta["leak_detected"] = True
                     result_meta["error"] = (
                         f"Cross-tenant data violation! Expected {tid} ({expected_tenant['name']}), "
@@ -293,27 +296,41 @@ class TenantLoadTestRunner:
             "total_requests": self.total_requests,
             "concurrency": self.concurrency,
             "total_duration_seconds": round(total_time_s, 3),
-            "throughput_req_per_sec": round(self.total_requests / total_time_s, 2) if total_time_s > 0 else 0,
+            "throughput_req_per_sec": round(self.total_requests / total_time_s, 2)
+            if total_time_s > 0
+            else 0,
             "successful_requests": len(successes),
             "failed_requests": len(failures),
             "error_rate_percent": round(error_rate, 2),
             "leaks_detected": len(leaks),
-            "tenant_a_requests": sum(1 for r in results if r["expected_tenant_id"] == str(TENANT_A_ID)),
-            "tenant_b_requests": sum(1 for r in results if r["expected_tenant_id"] == str(TENANT_B_ID)),
+            "tenant_a_requests": sum(
+                1 for r in results if r["expected_tenant_id"] == str(TENANT_A_ID)
+            ),
+            "tenant_b_requests": sum(
+                1 for r in results if r["expected_tenant_id"] == str(TENANT_B_ID)
+            ),
             "distinct_backend_pids": len(pids),
             "pids_reuse_summary": {
                 "min_queries_per_pid": min(pid_counts.values()) if pid_counts else 0,
                 "max_queries_per_pid": max(pid_counts.values()) if pid_counts else 0,
-                "avg_queries_per_pid": round(statistics.mean(pid_counts.values()), 1) if pid_counts else 0,
+                "avg_queries_per_pid": round(statistics.mean(pid_counts.values()), 1)
+                if pid_counts
+                else 0,
             },
             "latency_ms": {
                 "min": round(min(latencies), 2) if latencies else 0,
                 "max": round(max(latencies), 2) if latencies else 0,
                 "mean": round(statistics.mean(latencies), 2) if latencies else 0,
                 "median_p50": round(statistics.median(latencies), 2) if latencies else 0,
-                "p90": round(statistics.quantiles(latencies, n=10)[8], 2) if len(latencies) >= 10 else 0,
-                "p95": round(statistics.quantiles(latencies, n=20)[18], 2) if len(latencies) >= 20 else 0,
-                "p99": round(statistics.quantiles(latencies, n=100)[98], 2) if len(latencies) >= 100 else 0,
+                "p90": round(statistics.quantiles(latencies, n=10)[8], 2)
+                if len(latencies) >= 10
+                else 0,
+                "p95": round(statistics.quantiles(latencies, n=20)[18], 2)
+                if len(latencies) >= 20
+                else 0,
+                "p99": round(statistics.quantiles(latencies, n=100)[98], 2)
+                if len(latencies) >= 100
+                else 0,
             },
         }
 
@@ -371,7 +388,9 @@ def verify_leak_detector_logic() -> bool:
     is_guc_leaked = guc_leaked_row["guc_tenant_id"] != str(TENANT_A_ID)
     assert is_guc_leaked, "Leak detector failed to catch GUC mismatch!"
 
-    print("==> Leak detector verification PASSED: catches data leakage, wrong ID, and GUC desync.\n")
+    print(
+        "==> Leak detector verification PASSED: catches data leakage, wrong ID, and GUC desync.\n"
+    )
     return True
 
 
@@ -417,7 +436,9 @@ def print_summary(stats: dict[str, Any]) -> None:
 def main():
     parser = argparse.ArgumentParser(description="Multi-tenant PgBouncer load test runner")
     parser.add_argument("--requests", type=int, default=1000, help="Total requests (default: 1000)")
-    parser.add_argument("--concurrency", type=int, default=50, help="Concurrency limit (default: 50)")
+    parser.add_argument(
+        "--concurrency", type=int, default=50, help="Concurrency limit (default: 50)"
+    )
     parser.add_argument("--dsn", type=str, default=None, help="Database DSN pointing to PgBouncer")
     parser.add_argument("--report", type=str, default=None, help="Report output path")
     parser.add_argument(
@@ -445,7 +466,9 @@ def main():
 
     # Exit with non-zero code if any leaks or failures occurred
     if stats["leaks_detected"] > 0 or stats["failed_requests"] > 0:
-        print(f"\n[FAILURE] Load test failed: {stats['leaks_detected']} leaks, {stats['failed_requests']} errors.")
+        print(
+            f"\n[FAILURE] Load test failed: {stats['leaks_detected']} leaks, {stats['failed_requests']} errors."
+        )
         sys.exit(1)
     else:
         print("\n[SUCCESS] All 1,000 requests alternating between tenants passed with 0 leaks.")
