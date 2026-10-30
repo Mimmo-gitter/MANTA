@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     # Optional JSON-encoded keyring for rotation: '{"primary": "hex...", "old-key": "hex..."}'
     ENCRYPTION_KEYRING_JSON: str | None = None
     ACTIVE_ENCRYPTION_KEY_ID: str = "primary"
+    WEBHOOK_BASE_URL: str | None = None
 
     @property
     def cors_origins(self) -> list[str]:
