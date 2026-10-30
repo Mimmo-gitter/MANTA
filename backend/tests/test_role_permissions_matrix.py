@@ -136,7 +136,9 @@ class TestRolePermissionsMatrix(unittest.TestCase):
         for action in actions:
             self.assertTrue(action.get("domain"), f"Missing domain on {action}")
             self.assertTrue(action.get("description"), f"Missing description on {action}")
-            self.assertTrue(len(action.get("preconditions", [])) > 0, f"Missing preconditions on {action}")
+            self.assertTrue(
+                len(action.get("preconditions", [])) > 0, f"Missing preconditions on {action}"
+            )
             self.assertTrue(action.get("source"), f"Missing source on {action}")
 
     def test_full_matrix_coverage_explicit_decisions(self):
@@ -146,7 +148,9 @@ class TestRolePermissionsMatrix(unittest.TestCase):
         2. Total decided pairs = 7 roles * 13 actions = 91 explicit cells.
         """
         matrix = self.data.get("matrix", {})
-        self.assertEqual(set(matrix.keys()), EXPECTED_ROLES, "Matrix must key on exactly the 7 roles")
+        self.assertEqual(
+            set(matrix.keys()), EXPECTED_ROLES, "Matrix must key on exactly the 7 roles"
+        )
 
         total_decisions = 0
         for role_id in EXPECTED_ROLES:
@@ -173,10 +177,14 @@ class TestRolePermissionsMatrix(unittest.TestCase):
                     bool,
                     f"Cell [{role_id}][{action_id}] must specify boolean needs_ba_review",
                 )
-                self.assertTrue(cell.get("notes"), f"Cell [{role_id}][{action_id}] must contain rationale notes")
+                self.assertTrue(
+                    cell.get("notes"), f"Cell [{role_id}][{action_id}] must contain rationale notes"
+                )
                 total_decisions += 1
 
-        self.assertEqual(total_decisions, 7 * 13, f"Expected 91 explicit decisions, counted {total_decisions}")
+        self.assertEqual(
+            total_decisions, 7 * 13, f"Expected 91 explicit decisions, counted {total_decisions}"
+        )
 
     def test_architecture_6_2_baseline_parity(self):
         """

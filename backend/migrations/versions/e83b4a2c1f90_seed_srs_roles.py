@@ -1,7 +1,7 @@
 """Seed SRS canonical roles and deprecate DELIVERY_EXEC alias (SCRUM-306)
 
 Revision ID: e83b4a2c1f90
-Revises: c74f19b28a01
+Revises: 8d7a12b4e5f6
 Create Date: 2026-10-30 20:50:00.000000
 
 Jira Requirements:
@@ -15,7 +15,7 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = "e83b4a2c1f90"
-down_revision: Union[str, None] = "c74f19b28a01"
+down_revision: Union[str, None] = "8d7a12b4e5f6"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
