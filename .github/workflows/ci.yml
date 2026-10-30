@@ -170,6 +170,13 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
 
+      - name: Apply migrations to head (creates tables & eng_app_user role)
+        env:
+          MIGRATION_DATABASE_URL: postgresql+asyncpg://manta_user:manta_password@localhost:5432/manta_db
+        run: |
+          cd backend
+          python scripts/verify_migrations.py --step upgrade
+
       - name: Run live pooler isolation tests
         env:
           PGBOUNCER_TEST_DSN: postgresql://manta_user:manta_password@localhost:6432/manta_db

@@ -60,7 +60,9 @@ async def test_1000_concurrent_requests_alternating_tenants(tmp_path):
     assert stats["leaks_detected"] == 0, f"Cross-tenant leaks detected: {stats['leaks_detected']}"
 
     # 3. Assert zero failed requests / 0% error rate
-    assert stats["failed_requests"] == 0, f"Requests failed: {stats['failed_requests']}"
+    assert stats["failed_requests"] == 0, (
+        f"Requests failed: {stats['failed_requests']}. First error: {stats.get('first_failure_error')}"
+    )
     assert stats["error_rate_percent"] == 0.0
 
     # 4. Assert PgBouncer connection reuse took place across the physical pool

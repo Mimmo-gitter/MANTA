@@ -77,47 +77,77 @@ def get_default_dsn() -> str:
     return "postgresql+asyncpg://eng_app_user:eng_app_pass_change_in_prod@localhost:6432/manta_db"
 
 
-async def ensure_test_tenants(engine) -> None:
+def ensure_schema_migrated(dsn: str) -> None:
+    """Ensure Alembic migrations have been applied up to head."""
+    try:
+        from alembic import command
+        from alembic.config import Config
+
+        mig_url = dsn
+        if "eng_app_user" in mig_url:
+            mig_url = mig_url.replace(
+                "eng_app_user:eng_app_pass_change_in_prod", "manta_user:manta_password"
+            )
+        alembic_ini = BACKEND_DIR / "alembic.ini"
+        if alembic_ini.exists():
+            cfg = Config(str(alembic_ini))
+            cfg.set_main_option("sqlalchemy.url", mig_url)
+            cfg.set_main_option("script_location", str(BACKEND_DIR / "migrations"))
+            command.upgrade(cfg, "head")
+            logger.info("Database schema migrated to head successfully")
+    except Exception as exc:
+        logger.debug("Schema migration notice: %s", exc)
+
+
+async def ensure_test_tenants(engine, dsn: str | None = None) -> None:
     """Ensure clean test tenants exist for Tenant A and Tenant B."""
     for t_info in (TENANT_A_INFO, TENANT_B_INFO):
         tid = t_info["id"]
-        try:
-            async with engine.begin() as conn:
-                # Set tenant context so that RLS allows viewing own tenant row
-                await conn.execute(
-                    text("SELECT set_config('app.current_tenant_id', :tid, true)"),
-                    {"tid": str(tid)},
-                )
-                row = await conn.execute(
-                    text("SELECT id FROM tenants WHERE id = :tid"),
-                    {"tid": tid},
-                )
-                if not row.first():
+        for attempt in range(2):
+            try:
+                async with engine.begin() as conn:
+                    # Set tenant context so that RLS allows viewing own tenant row
                     await conn.execute(
-                        text(
-                            """
-                            SELECT * FROM provision_tenant(
-                                p_name => :name,
-                                p_slug => :slug,
-                                p_admin_email => :admin_email,
-                                p_admin_name => :admin_name,
-                                p_tier => 'enterprise',
-                                p_ai_processing_mode => 'cloud_zdr',
-                                p_tenant_id => :tid
-                            )
-                            """
-                        ),
-                        {
-                            "name": t_info["name"],
-                            "slug": t_info["slug"],
-                            "admin_email": t_info["admin_email"],
-                            "admin_name": t_info["admin_name"],
-                            "tid": tid,
-                        },
+                        text("SELECT set_config('app.current_tenant_id', :tid, true)"),
+                        {"tid": str(tid)},
                     )
-        except Exception as exc:
-            # Tenant already provisioned by previous run or concurrent process
-            logger.debug("Tenant provision notice for %s: %s", tid, exc)
+                    row = await conn.execute(
+                        text("SELECT id FROM tenants WHERE id = :tid"),
+                        {"tid": tid},
+                    )
+                    if not row.first():
+                        await conn.execute(
+                            text(
+                                """
+                                SELECT * FROM provision_tenant(
+                                    p_name => :name,
+                                    p_slug => :slug,
+                                    p_admin_email => :admin_email,
+                                    p_admin_name => :admin_name,
+                                    p_tier => 'enterprise',
+                                    p_ai_processing_mode => 'cloud_zdr',
+                                    p_tenant_id => :tid
+                                )
+                                """
+                            ),
+                            {
+                                "name": t_info["name"],
+                                "slug": t_info["slug"],
+                                "admin_email": t_info["admin_email"],
+                                "admin_name": t_info["admin_name"],
+                                "tid": tid,
+                            },
+                        )
+                break
+            except Exception as exc:
+                err_str = str(exc).lower()
+                # If tenants table or provision_tenant function missing, apply migrations once and retry
+                if attempt == 0 and dsn and ("does not exist" in err_str or "undefined" in err_str):
+                    logger.info("Schema objects missing; applying migrations...")
+                    ensure_schema_migrated(dsn)
+                    continue
+                logger.debug("Tenant provision notice for %s: %s", tid, exc)
+                break
 
 
 class TenantLoadTestRunner:
@@ -249,7 +279,7 @@ class TenantLoadTestRunner:
     async def run(self) -> dict[str, Any]:
         """Run the full 1,000 requests load test."""
         print("==> Ensuring test tenants exist in database...")
-        await ensure_test_tenants(self.engine)
+        await ensure_test_tenants(self.engine, self.dsn)
 
         semaphore = asyncio.Semaphore(self.concurrency)
         tasks = []
@@ -278,6 +308,7 @@ class TenantLoadTestRunner:
         latencies = [r["latency_ms"] for r in results if r["latency_ms"] > 0]
         successes = [r for r in results if r["success"]]
         failures = [r for r in results if not r["success"]]
+        first_error = failures[0]["error"] if failures else None
         leaks = [r for r in results if r["leak_detected"]]
         pids = {r["backend_pid"] for r in results if r["backend_pid"] is not None}
 
@@ -301,6 +332,7 @@ class TenantLoadTestRunner:
             else 0,
             "successful_requests": len(successes),
             "failed_requests": len(failures),
+            "first_failure_error": first_error,
             "error_rate_percent": round(error_rate, 2),
             "leaks_detected": len(leaks),
             "tenant_a_requests": sum(

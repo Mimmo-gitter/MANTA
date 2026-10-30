@@ -1,12 +1,13 @@
 {
-  "timestamp": "2026-10-30T20:44:37.663723+00:00",
+  "timestamp": "2026-10-30T21:01:59.438677+00:00",
   "target_dsn": "pgbouncer:5432/manta_db",
   "total_requests": 1000,
   "concurrency": 50,
-  "total_duration_seconds": 0.765,
-  "throughput_req_per_sec": 1307.77,
+  "total_duration_seconds": 0.764,
+  "throughput_req_per_sec": 1308.59,
   "successful_requests": 1000,
   "failed_requests": 0,
+  "first_failure_error": null,
   "error_rate_percent": 0.0,
   "leaks_detected": 0,
   "tenant_a_requests": 500,
@@ -14,16 +15,16 @@
   "distinct_backend_pids": 20,
   "pids_reuse_summary": {
     "min_queries_per_pid": 45,
-    "max_queries_per_pid": 54,
+    "max_queries_per_pid": 56,
     "avg_queries_per_pid": 50
   },
   "latency_ms": {
-    "min": 62.66,
-    "max": 723.53,
-    "mean": 385.6,
-    "median_p50": 384.38,
-    "p90": 668.02,
-    "p95": 702.1,
-    "p99": 722.82
+    "min": 65.61,
+    "max": 724.51,
+    "mean": 387.75,
+    "median_p50": 390.48,
+    "p90": 671.01,
+    "p95": 704.07,
+    "p99": 723.61
   }
 }
