@@ -48,3 +48,24 @@ export function SecurityLockIcon({ className = "w-6 h-6" }: { className?: string
     </svg>
   );
 }
+
+export function AlertErrorIcon({ className = "w-[18px] h-[18px]" }: { className?: string }) {
+  return (
+    <svg
+      width="18"
+      height="18"
+      viewBox="0 0 18 18"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      aria-hidden="true"
+    >
+      <rect width="18" height="18" rx="9" fill="#FF4D4D" fillOpacity="0.22" />
+      <rect x="0.5" y="0.5" width="17" height="17" rx="8.5" stroke="#FF5C5C" strokeOpacity="0.8" />
+      <path
+        d="M9.41122 5.72727L9.27273 10.8196H7.97301L7.83097 5.72727H9.41122ZM8.62287 13.0923C8.38849 13.0923 8.18726 13.0095 8.01918 12.8438C7.85109 12.6757 7.76823 12.4744 7.7706 12.2401C7.76823 12.008 7.85109 11.8092 8.01918 11.6435C8.18726 11.4777 8.38849 11.3949 8.62287 11.3949C8.84777 11.3949 9.04545 11.4777 9.21591 11.6435C9.38636 11.8092 9.47277 12.008 9.47514 12.2401C9.47277 12.3963 9.43134 12.5395 9.35085 12.6697C9.27273 12.7976 9.16974 12.9006 9.0419 12.9787C8.91406 13.0545 8.77438 13.0923 8.62287 13.0923Z"
+        fill="#FF7878"
+      />
+    </svg>
+  );
+}
