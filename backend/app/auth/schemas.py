@@ -10,6 +10,7 @@ class TokenClaims(BaseModel):
     sub: str
     email: str | None = None
     preferred_username: str | None = None
+    name: str | None = None
     tenant_id: str  # Guaranteed non-empty canonical UUID string
     roles: list[str] = []
     raw: dict[str, Any] = {}
@@ -29,10 +30,18 @@ class TokenClaims(BaseModel):
             if isinstance(direct_roles, list):
                 roles = direct_roles
 
+        name = claims.get("name")
+        if not name:
+            given = claims.get("given_name", "")
+            family = claims.get("family_name", "")
+            full = f"{given} {family}".strip()
+            name = full or claims.get("preferred_username")
+
         return cls(
             sub=claims.get("sub", ""),
             email=claims.get("email"),
             preferred_username=claims.get("preferred_username"),
+            name=name,
             tenant_id=claims.get("tenant_id", ""),
             roles=roles,
             raw=claims,

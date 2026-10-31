@@ -22,7 +22,7 @@ PUBLIC_PATHS = frozenset(
         "/tenants/register",
     }
 )
-PUBLIC_PATH_PREFIXES: tuple[str, ...] = ()
+PUBLIC_PATH_PREFIXES: tuple[str, ...] = ("/api/v1/webhooks",)
 
 UNAUTHORIZED = {"detail": "Not authenticated"}
 

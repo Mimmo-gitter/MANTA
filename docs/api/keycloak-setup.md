@@ -33,12 +33,14 @@ The realm definition is maintained in `infra/keycloak/realm-export.json` and mou
   - **`audience` mapper**: (`oidc-audience-mapper`) injects `manta-backend` into the `aud` claim so FastAPI token verification accepts the token.
 - **`manta-backend`**: Bearer-only client for backend API resource server verification.
 
-### 2. RBAC Roles (Architecture Blueprint Section 6.2)
-- `DEVELOPER`: Core engineering workflows, PR checks, refactoring triggers.
-- `SCRUM_MASTER`: Sprint tracking, PR reviewer reassignment, blocker mitigation.
-- `SOLUTION_ARCHITECT`: Architecture review gate, ADR approvals and publishing.
-- `DELIVERY_EXEC`: Platform and DORA metric oversight.
-- `TENANT_ADMIN`: Full administrative control across the tenant.
+### 2. RBAC Roles (SRS §2.3 & Architecture Blueprint Section 6.2)
+- `DEVELOPER`: Core engineering workflows, PR checks, AST/SCIP call trees, refactoring triggers.
+- `SCRUM_MASTER`: Sprint velocity, burndown charts, PR reviewer reassignment, blocker mitigation.
+- `PROJECT_MANAGER`: Sprint planning, delivery tracking, two-stage Acceptance Criteria scope creep alerts.
+- `SOLUTION_ARCHITECT`: Architecture review gate, ADR approvals and publishing, technical debt analysis.
+- `DELIVERY_DIRECTOR`: Portfolio delivery health oversight, blocker intervention, reviewer reassignment. *(Supersedes legacy `DELIVERY_EXEC` alias)*.
+- `TOP_MANAGEMENT`: High-level strategic read-only portfolio governance and deadline risk metrics.
+- `TENANT_ADMIN`: Full administrative control across the tenant, user provisioning, webhook credentials, and GDPR Article 17 erasure.
 
 ### 3. Multi-Tenant Test Users
 The test realm pre-seeds users across two distinct tenants to validate multi-tenant isolation:
@@ -49,13 +51,17 @@ The test realm pre-seeds users across two distinct tenants to validate multi-ten
 | `alpha_admin` | `admin123` | `TENANT_ADMIN`, `SOLUTION_ARCHITECT` | `11111111-1111-1111-1111-111111111111` | Tenant A administrator & ADR gate |
 | `alpha_dev` | `dev123` | `DEVELOPER` | `11111111-1111-1111-1111-111111111111` | Tenant A developer |
 | `alpha_scrum` | `scrum123` | `SCRUM_MASTER` | `11111111-1111-1111-1111-111111111111` | Tenant A scrum master |
+| `alpha_pm` | `pm123` | `PROJECT_MANAGER` | `11111111-1111-1111-1111-111111111111` | Tenant A project manager |
+| `alpha_director` | `director123` | `DELIVERY_DIRECTOR` | `11111111-1111-1111-1111-111111111111` | Tenant A delivery director |
+| `alpha_top` | `top123` | `TOP_MANAGEMENT` | `11111111-1111-1111-1111-111111111111` | Tenant A top management |
+| `alpha_architect` | `architect123` | `SOLUTION_ARCHITECT` | `11111111-1111-1111-1111-111111111111` | Tenant A solution architect |
 
 #### Tenant Beta (`22222222-2222-2222-2222-222222222222`)
 | Username | Password | Roles | `tenant_id` | Purpose |
 |---|---|---|---|---|
 | `beta_admin` | `admin123` | `TENANT_ADMIN` | `22222222-2222-2222-2222-222222222222` | Tenant B administrator |
 | `beta_dev` | `dev123` | `DEVELOPER` | `22222222-2222-2222-2222-222222222222` | Tenant B developer |
-| `beta_exec` | `exec123` | `DELIVERY_EXEC` | `22222222-2222-2222-2222-222222222222` | Tenant B executive |
+| `beta_exec` | `exec123` | `DELIVERY_DIRECTOR` | `22222222-2222-2222-2222-222222222222` | Tenant B delivery director |
 
 ## Running Keycloak via Docker Compose
 To start the entire local stack including Keycloak:

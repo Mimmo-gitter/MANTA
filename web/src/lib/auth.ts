@@ -3,12 +3,39 @@ import {
   UserManagerSettings,
   WebStorageStateStore,
   SigninRedirectArgs,
+  User,
 } from "oidc-client-ts";
 
 const KEYCLOAK_URL = process.env.NEXT_PUBLIC_KEYCLOAK_URL || "http://localhost:8080";
 const REALM = process.env.NEXT_PUBLIC_KEYCLOAK_REALM || "manta";
 const CLIENT_ID = process.env.NEXT_PUBLIC_KEYCLOAK_CLIENT_ID || "manta-portal";
 const AUTHORITY = `${KEYCLOAK_URL}/realms/${REALM}`;
+const BACKEND_API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+export interface BackendUserClaims {
+  sub: string;
+  email?: string | null;
+  preferred_username?: string | null;
+  name?: string | null;
+  tenant_id: string;
+  roles: string[];
+}
+
+export const KNOWN_TENANTS: Record<string, string> = {
+  "11111111-1111-1111-1111-111111111111": "Tenant Alpha",
+  "22222222-2222-2222-2222-222222222222": "Tenant Beta",
+};
+
+export function getTenantDisplayName(tenantId?: string | null): string {
+  if (!tenantId) return "Unknown Tenant";
+  if (KNOWN_TENANTS[tenantId]) {
+    return KNOWN_TENANTS[tenantId];
+  }
+  if (tenantId.length >= 8) {
+    return `Tenant: ${tenantId.slice(0, 8)}...`;
+  }
+  return `Tenant: ${tenantId}`;
+}
 
 export function getOidcSettings(): UserManagerSettings {
   const redirectUri =
@@ -74,4 +101,64 @@ export async function initiateLogin(args?: SigninRedirectArgs): Promise<void> {
     ...args,
   });
 }
+
+/**
+ * Completes standard Authorization Code Flow with PKCE callback.
+ * Validates state against sessionStorage, exchanges code with verifier,
+ * validates nonce and ID token claims, and stores User in sessionStorage.
+ */
+export async function handleSigninCallback(url?: string): Promise<User> {
+  const manager = getUserManager();
+  return await manager.signinRedirectCallback(url);
+}
+
+/**
+ * Retrieves the currently active authenticated User from sessionStorage.
+ */
+export async function getCurrentUser(): Promise<User | null> {
+  if (typeof window === "undefined") return null;
+  const manager = getUserManager();
+  return await manager.getUser();
+}
+
+/**
+ * Purges tokens and state from sessionStorage and revokes local session.
+ */
+export async function logoutUser(): Promise<void> {
+  const manager = getUserManager();
+  await manager.removeUser();
+  if (typeof window !== "undefined") {
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < window.sessionStorage.length; i++) {
+      const key = window.sessionStorage.key(i);
+      if (key && (key.startsWith("oidc.") || key.startsWith("manta."))) {
+        keysToRemove.push(key);
+      }
+    }
+    keysToRemove.forEach((k) => window.sessionStorage.removeItem(k));
+  }
+}
+
+/**
+ * Ingress query to backend /api/v1/auth/me to verify RS256 token against FastAPI JWKS
+ * and obtain server-validated tenant and user claims.
+ */
+export async function fetchCurrentUserFromBackend(
+  accessToken: string
+): Promise<BackendUserClaims> {
+  const response = await fetch(`${BACKEND_API_URL}/api/v1/auth/me`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch user from backend: ${response.statusText}`);
+  }
+
+  return await response.json();
+}
+
 
