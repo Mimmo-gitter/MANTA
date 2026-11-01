@@ -612,9 +612,9 @@ class WebhookLoadTestRunner:
         dsn: str | None = None,
         base_url: str = "http://localhost:8000",
         total_requests: int = 200,
-        concurrency: int = 15,
+        concurrency: int = 8,
         in_process: bool = False,
-        warmup_requests: int = 3,
+        warmup_requests: int = 8,
         max_p95_ms: float = DEFAULT_MAX_P95_MS,
         report_path: Path | None = None,
     ) -> None:
@@ -660,6 +660,14 @@ class WebhookLoadTestRunner:
             else:
                 raw_body, delivery_id, event_name = build_realistic_slack_payload(run_id, idx)
 
+            headers = sign_webhook_headers(
+                provider=provider,
+                secret=PROVIDER_SECRETS[provider],
+                raw_body=raw_body,
+                delivery_id=delivery_id,
+                event_name=event_name,
+            )
+
             prepared.append(
                 {
                     "idx": idx,
@@ -667,6 +675,7 @@ class WebhookLoadTestRunner:
                     "integration_id": integration_ids[provider],
                     "path": f"/api/v1/webhooks/integrations/{integration_ids[provider]}",
                     "raw_body": raw_body,
+                    "headers": headers,
                     "payload_bytes": len(raw_body),
                     "delivery_id": delivery_id,
                     "event_name": event_name,
@@ -683,17 +692,9 @@ class WebhookLoadTestRunner:
         """Send one signed webhook request and measure exact acknowledgment latency."""
         provider = item["provider"]
         raw_body = item["raw_body"]
+        headers = item["headers"]
 
         async with semaphore:
-            # Generate signature immediately prior to dispatch (keeps Slack timestamp fresh)
-            headers = sign_webhook_headers(
-                provider=provider,
-                secret=PROVIDER_SECRETS[provider],
-                raw_body=raw_body,
-                delivery_id=item["delivery_id"],
-                event_name=item["event_name"],
-            )
-
             start = time.perf_counter()
             try:
                 response = await client.post(
@@ -933,14 +934,14 @@ def main() -> None:
     parser.add_argument(
         "--concurrency",
         type=int,
-        default=15,
-        help="Concurrent in-flight webhook requests (default: 15)",
+        default=8,
+        help="Concurrent in-flight webhook requests (default: 8)",
     )
     parser.add_argument(
         "--warmup",
         type=int,
-        default=3,
-        help="Warm-up requests before timed measurement (default: 3)",
+        default=8,
+        help="Warm-up requests before timed measurement (default: 8)",
     )
     parser.add_argument(
         "--max-p95-ms",

@@ -11,17 +11,39 @@ Guarantees:
 """
 
 from datetime import datetime, timezone
+import json
 import logging
 from typing import Any
 import uuid
 
-from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models.models import WebhookEvent
-
 logger = logging.getLogger("app.webhooks.service")
+
+_STAGE_WEBHOOK_SQL = text(
+    """
+    INSERT INTO webhook_events (
+        id, tenant_id, integration_id, provider, provider_delivery_id,
+        event_type, received_at, payload, status, attempts, created_at
+    ) VALUES (
+        :id, :tenant_id, :integration_id, :provider, :provider_delivery_id,
+        :event_type, :received_at, CAST(:payload_json AS jsonb), 'staged', 0, :created_at
+    )
+    ON CONFLICT (provider, provider_delivery_id) DO NOTHING
+    RETURNING id
+    """
+)
+
+_SELECT_EXISTING_WEBHOOK_ID_SQL = text(
+    """
+    SELECT id
+    FROM webhook_events
+    WHERE provider = :provider
+      AND provider_delivery_id = :provider_delivery_id
+    LIMIT 1
+    """
+)
 
 
 class WebhookStagingResult:
@@ -46,6 +68,7 @@ async def stage_webhook_event_idempotent(
     payload: dict[str, Any],
     event_type: str = "unknown",
     integration_id: uuid.UUID | None = None,
+    raw_payload_json: str | None = None,
 ) -> WebhookStagingResult:
     """
     Atomically stages a webhook event into the database with idempotency protection.
@@ -57,28 +80,27 @@ async def stage_webhook_event_idempotent(
     delivery_id = provider_delivery_id.strip()
     generated_id = uuid.uuid4()
     now_utc = datetime.now(timezone.utc)
-
-    # 1. Idempotent INSERT using PostgreSQL ON CONFLICT DO NOTHING
-    stmt = (
-        pg_insert(WebhookEvent)
-        .values(
-            id=generated_id,
-            tenant_id=tenant_id,
-            integration_id=integration_id,
-            provider=prov,
-            provider_delivery_id=delivery_id,
-            event_type=event_type,
-            received_at=now_utc,
-            payload=payload,
-            status="staged",
-            attempts=0,
-            created_at=now_utc,
-        )
-        .on_conflict_do_nothing(index_elements=["provider", "provider_delivery_id"])
-        .returning(WebhookEvent.id)
+    payload_json = (
+        raw_payload_json
+        if raw_payload_json is not None
+        else json.dumps(payload, separators=(",", ":"))
     )
 
-    result = await db.execute(stmt)
+    # 1. Idempotent INSERT using pre-defined parameterized SQL (ON CONFLICT DO NOTHING)
+    result = await db.execute(
+        _STAGE_WEBHOOK_SQL,
+        {
+            "id": generated_id,
+            "tenant_id": tenant_id,
+            "integration_id": integration_id,
+            "provider": prov,
+            "provider_delivery_id": delivery_id,
+            "event_type": event_type,
+            "received_at": now_utc,
+            "payload_json": payload_json,
+            "created_at": now_utc,
+        },
+    )
     inserted_id = result.scalar_one_or_none()
 
     # 2. Case A: Newly inserted event
@@ -97,12 +119,14 @@ async def stage_webhook_event_idempotent(
     logger.warning(
         f"Duplicate webhook delivery detected for provider '{prov}' with delivery_id '{delivery_id}'. Ignoring."
     )
-    existing_id = await db.scalar(
-        select(WebhookEvent.id).where(
-            WebhookEvent.provider == prov,
-            WebhookEvent.provider_delivery_id == delivery_id,
-        )
+    existing_res = await db.execute(
+        _SELECT_EXISTING_WEBHOOK_ID_SQL,
+        {
+            "provider": prov,
+            "provider_delivery_id": delivery_id,
+        },
     )
+    existing_id = existing_res.scalar_one_or_none()
 
     return WebhookStagingResult(
         event_id=existing_id,
