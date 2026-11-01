@@ -18,6 +18,7 @@ import logging
 from typing import Any
 import uuid
 
+import asyncpg
 from fastapi import APIRouter, Header, HTTPException, Request, status
 from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError, ProgrammingError, SQLAlchemyError
@@ -33,6 +34,16 @@ from app.webhooks.verification import verify_signature_for_provider
 logger = logging.getLogger("app.webhooks.router")
 
 router = APIRouter(prefix="/api/v1/webhooks", tags=["Webhooks"])
+
+_DB_OUTAGE_EXCEPTIONS = (
+    SQLAlchemyError,
+    DBAPIError,
+    asyncpg.PostgresError,
+    asyncpg.InterfaceError,
+    ConnectionError,
+    OSError,
+    TimeoutError,
+)
 
 
 async def _read_request_data(request: Request) -> tuple[dict[str, Any], bytes]:
@@ -126,7 +137,7 @@ async def ingest_webhook_by_provider(
                 payload=payload,
                 event_type=str(event_type)[:64],
             )
-    except (SQLAlchemyError, DBAPIError, ConnectionError, OSError) as exc:
+    except _DB_OUTAGE_EXCEPTIONS as exc:
         logger.error(f"Database unavailable during provider webhook staging: {exc}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -313,7 +324,7 @@ async def ingest_webhook_for_integration(
                 )
     except HTTPException:
         raise
-    except (SQLAlchemyError, DBAPIError, ConnectionError, OSError) as exc:
+    except _DB_OUTAGE_EXCEPTIONS as exc:
         logger.error(
             f"Failed to stage webhook event for integration {integration_id} due to database outage: {exc}"
         )
