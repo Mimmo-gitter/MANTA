@@ -180,7 +180,8 @@ jobs:
       - name: Run live pooler isolation tests
         env:
           PGBOUNCER_TEST_DSN: postgresql://manta_user:manta_password@localhost:6432/manta_db
-        run: python -m pytest backend/tests/test_pgbouncer_isolation.py backend/tests/test_pgbouncer_load.py -v
+          DATABASE_URL: postgresql+asyncpg://eng_app_user:eng_app_pass_change_in_prod@localhost:6432/manta_db
+        run: python -m pytest backend/tests/test_pgbouncer_isolation.py backend/tests/test_pgbouncer_load.py backend/tests/test_webhook_load.py -v
 
       - name: Collect PgBouncer logs on failure
         if: failure()
