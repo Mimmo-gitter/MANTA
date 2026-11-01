@@ -396,6 +396,17 @@ test.describe("OIDC Callback Handling & Multi-Tenant Dashboard (SCRUM-274)", () 
       });
     });
 
+    await page.route("**/protocol/openid-connect/logout*", async (route) => {
+      const u = new URL(route.request().url());
+      const postLogoutRedirect = u.searchParams.get("post_logout_redirect_uri") || "/login";
+      await route.fulfill({
+        status: 302,
+        headers: {
+          Location: postLogoutRedirect,
+        },
+      });
+    });
+
     await page.goto("/login");
     await page.getByTestId("company-sso-button").click();
     await expect.poll(() => capturedState, { timeout: 10000 }).not.toBeNull();
@@ -407,9 +418,9 @@ test.describe("OIDC Callback Handling & Multi-Tenant Dashboard (SCRUM-274)", () 
     await expect(signOutBtn).toBeVisible();
     await signOutBtn.click();
 
-    // Verify user profile elements are gone and header shows Sign In button
-    const headerSignIn = page.getByTestId("header-signin-button");
-    await expect(headerSignIn).toBeVisible();
+    // Verify user is redirected to /signed-out, confirmation is shown and profile elements are gone
+    await expect(page).toHaveURL(/\/signed-out/, { timeout: 10000 });
+    await expect(page.getByTestId("sign-in-again-button")).toBeVisible();
     await expect(page.getByTestId("user-profile-name")).not.toBeVisible();
     await expect(page.getByTestId("user-tenant-badge")).not.toBeVisible();
   });

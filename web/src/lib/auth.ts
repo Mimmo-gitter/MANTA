@@ -44,10 +44,17 @@ export function getOidcSettings(): UserManagerSettings {
       ? `${window.location.origin}/auth/callback`
       : "http://localhost:3000/auth/callback");
 
+  const postLogoutRedirectUri =
+    process.env.NEXT_PUBLIC_POST_LOGOUT_REDIRECT_URI ||
+    (typeof window !== "undefined"
+      ? `${window.location.origin}/signed-out`
+      : "http://localhost:3000/signed-out");
+
   return {
     authority: AUTHORITY,
     client_id: CLIENT_ID,
     redirect_uri: redirectUri,
+    post_logout_redirect_uri: postLogoutRedirectUri,
     response_type: "code",
     scope: "openid profile email",
     // Explicit endpoints so redirection works even before Keycloak network discovery
@@ -122,10 +129,27 @@ export async function getCurrentUser(): Promise<User | null> {
 }
 
 /**
- * Purges tokens and state from sessionStorage and revokes local session.
+ * Initiates standard OIDC RP-Initiated Logout (RFC 7636 / OpenID Connect RP-Initiated Logout 1.0).
+ * Purges tokens and state from sessionStorage, removes user from UserManager store,
+ * and redirects the browser to Keycloak end_session_endpoint with id_token_hint and post_logout_redirect_uri.
  */
-export async function logoutUser(): Promise<void> {
+export async function logoutUser(postLogoutRedirectUri?: string): Promise<void> {
   const manager = getUserManager();
+  const user = await manager.getUser();
+  const tenantId = (user?.profile?.tenant_id as string) || undefined;
+  const workspaceQuery =
+    tenantId && KNOWN_TENANTS[tenantId]
+      ? `?workspace=${encodeURIComponent(KNOWN_TENANTS[tenantId])}`
+      : "";
+
+  const defaultRedirectUri =
+    typeof window !== "undefined"
+      ? `${window.location.origin}/signed-out${workspaceQuery}`
+      : `http://localhost:3000/signed-out${workspaceQuery}`;
+
+  const targetRedirectUri = postLogoutRedirectUri || defaultRedirectUri;
+
+  // 1. Purge tokens and state from sessionStorage
   await manager.removeUser();
   if (typeof window !== "undefined") {
     const keysToRemove: string[] = [];
@@ -136,6 +160,25 @@ export async function logoutUser(): Promise<void> {
       }
     }
     keysToRemove.forEach((k) => window.sessionStorage.removeItem(k));
+  }
+
+  // 2. Call Keycloak end_session_endpoint for IdP session termination
+  try {
+    if (user?.id_token) {
+      await manager.signoutRedirect({
+        id_token_hint: user.id_token,
+        post_logout_redirect_uri: targetRedirectUri,
+      });
+    } else {
+      await manager.signoutRedirect({
+        post_logout_redirect_uri: targetRedirectUri,
+      });
+    }
+  } catch (err) {
+    console.warn("Keycloak signoutRedirect failed or offline, falling back to local redirect:", err);
+    if (typeof window !== "undefined") {
+      window.location.href = targetRedirectUri;
+    }
   }
 }
 
