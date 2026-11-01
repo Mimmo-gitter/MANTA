@@ -1,13 +1,15 @@
 """
-SCRUM-295: Automated pytest suite verifying multi-tenant Row-Level Security (RLS) isolation.
+SCRUM-294 / SCRUM-295: Automated pytest suite verifying multi-tenant Row-Level Security (RLS)
+isolation scenarios (see docs/rls-test-scenarios.md).
 
 Verifies:
-1. Cross-tenant READ isolation (Tenant A cannot see Tenant B's tenants, projects, users).
-2. Cross-tenant UPDATE isolation (Tenant A cannot modify Tenant B's records; 0 rows affected).
-3. Cross-tenant DELETE isolation (Tenant A cannot delete Tenant B's records; 0 rows affected).
-4. Cross-tenant INSERT prevention (WITH CHECK policy raises DBAPIError on mismatched tenant_id).
-5. Unauthenticated / empty context isolation (returns 0 rows by default; fail-safe closed).
-6. Transaction pooling safety (set_config local=true is purged upon transaction completion).
+1. Tenant A reads & writes own data; cross-tenant READ isolation (TC-RLS-001, TC-RLS-002).
+2. Cross-tenant UPDATE isolation (Tenant A cannot modify Tenant B's records; 0 rows affected) (TC-RLS-003).
+3. Cross-tenant DELETE isolation (Tenant A cannot delete Tenant B's records; 0 rows affected) (TC-RLS-003).
+4. Cross-tenant INSERT prevention (WITH CHECK policy raises DBAPIError on mismatched tenant_id) (TC-RLS-003).
+5. Cross-tenant ownership reassignment prevention (Tenant A cannot update own row to Tenant B's tenant_id) (TC-RLS-004).
+6. Unset or explicitly cleared tenant setting returns 0 rows and blocks writes (fail-safe closed) (TC-RLS-005).
+7. Mid-session tenant setting change switches isolation boundary and resets across transactions (TC-RLS-006).
 """
 
 import uuid
@@ -387,3 +389,240 @@ async def test_transaction_local_scoping_prevents_pool_pollution():
                 )
     finally:
         await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_cannot_update_own_row_to_another_tenants_id():
+    """TC-RLS-004: Verify Tenant A cannot update its own row's tenant_id to Tenant B (WITH CHECK violation)."""
+    await setup_test_tenants()
+    try:
+        # Tenant A creates Project A
+        async with get_tenant_db_context(TENANT_A_ID) as session:
+            session.add(
+                Project(
+                    id=PROJECT_A_ID,
+                    tenant_id=TENANT_A_ID,
+                    name="Project Alpha Owned by A",
+                    slug="project-alpha-reassign",
+                    tier_sla_hours=24,
+                    authoritative_cd_signal="github_deployments_api",
+                    lead_time_first_commit_strategy="feature_branch_root",
+                    wip_limit_per_dev=3,
+                    pr_stale_threshold_hours=48,
+                    is_active=True,
+                )
+            )
+
+        # Tenant A attempts to update Project A's tenant_id to Tenant B
+        with pytest.raises(DBAPIError) as exc_info:
+            async with get_tenant_db_context(TENANT_A_ID) as session:
+                await session.execute(
+                    update(Project).where(Project.id == PROJECT_A_ID).values(tenant_id=TENANT_B_ID)
+                )
+
+        assert "row-level security policy" in str(exc_info.value).lower()
+
+        # Verify Project A still belongs to Tenant A and is invisible to Tenant B
+        async with get_tenant_db_context(TENANT_A_ID) as session:
+            proj_a = await session.get(Project, PROJECT_A_ID)
+            assert proj_a is not None
+            assert proj_a.tenant_id == TENANT_A_ID
+
+        async with get_tenant_db_context(TENANT_B_ID) as session:
+            proj_in_b = await session.get(Project, PROJECT_A_ID)
+            assert proj_in_b is None
+    finally:
+        await cleanup_test_data()
+
+
+@pytest.mark.asyncio
+async def test_cleared_tenant_setting_returns_zero_rows_and_blocks_writes():
+    """TC-RLS-005: Verify clearing app.current_tenant_id mid-transaction returns 0 rows and blocks writes."""
+    await setup_test_tenants()
+    try:
+        # Seed Project A under Tenant A and Project B under Tenant B
+        async with get_tenant_db_context(TENANT_A_ID) as session:
+            session.add(
+                Project(
+                    id=PROJECT_A_ID,
+                    tenant_id=TENANT_A_ID,
+                    name="Project Alpha",
+                    slug="project-alpha-clear",
+                    tier_sla_hours=24,
+                    authoritative_cd_signal="github_deployments_api",
+                    lead_time_first_commit_strategy="feature_branch_root",
+                    wip_limit_per_dev=3,
+                    pr_stale_threshold_hours=48,
+                    is_active=True,
+                )
+            )
+        async with get_tenant_db_context(TENANT_B_ID) as session:
+            session.add(
+                Project(
+                    id=PROJECT_B_ID,
+                    tenant_id=TENANT_B_ID,
+                    name="Project Beta",
+                    slug="project-beta-clear",
+                    tier_sla_hours=48,
+                    authoritative_cd_signal="github_deployments_api",
+                    lead_time_first_commit_strategy="feature_branch_root",
+                    wip_limit_per_dev=5,
+                    pr_stale_threshold_hours=72,
+                    is_active=True,
+                )
+            )
+
+        # 1. Start as Tenant A (1 row visible), then clear via set_config(..., '', true) and RESET
+        async with get_tenant_db_context(TENANT_A_ID) as session:
+            initial_projects = (await session.scalars(select(Project))).all()
+            assert len(initial_projects) == 1
+            assert initial_projects[0].id == PROJECT_A_ID
+
+            # Clear setting to empty string
+            await session.execute(text("SELECT set_config('app.current_tenant_id', '', true)"))
+            session.expire_all()
+
+            assert (await session.scalars(select(Tenant))).all() == []
+            assert (await session.scalars(select(Project))).all() == []
+            assert (await session.scalars(select(User))).all() == []
+
+            # Writes while cleared must affect 0 rows
+            upd_res = await session.execute(
+                update(Project)
+                .where(Project.id == PROJECT_A_ID)
+                .values(name="Mutated While Cleared")
+            )
+            assert upd_res.rowcount == 0
+
+            del_res = await session.execute(delete(Project).where(Project.id == PROJECT_A_ID))
+            assert del_res.rowcount == 0
+
+            # Re-set to Tenant A and then clear via RESET app.current_tenant_id
+            await session.execute(
+                text("SELECT set_config('app.current_tenant_id', :tid, true)"),
+                {"tid": str(TENANT_A_ID)},
+            )
+            await session.execute(text("RESET app.current_tenant_id"))
+            session.expire_all()
+            assert (await session.scalars(select(Project))).all() == []
+
+        # 2. Attempting INSERT while tenant setting is cleared violates WITH CHECK
+        with pytest.raises(DBAPIError) as exc_info:
+            async with AsyncSessionLocal() as session:
+                async with session.begin():
+                    await session.execute(
+                        text("SELECT set_config('app.current_tenant_id', '', true)")
+                    )
+                    session.add(
+                        Project(
+                            id=uuid.uuid4(),
+                            tenant_id=TENANT_A_ID,
+                            name="Unset Context Insert",
+                            slug="unset-insert",
+                            tier_sla_hours=24,
+                            authoritative_cd_signal="github_deployments_api",
+                            lead_time_first_commit_strategy="feature_branch_root",
+                            wip_limit_per_dev=3,
+                            pr_stale_threshold_hours=48,
+                            is_active=True,
+                        )
+                    )
+                    await session.flush()
+
+        assert "row-level security policy" in str(exc_info.value).lower()
+    finally:
+        await cleanup_test_data()
+
+
+@pytest.mark.asyncio
+async def test_tenant_setting_changed_mid_session_switches_isolation_boundary():
+    """TC-RLS-006: Verify changing app.current_tenant_id mid-session switches read and write boundaries."""
+    await setup_test_tenants()
+    try:
+        # Seed Project A under Tenant A and Project B under Tenant B
+        async with get_tenant_db_context(TENANT_A_ID) as session:
+            session.add(
+                Project(
+                    id=PROJECT_A_ID,
+                    tenant_id=TENANT_A_ID,
+                    name="Project Alpha",
+                    slug="project-alpha-switch",
+                    tier_sla_hours=24,
+                    authoritative_cd_signal="github_deployments_api",
+                    lead_time_first_commit_strategy="feature_branch_root",
+                    wip_limit_per_dev=3,
+                    pr_stale_threshold_hours=48,
+                    is_active=True,
+                )
+            )
+        async with get_tenant_db_context(TENANT_B_ID) as session:
+            session.add(
+                Project(
+                    id=PROJECT_B_ID,
+                    tenant_id=TENANT_B_ID,
+                    name="Project Beta",
+                    slug="project-beta-switch",
+                    tier_sla_hours=48,
+                    authoritative_cd_signal="github_deployments_api",
+                    lead_time_first_commit_strategy="feature_branch_root",
+                    wip_limit_per_dev=5,
+                    pr_stale_threshold_hours=72,
+                    is_active=True,
+                )
+            )
+
+        async with AsyncSessionLocal() as session:
+            async with session.begin():
+                # Phase 1: Set context to Tenant A
+                await session.execute(
+                    text("SELECT set_config('app.current_tenant_id', :tid, true)"),
+                    {"tid": str(TENANT_A_ID)},
+                )
+                tenants_a = (await session.scalars(select(Tenant))).all()
+                assert [t.id for t in tenants_a] == [TENANT_A_ID]
+
+                projects_a = (await session.scalars(select(Project))).all()
+                assert [p.id for p in projects_a] == [PROJECT_A_ID]
+
+                upd_a = await session.execute(
+                    update(Project)
+                    .where(Project.id == PROJECT_A_ID)
+                    .values(name="Project Alpha Updated")
+                )
+                assert upd_a.rowcount == 1
+
+                # Phase 2: Change setting mid-session on the SAME connection to Tenant B
+                await session.execute(
+                    text("SELECT set_config('app.current_tenant_id', :tid, true)"),
+                    {"tid": str(TENANT_B_ID)},
+                )
+                session.expire_all()
+
+                tenants_b = (await session.scalars(select(Tenant))).all()
+                assert [t.id for t in tenants_b] == [TENANT_B_ID]
+
+                projects_b = (await session.scalars(select(Project))).all()
+                assert [p.id for p in projects_b] == [PROJECT_B_ID]
+
+                # Writes against Tenant A's row must now affect 0 rows
+                stale_upd_a = await session.execute(
+                    update(Project)
+                    .where(Project.id == PROJECT_A_ID)
+                    .values(name="Illegal Post-Switch Mutation")
+                )
+                assert stale_upd_a.rowcount == 0
+
+                stale_del_a = await session.execute(
+                    delete(Project).where(Project.id == PROJECT_A_ID)
+                )
+                assert stale_del_a.rowcount == 0
+
+                # Writes against Tenant B's row must succeed (1 row affected)
+                upd_b = await session.execute(
+                    update(Project)
+                    .where(Project.id == PROJECT_B_ID)
+                    .values(name="Project Beta Updated")
+                )
+                assert upd_b.rowcount == 1
+    finally:
+        await cleanup_test_data()
