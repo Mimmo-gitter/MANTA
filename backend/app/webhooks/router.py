@@ -19,6 +19,7 @@ import time
 from typing import Any
 import uuid
 
+import asyncpg
 from fastapi import APIRouter, Header, HTTPException, Request, status
 from sqlalchemy import select, text
 from sqlalchemy.exc import DBAPIError, ProgrammingError, SQLAlchemyError
@@ -35,19 +36,38 @@ logger = logging.getLogger("app.webhooks.router")
 
 router = APIRouter(prefix="/api/v1/webhooks", tags=["Webhooks"])
 
+_DB_OUTAGE_EXCEPTIONS = (
+    SQLAlchemyError,
+    DBAPIError,
+    asyncpg.PostgresError,
+    asyncpg.InterfaceError,
+    ConnectionError,
+    OSError,
+    TimeoutError,
+)
 
-async def _read_request_data(request: Request) -> tuple[dict[str, Any], bytes]:
-    """Safely extracts parsed JSON dict and raw bytes from incoming request."""
+_ROUTE_LOOKUP_SQL = text(
+    "SELECT id, tenant_id, provider, webhook_secret_hash, is_active "
+    "FROM get_webhook_integration_route(:id)"
+)
+_SET_TENANT_CONFIG_SQL = text("SELECT set_config('app.current_tenant_id', :tenant_id, true)")
+
+
+async def _read_request_data(request: Request) -> tuple[dict[str, Any], bytes, str | None]:
+    """Safely extracts parsed JSON dict, raw bytes, and validated JSON string from request."""
     raw_body = await request.body()
     payload: dict[str, Any] = {}
+    raw_payload_json: str | None = None
     if raw_body:
         try:
-            parsed = json.loads(raw_body)
+            decoded = raw_body.decode("utf-8")
+            parsed = json.loads(decoded)
             if isinstance(parsed, dict):
                 payload = parsed
+                raw_payload_json = decoded
         except Exception:
             payload = {"raw": raw_body.decode("utf-8", errors="replace")}
-    return payload, raw_body
+    return payload, raw_body, raw_payload_json
 
 
 @router.post(
@@ -74,7 +94,7 @@ async def ingest_webhook_by_provider(
             detail=f"Unsupported webhook provider '{provider}'",
         )
 
-    payload, raw_body = await _read_request_data(request)
+    payload, raw_body, raw_payload_json = await _read_request_data(request)
 
     # 1. Optional signature verification if explicit secret is provided
     if x_webhook_secret:
@@ -126,8 +146,9 @@ async def ingest_webhook_by_provider(
                 provider_delivery_id=delivery_id,
                 payload=payload,
                 event_type=str(event_type)[:64],
+                raw_payload_json=raw_payload_json,
             )
-    except (SQLAlchemyError, DBAPIError, ConnectionError, OSError) as exc:
+    except _DB_OUTAGE_EXCEPTIONS as exc:
         logger.error(f"Database unavailable during provider webhook staging: {exc}")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -282,7 +303,7 @@ async def ingest_webhook_for_integration(
     SCRUM-335: Idempotent staging in webhook_events within a single pooled transaction.
     SCRUM-331: Returns HTTP 503 with Retry-After if database is unavailable.
     """
-    payload, raw_body = await _read_request_data(request)
+    payload, raw_body, raw_payload_json = await _read_request_data(request)
 
     tenant_id, provider, raw_secret, _ = await _get_integration_route_info(
         integration_id=integration_id,
@@ -312,12 +333,48 @@ async def ingest_webhook_for_integration(
     )
 
     try:
-        async with AsyncSessionLocal() as session:
-            async with session.begin():
-                await session.execute(
-                    text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
-                    {"tenant_id": str(tenant_id)},
-                )
+        try:
+            async with AsyncSessionLocal() as session:
+                async with session.begin():
+                    res = await session.execute(_ROUTE_LOOKUP_SQL, {"id": integration_id})
+                    row = res.mappings().first()
+
+                    tenant_id, provider, delivery_id, event_type = (
+                        _verify_and_extract_for_integration(
+                            integration_id=integration_id,
+                            row=row,
+                            request=request,
+                            payload=payload,
+                            raw_body=raw_body,
+                        )
+                    )
+
+                    await session.execute(
+                        _SET_TENANT_CONFIG_SQL,
+                        {"tenant_id": str(tenant_id)},
+                    )
+                    result = await stage_webhook_event_idempotent(
+                        db=session,
+                        tenant_id=tenant_id,
+                        integration_id=integration_id,
+                        provider=provider,
+                        provider_delivery_id=delivery_id,
+                        payload=payload,
+                        event_type=event_type,
+                        raw_payload_json=raw_payload_json,
+                    )
+        except ProgrammingError as p_exc:
+            if "get_webhook_integration_route" not in str(p_exc):
+                raise
+            fallback_row = await _fallback_lookup_integration_route(integration_id, x_tenant_id)
+            tenant_id, provider, delivery_id, event_type = _verify_and_extract_for_integration(
+                integration_id=integration_id,
+                row=fallback_row,
+                request=request,
+                payload=payload,
+                raw_body=raw_body,
+            )
+            async with get_tenant_db_context(tenant_id) as session:
                 result = await stage_webhook_event_idempotent(
                     db=session,
                     tenant_id=tenant_id,
@@ -325,9 +382,12 @@ async def ingest_webhook_for_integration(
                     provider=provider,
                     provider_delivery_id=delivery_id,
                     payload=payload,
-                    event_type=str(event_type)[:64],
+                    event_type=event_type,
+                    raw_payload_json=raw_payload_json,
                 )
-    except (SQLAlchemyError, DBAPIError, ConnectionError, OSError) as exc:
+    except HTTPException:
+        raise
+    except _DB_OUTAGE_EXCEPTIONS as exc:
         logger.error(
             f"Failed to stage webhook event for integration {integration_id} due to database outage: {exc}"
         )
