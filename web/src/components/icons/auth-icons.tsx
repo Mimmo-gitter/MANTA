@@ -69,3 +69,50 @@ export function AlertErrorIcon({ className = "w-[18px] h-[18px]" }: { className?
     </svg>
   );
 }
+
+export function SecurityLockMintIcon({ className = "w-4 h-4" }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      <path
+        d="M4 6.66658V5.33325C4 5.10611 4.01893 4.88339 4.05531 4.66658M12 6.66658V5.33325C12 3.12411 10.2091 1.33325 8 1.33325C6.80533 1.33325 5.73295 1.85701 5 2.68743"
+        strokeLinecap="round"
+        stroke="#00F5A0"
+      />
+      <path
+        d="M7.33301 14.6667H5.33301C3.44739 14.6667 2.50458 14.6667 1.91879 14.0809C1.33301 13.4951 1.33301 12.5523 1.33301 10.6667C1.33301 8.78115 1.33301 7.83835 1.91879 7.25255C2.50458 6.66675 3.44739 6.66675 5.33301 6.66675H10.6663C12.5519 6.66675 13.4947 6.66675 14.0805 7.25255C14.6663 7.83835 14.6663 8.78115 14.6663 10.6667V10.6667V10.6668C14.6663 12.5524 14.6663 13.4951 14.0805 14.0809C13.4947 14.6667 12.5519 14.6667 10.6663 14.6667H9.99967"
+        strokeLinecap="round"
+        stroke="#00F5A0"
+      />
+    </svg>
+  );
+}
+
+export function ArrowRightMintIcon({ className = "w-4 h-4" }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      width="16"
+      height="16"
+      viewBox="0 0 16 16"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      aria-hidden="true"
+    >
+      <path
+        d="M9 3L14 8M14 8L9 13M14 8H2"
+        strokeWidth="1.66667"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        stroke="#006B43"
+      />
+    </svg>
+  );
+}

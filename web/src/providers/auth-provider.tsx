@@ -67,12 +67,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setIsLoading(false);
     };
 
+    const onUserSignedOut = () => {
+      setUser(null);
+      setBackendUser(null);
+      setIsLoading(false);
+    };
+
     manager.events.addUserLoaded(onUserLoaded);
     manager.events.addUserUnloaded(onUserUnloaded);
+    manager.events.addUserSignedOut(onUserSignedOut);
 
     return () => {
       manager.events.removeUserLoaded(onUserLoaded);
       manager.events.removeUserUnloaded(onUserUnloaded);
+      manager.events.removeUserSignedOut(onUserSignedOut);
     };
   }, [syncUser]);
 
@@ -82,10 +90,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     setIsLoading(true);
-    await logoutUser();
     setUser(null);
     setBackendUser(null);
-    setIsLoading(false);
+    try {
+      await logoutUser();
+    } finally {
+      setIsLoading(false);
+    }
   }, []);
 
   // Compute authoritative display name
