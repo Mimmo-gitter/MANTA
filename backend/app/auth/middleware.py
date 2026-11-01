@@ -4,9 +4,16 @@ import jwt
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
+from starlette.routing import Match
 
 from app.auth.errors import AuthError, JWKSUnavailable
 from app.auth.jwks import JWKSClient
+from app.auth.permissions import (
+    FORBIDDEN_RESPONSE,
+    find_matched_route,
+    get_route_declared_permissions,
+)
+from app.auth.schemas import TokenClaims
 from app.auth.tokens import decode_token, extract_bearer_token, read_kid
 from app.config import settings
 
@@ -70,6 +77,7 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
             )
             request.state.claims = claims
             request.state.tenant_id = claims["tenant_id"]
+            request.state.user = TokenClaims.from_claims(claims)
         except JWKSUnavailable:
             logger.warning("JWKS unavailable during token verification")
             return JSONResponse(
@@ -83,5 +91,19 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
                 status_code=401,
                 headers={"WWW-Authenticate": "Bearer"},
             )
+
+        # Enforce deny-by-default: reject any protected route lacking a declared permission
+        match, route, endpoint = find_matched_route(request.app, request.scope)
+        if match == Match.FULL:
+            declared = get_route_declared_permissions(route, endpoint)
+            if not declared:
+                logger.warning(
+                    "Access denied: protected route '%s' lacks declared permissions (deny-by-default)",
+                    request.url.path,
+                )
+                return JSONResponse(
+                    FORBIDDEN_RESPONSE,
+                    status_code=403,
+                )
 
         return await call_next(request)
