@@ -211,7 +211,4 @@ async def delete_integration(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Integration '{integration_id}' not found",
         )
-    from app.webhooks.router import clear_integration_route_cache
-
-    clear_integration_route_cache(integration_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
