@@ -34,6 +34,7 @@ from app.auth.permissions import (
 )
 from app.auth.schemas import TokenClaims
 from app.config import settings
+from app.db.session import async_engine
 from app.main import app
 
 TENANT_ID = "11111111-1111-1111-1111-111111111111"
@@ -100,6 +101,14 @@ def auth_fixture():
     }
 
     app.state.jwks_client = original_client
+
+
+@pytest.fixture(autouse=True)
+async def cleanup_engine():
+    """Teardown database engine connections per test event loop."""
+    await async_engine.dispose()
+    yield
+    await async_engine.dispose()
 
 
 # ==============================================================================
