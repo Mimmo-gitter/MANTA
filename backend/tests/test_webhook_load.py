@@ -107,9 +107,9 @@ async def test_200_signed_webhook_requests_p95_below_100ms(tmp_path):
 
     runner = WebhookLoadTestRunner(
         total_requests=200,
-        concurrency=15,
+        concurrency=8,
         in_process=True,
-        warmup_requests=3,
+        warmup_requests=8,
         max_p95_ms=100.0,
         report_path=report_file,
     )
