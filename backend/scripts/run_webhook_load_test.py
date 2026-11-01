@@ -614,7 +614,7 @@ class WebhookLoadTestRunner:
         total_requests: int = 200,
         concurrency: int = 15,
         in_process: bool = False,
-        warmup_requests: int = 3,
+        warmup_requests: int = 15,
         max_p95_ms: float = DEFAULT_MAX_P95_MS,
         report_path: Path | None = None,
     ) -> None:

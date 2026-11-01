@@ -15,6 +15,7 @@ Features:
 from collections.abc import Mapping
 import json
 import logging
+import time
 from typing import Any
 import uuid
 
@@ -184,14 +185,54 @@ async def _fallback_lookup_integration_route(
     }
 
 
-def _verify_and_extract_for_integration(
+# Cache for integration routing metadata to accelerate high-throughput webhook intake:
+# integration_id -> (tenant_id, provider, raw_secret, is_active, expire_at)
+_integration_route_cache: dict[uuid.UUID, tuple[uuid.UUID, str, str | None, bool, float]] = {}
+
+
+def clear_integration_route_cache(integration_id: uuid.UUID | None = None) -> None:
+    """Clear integration route cache (for tests or when integrations are deleted/updated)."""
+    if integration_id is None:
+        _integration_route_cache.clear()
+    else:
+        _integration_route_cache.pop(integration_id, None)
+
+
+async def _get_integration_route_info(
     integration_id: uuid.UUID,
-    row: Mapping[str, Any] | None,
-    request: Request,
-    payload: dict[str, Any],
-    raw_body: bytes,
-) -> tuple[uuid.UUID, str, str, str]:
-    """Validates active integration status, decrypts secret, verifies HMAC, and extracts metadata."""
+    x_tenant_id: str | None,
+) -> tuple[uuid.UUID, str, str | None, bool]:
+    """Retrieve integration routing metadata with TTL caching and seamless fallback."""
+    now = time.monotonic()
+    cached = _integration_route_cache.get(integration_id)
+    if cached is not None and cached[4] > now:
+        return cached[0], cached[1], cached[2], cached[3]
+
+    row: Mapping[str, Any] | None = None
+    try:
+        async with AsyncSessionLocal() as session:
+            stmt = text(
+                "SELECT id, tenant_id, provider, webhook_secret_hash, is_active "
+                "FROM get_webhook_integration_route(:id)"
+            )
+            res = await session.execute(stmt, {"id": integration_id})
+            row = res.mappings().first()
+    except ProgrammingError as p_exc:
+        if "get_webhook_integration_route" not in str(p_exc):
+            raise
+        fallback_row = await _fallback_lookup_integration_route(integration_id, x_tenant_id)
+        if fallback_row:
+            row = fallback_row
+    except (SQLAlchemyError, DBAPIError, ConnectionError, OSError) as exc:
+        logger.error(
+            f"Failed to lookup integration route for {integration_id} due to database outage: {exc}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database storage service unavailable. Please retry delivery.",
+            headers={"Retry-After": "30"},
+        )
+
     if not row or not row.get("is_active"):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -201,40 +242,27 @@ def _verify_and_extract_for_integration(
     tenant_id: uuid.UUID = row["tenant_id"]
     provider: str = row["provider"]
     secret_hash: str | None = row.get("webhook_secret_hash")
+    is_active: bool = bool(row.get("is_active", True))
 
-    if secret_hash:
-        raw_secret = secret_hash
-        if encryption_service.is_encrypted(secret_hash):
-            try:
-                raw_secret = encryption_service.decrypt(secret_hash)
-            except Exception as exc:
-                logger.error(f"Failed to decrypt integration secret for {integration_id}: {exc}")
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Failed to decrypt integration credential",
-                )
+    raw_secret: str | None = secret_hash
+    if secret_hash and encryption_service.is_encrypted(secret_hash):
+        try:
+            raw_secret = encryption_service.decrypt(secret_hash)
+        except Exception as exc:
+            logger.error(f"Failed to decrypt integration secret for {integration_id}: {exc}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to decrypt integration credential",
+            )
 
-        verify_signature_for_provider(
-            provider=provider,
-            secret=raw_secret,
-            raw_body=raw_body,
-            headers=request.headers,
-        )
-
-    delivery_id = extract_delivery_id(
-        provider=provider,
-        headers=request.headers,
-        payload=payload,
-        raw_body=raw_body,
+    _integration_route_cache[integration_id] = (
+        tenant_id,
+        provider,
+        raw_secret,
+        is_active,
+        now + 60.0,
     )
-    event_type = (
-        request.headers.get("x-github-event")
-        or request.headers.get("x-atlassian-webhook-event")
-        or payload.get("event_type")
-        or payload.get("type")
-        or "webhook"
-    )
-    return tenant_id, provider, delivery_id, str(event_type)[:64]
+    return tenant_id, provider, raw_secret, is_active
 
 
 @router.post(
@@ -256,52 +284,40 @@ async def ingest_webhook_for_integration(
     """
     payload, raw_body = await _read_request_data(request)
 
+    tenant_id, provider, raw_secret, _ = await _get_integration_route_info(
+        integration_id=integration_id,
+        x_tenant_id=x_tenant_id,
+    )
+
+    if raw_secret:
+        verify_signature_for_provider(
+            provider=provider,
+            secret=raw_secret,
+            raw_body=raw_body,
+            headers=request.headers,
+        )
+
+    delivery_id = extract_delivery_id(
+        provider=provider,
+        headers=request.headers,
+        payload=payload,
+        raw_body=raw_body,
+    )
+    event_type = (
+        request.headers.get("x-github-event")
+        or request.headers.get("x-atlassian-webhook-event")
+        or payload.get("event_type")
+        or payload.get("type")
+        or "webhook"
+    )
+
     try:
-        try:
-            async with AsyncSessionLocal() as session:
-                async with session.begin():
-                    stmt = text(
-                        "SELECT id, tenant_id, provider, webhook_secret_hash, is_active "
-                        "FROM get_webhook_integration_route(:id)"
-                    )
-                    res = await session.execute(stmt, {"id": integration_id})
-                    row = res.mappings().first()
-
-                    tenant_id, provider, delivery_id, event_type = (
-                        _verify_and_extract_for_integration(
-                            integration_id=integration_id,
-                            row=row,
-                            request=request,
-                            payload=payload,
-                            raw_body=raw_body,
-                        )
-                    )
-
-                    await session.execute(
-                        text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
-                        {"tenant_id": str(tenant_id)},
-                    )
-                    result = await stage_webhook_event_idempotent(
-                        db=session,
-                        tenant_id=tenant_id,
-                        integration_id=integration_id,
-                        provider=provider,
-                        provider_delivery_id=delivery_id,
-                        payload=payload,
-                        event_type=event_type,
-                    )
-        except ProgrammingError as p_exc:
-            if "get_webhook_integration_route" not in str(p_exc):
-                raise
-            fallback_row = await _fallback_lookup_integration_route(integration_id, x_tenant_id)
-            tenant_id, provider, delivery_id, event_type = _verify_and_extract_for_integration(
-                integration_id=integration_id,
-                row=fallback_row,
-                request=request,
-                payload=payload,
-                raw_body=raw_body,
-            )
-            async with get_tenant_db_context(tenant_id) as session:
+        async with AsyncSessionLocal() as session:
+            async with session.begin():
+                await session.execute(
+                    text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
+                    {"tenant_id": str(tenant_id)},
+                )
                 result = await stage_webhook_event_idempotent(
                     db=session,
                     tenant_id=tenant_id,
@@ -309,10 +325,8 @@ async def ingest_webhook_for_integration(
                     provider=provider,
                     provider_delivery_id=delivery_id,
                     payload=payload,
-                    event_type=event_type,
+                    event_type=str(event_type)[:64],
                 )
-    except HTTPException:
-        raise
     except (SQLAlchemyError, DBAPIError, ConnectionError, OSError) as exc:
         logger.error(
             f"Failed to stage webhook event for integration {integration_id} due to database outage: {exc}"
