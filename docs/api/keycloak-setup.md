@@ -114,3 +114,7 @@ docker compose up -d
 curl -s http://localhost:8080/realms/manta/.well-known/openid-configuration | grep "manta"
 ```
 Keycloak automatically imports the realm on boot from the mounted JSON file.
+
+## Automated Browser Tests (Playwright E2E)
+End-to-end authentication test scenarios (successful sign-in, wrong password, cancelled login, sign-out, and access to a protected page when signed out) are documented in `docs/auth-test-scenarios.md` and automated in `web/e2e/auth-keycloak-journey.spec.ts`.
+

@@ -46,6 +46,7 @@ Backend Lint  Backend Tests  Migration Check  Docker Build      Web Checks
 | **Migration Check** | `backend-migrations` | Alembic, PostgreSQL 16 (`pgvector/pgvector:pg16`) | GitHub Actions pip cache (`backend/requirements.txt`) | Starts a PostgreSQL + pgvector service and runs `upgrade head`, `downgrade base`, `upgrade head`, and `alembic check` (drift detection), printing the failing revision on any error. |
 | **Docker Build** | `backend-docker-build` | Docker Buildx (`docker/build-push-action`) | GitHub Actions cache backend (`type=gha`, `mode=max`) | Validates multi-stage Docker image compilation and dependency resolution without pushing unverified images. |
 | **Web Checks** | `web-checks` | Next.js 15, ESLint | GitHub Actions npm cache (`web/package-lock.json`) | Verifies web portal TypeScript types, ESLint compliance, and production static site builds. |
+| **Web E2E Tests** | `web-e2e` | Playwright, Keycloak 24 (`manta` realm) | GitHub Actions npm cache (`web/package-lock.json`) | Boots Keycloak with `infra/keycloak/realm-export.json` and runs automated browser tests covering sign-in, wrong password, cancelled login, sign-out, and protected route access (`docs/auth-test-scenarios.md`). |
 | **Unified Status Gate** | `ci-gate` | Bash status evaluator | N/A | Consolidates upstream results; exits `1` if any stage fails or cancels, emitting a unified status check to GitHub. |
 
 ---
@@ -65,7 +66,7 @@ To ensure no code can be merged into `develop` without passing all CI checks, fo
    - Check **Require status checks to pass before merging**
    - Check **Require branches to be up to date before merging**
    - In the **Status checks that are required** search box, select:
-     - `CI Status Check` (or the underlying jobs: `Backend Lint & Formatting`, `Backend Test Suite`, `Database Migration Check`, `Backend Docker Image Build`, `Web Portal Lint & Build`)
+     - `CI Status Check` (or the underlying jobs: `Backend Lint & Formatting`, `Backend Test Suite`, `Database Migration Check`, `Backend Docker Image Build`, `Web Portal Lint & Build`, `Web Portal Playwright E2E Tests`)
 5. Click **Create** or **Save changes**.
 
 *(Repeat the same rule for the `main` branch to guarantee production release protection).*
@@ -114,4 +115,5 @@ python backend/scripts/verify_migrations.py --step all
 cd web
 npm run lint
 npm run build
+npm run test:e2e
 ```
