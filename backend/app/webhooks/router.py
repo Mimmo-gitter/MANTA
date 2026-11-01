@@ -12,18 +12,18 @@ Features:
 - Returns HTTP 503 with Retry-After header if PostgreSQL is unavailable (SCRUM-331).
 """
 
+from collections.abc import Mapping
 import json
 import logging
 from typing import Any
 import uuid
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Header, HTTPException, Request, status
 from sqlalchemy import select, text
-from sqlalchemy.exc import DBAPIError, SQLAlchemyError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import DBAPIError, ProgrammingError, SQLAlchemyError
 
 from app.db.models.models import Integration
-from app.db.session import get_db, get_tenant_db_context
+from app.db.session import AsyncSessionLocal, get_tenant_db_context
 from app.integrations.crypto import encryption_service
 from app.webhooks.delivery import extract_delivery_id
 from app.webhooks.schemas import WebhookIntakeResponse
@@ -148,105 +148,60 @@ async def ingest_webhook_by_provider(
     )
 
 
-@router.post(
-    "/integrations/{integration_id}",
-    response_model=WebhookIntakeResponse,
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Ingest incoming webhook bound to a specific integration with signature verification",
-)
-async def ingest_webhook_for_integration(
+async def _fallback_lookup_integration_route(
     integration_id: uuid.UUID,
+    x_tenant_id: str | None,
+) -> dict[str, Any] | None:
+    """Fallback lookup if SECURITY DEFINER function get_webhook_integration_route is unmigrated."""
+    query = select(
+        Integration.id,
+        Integration.tenant_id,
+        Integration.provider,
+        Integration.webhook_secret_hash,
+        Integration.is_active,
+    ).where(
+        Integration.id == integration_id,
+        Integration.is_active.is_(True),
+    )
+    if x_tenant_id:
+        tenant_uuid = uuid.UUID(x_tenant_id)
+        async with get_tenant_db_context(tenant_uuid) as session:
+            res = await session.execute(query)
+            t_row = res.first()
+    else:
+        async with AsyncSessionLocal() as session:
+            res = await session.execute(query)
+            t_row = res.first()
+
+    if not t_row:
+        return None
+    return {
+        "id": t_row[0],
+        "tenant_id": t_row[1],
+        "provider": t_row[2],
+        "webhook_secret_hash": t_row[3],
+        "is_active": t_row[4],
+    }
+
+
+def _verify_and_extract_for_integration(
+    integration_id: uuid.UUID,
+    row: Mapping[str, Any] | None,
     request: Request,
-    x_tenant_id: str | None = Header(None, alias="X-Tenant-ID"),
-    db: AsyncSession = Depends(get_db),
-) -> WebhookIntakeResponse:
-    """
-    SCRUM-327: Resolves tenant strictly from integration ID. Rejects unknown IDs with HTTP 404.
-    SCRUM-325 & SCRUM-326: Verifies provider HMAC-SHA256 signature and Slack replay window.
-    SCRUM-335: Idempotent staging in webhook_events.
-    SCRUM-331: Returns HTTP 503 with Retry-After if database is unavailable.
-    """
-    payload, raw_body = await _read_request_data(request)
-
-    # 1. Resolve integration routing metadata (SCRUM-327)
-    row = None
-    try:
-        stmt = text(
-            "SELECT id, tenant_id, provider, webhook_secret_hash, is_active "
-            "FROM get_webhook_integration_route(:id)"
-        )
-        res = await db.execute(stmt, {"id": integration_id})
-        row = res.mappings().first()
-    except (SQLAlchemyError, DBAPIError, ConnectionError, OSError) as exc:
-        logger.error(f"Database unavailable during integration route lookup: {exc}")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Database storage service unavailable. Please retry delivery.",
-            headers={"Retry-After": "30"},
-        )
-    except Exception:
-        # Fallback query if SECURITY DEFINER function is not yet migrated
-        try:
-            if x_tenant_id:
-                tenant_uuid = uuid.UUID(x_tenant_id)
-                async with get_tenant_db_context(tenant_uuid) as session:
-                    res = await session.execute(
-                        select(
-                            Integration.id,
-                            Integration.tenant_id,
-                            Integration.provider,
-                            Integration.webhook_secret_hash,
-                            Integration.is_active,
-                        ).where(
-                            Integration.id == integration_id,
-                            Integration.is_active.is_(True),
-                        )
-                    )
-                    t_row = res.first()
-            else:
-                res = await db.execute(
-                    select(
-                        Integration.id,
-                        Integration.tenant_id,
-                        Integration.provider,
-                        Integration.webhook_secret_hash,
-                        Integration.is_active,
-                    ).where(
-                        Integration.id == integration_id,
-                        Integration.is_active.is_(True),
-                    )
-                )
-                t_row = res.first()
-
-            if t_row:
-                row = {
-                    "id": t_row[0],
-                    "tenant_id": t_row[1],
-                    "provider": t_row[2],
-                    "webhook_secret_hash": t_row[3],
-                    "is_active": t_row[4],
-                }
-        except (SQLAlchemyError, DBAPIError, ConnectionError, OSError) as exc:
-            logger.error(f"Database unavailable during fallback route lookup: {exc}")
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Database storage service unavailable. Please retry delivery.",
-                headers={"Retry-After": "30"},
-            )
-        except Exception:
-            row = None
-
+    payload: dict[str, Any],
+    raw_body: bytes,
+) -> tuple[uuid.UUID, str, str, str]:
+    """Validates active integration status, decrypts secret, verifies HMAC, and extracts metadata."""
     if not row or not row.get("is_active"):
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Integration not found or inactive",
         )
 
-    tenant_id = row["tenant_id"]
-    provider = row["provider"]
-    secret_hash = row.get("webhook_secret_hash")
+    tenant_id: uuid.UUID = row["tenant_id"]
+    provider: str = row["provider"]
+    secret_hash: str | None = row.get("webhook_secret_hash")
 
-    # 2. Decrypt secret and verify HMAC signature (SCRUM-325, SCRUM-326)
     if secret_hash:
         raw_secret = secret_hash
         if encryption_service.is_encrypted(secret_hash):
@@ -259,7 +214,6 @@ async def ingest_webhook_for_integration(
                     detail="Failed to decrypt integration credential",
                 )
 
-        # Enforce provider-specific signature verification
         verify_signature_for_provider(
             provider=provider,
             secret=raw_secret,
@@ -267,25 +221,98 @@ async def ingest_webhook_for_integration(
             headers=request.headers,
         )
 
-    # 3. Extract delivery ID
     delivery_id = extract_delivery_id(
         provider=provider,
         headers=request.headers,
         payload=payload,
         raw_body=raw_body,
     )
+    event_type = (
+        request.headers.get("x-github-event")
+        or request.headers.get("x-atlassian-webhook-event")
+        or payload.get("event_type")
+        or payload.get("type")
+        or "webhook"
+    )
+    return tenant_id, provider, delivery_id, str(event_type)[:64]
 
-    # 4. Idempotently stage event under tenant context (SCRUM-331 resilient)
+
+@router.post(
+    "/integrations/{integration_id}",
+    response_model=WebhookIntakeResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Ingest incoming webhook bound to a specific integration with signature verification",
+)
+async def ingest_webhook_for_integration(
+    integration_id: uuid.UUID,
+    request: Request,
+    x_tenant_id: str | None = Header(None, alias="X-Tenant-ID"),
+) -> WebhookIntakeResponse:
+    """
+    SCRUM-327: Resolves tenant strictly from integration ID. Rejects unknown IDs with HTTP 404.
+    SCRUM-325 & SCRUM-326: Verifies provider HMAC-SHA256 signature and Slack replay window.
+    SCRUM-335: Idempotent staging in webhook_events within a single pooled transaction.
+    SCRUM-331: Returns HTTP 503 with Retry-After if database is unavailable.
+    """
+    payload, raw_body = await _read_request_data(request)
+
     try:
-        async with get_tenant_db_context(tenant_id) as session:
-            result = await stage_webhook_event_idempotent(
-                db=session,
-                tenant_id=tenant_id,
+        try:
+            async with AsyncSessionLocal() as session:
+                async with session.begin():
+                    stmt = text(
+                        "SELECT id, tenant_id, provider, webhook_secret_hash, is_active "
+                        "FROM get_webhook_integration_route(:id)"
+                    )
+                    res = await session.execute(stmt, {"id": integration_id})
+                    row = res.mappings().first()
+
+                    tenant_id, provider, delivery_id, event_type = (
+                        _verify_and_extract_for_integration(
+                            integration_id=integration_id,
+                            row=row,
+                            request=request,
+                            payload=payload,
+                            raw_body=raw_body,
+                        )
+                    )
+
+                    await session.execute(
+                        text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
+                        {"tenant_id": str(tenant_id)},
+                    )
+                    result = await stage_webhook_event_idempotent(
+                        db=session,
+                        tenant_id=tenant_id,
+                        integration_id=integration_id,
+                        provider=provider,
+                        provider_delivery_id=delivery_id,
+                        payload=payload,
+                        event_type=event_type,
+                    )
+        except ProgrammingError as p_exc:
+            if "get_webhook_integration_route" not in str(p_exc):
+                raise
+            fallback_row = await _fallback_lookup_integration_route(integration_id, x_tenant_id)
+            tenant_id, provider, delivery_id, event_type = _verify_and_extract_for_integration(
                 integration_id=integration_id,
-                provider=provider,
-                provider_delivery_id=delivery_id,
+                row=fallback_row,
+                request=request,
                 payload=payload,
+                raw_body=raw_body,
             )
+            async with get_tenant_db_context(tenant_id) as session:
+                result = await stage_webhook_event_idempotent(
+                    db=session,
+                    tenant_id=tenant_id,
+                    integration_id=integration_id,
+                    provider=provider,
+                    provider_delivery_id=delivery_id,
+                    payload=payload,
+                    event_type=event_type,
+                )
+    except HTTPException:
+        raise
     except (SQLAlchemyError, DBAPIError, ConnectionError, OSError) as exc:
         logger.error(
             f"Failed to stage webhook event for integration {integration_id} due to database outage: {exc}"
