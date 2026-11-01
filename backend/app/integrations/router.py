@@ -14,7 +14,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
-from app.auth.dependencies import get_current_user
+from app.auth.permissions import Permission, require_permission
 from app.auth.schemas import TokenClaims
 from app.integrations.schemas import (
     GitHubConnectRequest,
@@ -42,22 +42,8 @@ logger = logging.getLogger("app.integrations.router")
 router = APIRouter(prefix="/api/v1/integrations", tags=["Integrations"])
 
 
-def require_tenant_admin(user: TokenClaims = Depends(get_current_user)) -> TokenClaims:
-    """
-    Enforces that the current authenticated user has administrator privileges.
-    Returns TokenClaims if valid, otherwise raises HTTP 403 Forbidden.
-    """
-    roles_upper = {r.upper() for r in user.roles}
-    admin_roles = {"TENANT_ADMIN", "ADMIN", "ORGANIZATION_ADMIN"}
-    if not (roles_upper & admin_roles):
-        logger.warning(
-            f"User '{user.sub}' with roles {user.roles} denied access to integration management"
-        )
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Forbidden: Tenant administrator privilege required",
-        )
-    return user
+# SCRUM-306 / SCRUM-322: Enforce MANAGE_WEBHOOK_INTEGRATIONS matrix permission (TENANT_ADMIN only)
+require_tenant_admin = require_permission(Permission.MANAGE_WEBHOOK_INTEGRATIONS)
 
 
 @router.post(

@@ -227,7 +227,7 @@ async def test_connect_endpoints_require_admin_role(auth_context):
     SCRUM-322: Non-admin users (e.g. DEVELOPER without TENANT_ADMIN)
     are strictly rejected with HTTP 403 Forbidden.
     """
-    tenant_id, _ = await register_test_tenant("rbac-non-admin")
+    tenant_id = uuid.uuid4()
     non_admin_token = mint_jwt(auth_context, tenant_id=tenant_id, roles=["DEVELOPER"])
 
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
@@ -238,7 +238,7 @@ async def test_connect_endpoints_require_admin_role(auth_context):
             headers=headers,
         )
         assert res.status_code == 403
-        assert "administrator privilege required" in res.json()["detail"].lower()
+        assert res.json() == {"detail": "Forbidden: insufficient permissions"}
 
 
 # ==============================================================================
