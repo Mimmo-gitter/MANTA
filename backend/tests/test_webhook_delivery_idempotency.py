@@ -1,7 +1,7 @@
 """
-SCRUM-335 / SCRUM-336: Comprehensive test suite for delivery identifier extraction and
-idempotent webhook duplicate-delivery scenarios across GitHub, Jira, and Slack
-(see docs/webhook-duplicate-test-scenarios.md).
+SCRUM-335 / SCRUM-336 / SCRUM-337: Comprehensive automated pytest suite for delivery
+identifier extraction and idempotent webhook duplicate-delivery scenarios across
+GitHub, Jira, and Slack (see docs/webhook-duplicate-test-scenarios.md).
 
 Verifies:
 1. Delivery ID extraction across GitHub, Jira, Slack, and generic providers.
@@ -13,23 +13,32 @@ Verifies:
 7. Missing delivery ID per provider -> secondary attribute fallback & deterministic SHA-256 digest row counts.
 8. Integration-bound webhook intake (/api/v1/webhooks/integrations/{id}) including cross-tenant duplicate isolation.
 9. Unsupported providers return HTTP 400.
+10. SCRUM-337 AC: Removing the unique constraint (`uq_webhook_provider_delivery`) makes duplicate-delivery tests fail.
 """
 
+from datetime import datetime, timezone
 import hashlib
 import hmac
 import json
+import os
+import re
 import time
 from typing import Any
 import uuid
 from httpx import ASGITransport, AsyncClient
 import pytest
-from sqlalchemy import text
+from sqlalchemy import UniqueConstraint, pool, text
+from sqlalchemy.exc import DBAPIError
+from sqlalchemy.ext.asyncio import create_async_engine
 
+from app.config import settings
+from app.db.models.models import WebhookEvent
 from app.db.session import async_engine, get_tenant_db_context
 from app.integrations.crypto import encryption_service
 from app.main import app
 from app.tenants.rate_limiter import registration_rate_limiter
 from app.webhooks.delivery import extract_delivery_id
+from app.webhooks.service import stage_webhook_event_idempotent
 
 
 @pytest.fixture(autouse=True)
@@ -836,3 +845,418 @@ async def test_missing_delivery_id_cross_provider_and_cross_tenant():
     assert len(rows_b) == 3
     assert {r["provider"] for r in rows_a} == {"github", "jira", "slack"}
     assert {r["provider"] for r in rows_b} == {"github", "jira", "slack"}
+
+
+# ============================================================================
+# SCRUM-337: Automated Duplicate-Delivery Pytest Suite & Unique Constraint Guardrails
+# ============================================================================
+
+
+def _get_admin_db_url() -> str:
+    """Resolve administrative PostgreSQL URL (table owner `manta_user`) for DDL constraint checks."""
+    mig_url = getattr(settings, "MIGRATION_DATABASE_URL", None) or os.getenv(
+        "MIGRATION_DATABASE_URL"
+    )
+    if mig_url:
+        return mig_url
+    base_url = settings.DATABASE_URL
+    if "eng_app_user" in base_url:
+        admin_user = os.getenv("POSTGRES_USER", "manta_user")
+        admin_pass = os.getenv("POSTGRES_PASSWORD", "manta_password")
+        return re.sub(r"://[^@]+@", f"://{admin_user}:{admin_pass}@", base_url)
+    return base_url
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["github", "jira", "slack"])
+async def test_send_each_integration_bound_event_twice_asserts_single_row_and_202_both_times(
+    provider: str,
+):
+    """
+    SCRUM-337 Scope 1:
+    Send each integration-bound signed webhook event twice for GitHub, Jira, and Slack;
+    assert HTTP 202 both times and a single stored row in `webhook_events`.
+    """
+    tenant_id = await _provision_test_tenant(f"Scrum337Integ {provider}")
+    integration_id = uuid.uuid4()
+    raw_secret = f"whsec_scrum337_{provider}_{uuid.uuid4().hex[:10]}"
+    encrypted_secret = encryption_service.encrypt(raw_secret)
+
+    async with get_tenant_db_context(tenant_id) as session:
+        await session.execute(
+            text(
+                "INSERT INTO integrations ("
+                "  id, tenant_id, provider, external_account_id, webhook_secret_hash, "
+                "  is_active, created_at, updated_at"
+                ") VALUES (:id, :tenant_id, :provider, :ext_acc, :wh_secret, true, NOW(), NOW())"
+            ),
+            {
+                "id": integration_id,
+                "tenant_id": tenant_id,
+                "provider": provider,
+                "ext_acc": f"scrum337-{provider}-acct",
+                "wh_secret": encrypted_secret,
+            },
+        )
+
+    delivery_id = f"scrum337-integ-{provider}-{uuid.uuid4().hex[:10]}"
+    if provider == "github":
+        payload: dict[str, Any] = {
+            "action": "synchronize",
+            "number": 337,
+            "repository": {"full_name": "manta/platform"},
+        }
+        raw_body = json.dumps(payload).encode("utf-8")
+        sig = hmac.new(raw_secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
+        headers = {
+            "Content-Type": "application/json",
+            "X-GitHub-Delivery": delivery_id,
+            "X-GitHub-Event": "pull_request",
+            "X-Hub-Signature-256": f"sha256={sig}",
+        }
+    elif provider == "jira":
+        payload = {
+            "webhookEvent": "jira:issue_updated",
+            "issue": {"key": "SCRUM-337", "fields": {"summary": "Automate duplicate tests"}},
+        }
+        raw_body = json.dumps(payload).encode("utf-8")
+        sig = hmac.new(raw_secret.encode("utf-8"), raw_body, hashlib.sha256).hexdigest()
+        headers = {
+            "Content-Type": "application/json",
+            "X-Atlassian-Webhook-Identifier": delivery_id,
+            "X-Atlassian-Webhook-Event": "jira:issue_updated",
+            "X-Hub-Signature-256": f"sha256={sig}",
+        }
+    else:
+        ts = str(int(time.time()))
+        payload = {
+            "type": "event_callback",
+            "event_id": delivery_id,
+            "event": {"type": "message", "text": "SCRUM-337 duplicate test"},
+        }
+        raw_body = json.dumps(payload).encode("utf-8")
+        basestring = f"v0:{ts}:{raw_body.decode('utf-8')}"
+        sig = hmac.new(
+            raw_secret.encode("utf-8"), basestring.encode("utf-8"), hashlib.sha256
+        ).hexdigest()
+        headers = {
+            "Content-Type": "application/json",
+            "X-Slack-Request-Timestamp": ts,
+            "X-Slack-Signature": f"v0={sig}",
+        }
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        res1 = await ac.post(
+            f"/api/v1/webhooks/integrations/{integration_id}",
+            content=raw_body,
+            headers=headers,
+        )
+        res2 = await ac.post(
+            f"/api/v1/webhooks/integrations/{integration_id}",
+            content=raw_body,
+            headers=headers,
+        )
+
+    assert res1.status_code == 202, res1.text
+    assert res2.status_code == 202, res2.text
+    data1 = res1.json()
+    data2 = res2.json()
+    assert data1["status"] == "accepted"
+    assert data1["duplicate"] is False
+    assert data2["status"] == "accepted"
+    assert data2["duplicate"] is True
+    assert data1["event_id"] == data2["event_id"]
+    assert data1["delivery_id"] == delivery_id
+    assert data2["delivery_id"] == delivery_id
+
+    rows = await _query_tenant_webhook_rows(tenant_id, provider, delivery_id)
+    assert len(rows) == 1, f"Expected a single row for {provider}, found {len(rows)}"
+    assert str(rows[0]["id"]) == data1["event_id"]
+    assert rows[0]["integration_id"] == integration_id
+    assert rows[0]["status"] == "staged"
+
+
+@pytest.mark.asyncio
+async def test_send_multiple_event_types_twice_asserts_single_row_per_event_and_202_both_times():
+    """
+    SCRUM-337 Scope 1:
+    Iterates through a catalog of realistic GitHub, Jira, and Slack webhook events,
+    sending each event twice in sequence and asserting HTTP 202 both times and a
+    single stored row per event.
+    """
+    tenant_id = await _provision_test_tenant("Scrum337Catalog")
+    event_catalog: list[tuple[str, str, dict[str, str], dict[str, Any]]] = [
+        (
+            "github",
+            f"gh-push-{uuid.uuid4().hex[:8]}",
+            {"X-GitHub-Event": "push"},
+            {"ref": "refs/heads/main", "commits": [{"id": "a1b2c3"}]},
+        ),
+        (
+            "github",
+            f"gh-pr-{uuid.uuid4().hex[:8]}",
+            {"X-GitHub-Event": "pull_request"},
+            {"action": "opened", "number": 101, "repository": {"full_name": "manta/api"}},
+        ),
+        (
+            "github",
+            f"gh-deploy-{uuid.uuid4().hex[:8]}",
+            {"X-GitHub-Event": "deployment_status"},
+            {"deployment_status": {"state": "success"}, "repository": {"full_name": "manta/api"}},
+        ),
+        (
+            "jira",
+            f"jira-created-{uuid.uuid4().hex[:8]}",
+            {"X-Atlassian-Webhook-Event": "jira:issue_created"},
+            {"webhookEvent": "jira:issue_created", "issue": {"key": "SCRUM-335"}},
+        ),
+        (
+            "jira",
+            f"jira-updated-{uuid.uuid4().hex[:8]}",
+            {"X-Atlassian-Webhook-Event": "jira:issue_updated"},
+            {"webhookEvent": "jira:issue_updated", "issue": {"key": "SCRUM-336"}},
+        ),
+        (
+            "jira",
+            f"jira-sprint-{uuid.uuid4().hex[:8]}",
+            {"X-Atlassian-Webhook-Event": "sprint_started"},
+            {"webhookEvent": "sprint_started", "sprint": {"id": 42, "state": "active"}},
+        ),
+        (
+            "slack",
+            f"EvMention{uuid.uuid4().hex[:8]}",
+            {},
+            {"type": "event_callback", "event": {"type": "app_mention", "text": "deploy status"}},
+        ),
+        (
+            "slack",
+            f"EvMessage{uuid.uuid4().hex[:8]}",
+            {},
+            {"type": "event_callback", "event": {"type": "message", "text": "incident resolved"}},
+        ),
+        (
+            "slack",
+            f"EvReaction{uuid.uuid4().hex[:8]}",
+            {},
+            {
+                "type": "event_callback",
+                "event": {"type": "reaction_added", "reaction": "white_check_mark"},
+            },
+        ),
+    ]
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        for provider, delivery_id, extra_headers, body in event_catalog:
+            headers = {"X-Tenant-ID": str(tenant_id), **extra_headers}
+            payload = dict(body)
+            if provider == "github":
+                headers["X-GitHub-Delivery"] = delivery_id
+            elif provider == "jira":
+                headers["X-Atlassian-Webhook-Identifier"] = delivery_id
+            else:
+                payload["event_id"] = delivery_id
+
+            first_res = await ac.post(f"/api/v1/webhooks/{provider}", json=payload, headers=headers)
+            second_res = await ac.post(
+                f"/api/v1/webhooks/{provider}", json=payload, headers=headers
+            )
+
+            assert first_res.status_code == 202, first_res.text
+            assert second_res.status_code == 202, second_res.text
+            assert first_res.json()["duplicate"] is False
+            assert second_res.json()["duplicate"] is True
+            assert first_res.json()["event_id"] == second_res.json()["event_id"]
+
+            event_rows = await _query_tenant_webhook_rows(tenant_id, provider, delivery_id)
+            assert len(event_rows) == 1, (
+                f"Expected 1 row for ({provider}, {delivery_id}), found {len(event_rows)}"
+            )
+
+    all_tenant_rows = await _query_tenant_webhook_rows(tenant_id)
+    assert len(all_tenant_rows) == len(event_catalog)
+
+
+@pytest.mark.asyncio
+async def test_webhook_events_unique_constraint_schema_and_catalog_guardrail():
+    """
+    SCRUM-337 AC 2 (Static & Catalog Guardrail):
+    Asserts that the composite unique constraint `uq_webhook_provider_delivery` on
+    `(tenant_id, provider, provider_delivery_id)` exists in both the SQLAlchemy model
+    metadata and the live PostgreSQL `pg_constraint` catalog.
+    Removing the unique constraint from `WebhookEvent` or migrations immediately fails this test.
+    """
+    # 1. Verify SQLAlchemy model metadata
+    table = WebhookEvent.__table__
+    uq_constraints = [
+        c
+        for c in table.constraints
+        if isinstance(c, UniqueConstraint) and c.name == "uq_webhook_provider_delivery"
+    ]
+    assert len(uq_constraints) == 1, (
+        "Missing UniqueConstraint 'uq_webhook_provider_delivery' on WebhookEvent model"
+    )
+    uq_cols = tuple(col.name for col in uq_constraints[0].columns)
+    assert uq_cols == ("tenant_id", "provider", "provider_delivery_id"), (
+        f"Unexpected columns in uq_webhook_provider_delivery: {uq_cols}"
+    )
+
+    # 2. Verify live PostgreSQL catalog (pg_constraint)
+    async with async_engine.connect() as conn:
+        res = await conn.execute(
+            text(
+                """
+                SELECT con.conname,
+                       ARRAY(
+                           SELECT att.attname
+                           FROM unnest(con.conkey) WITH ORDINALITY AS k(attnum, ord)
+                           JOIN pg_attribute att
+                             ON att.attrelid = con.conrelid AND att.attnum = k.attnum
+                           ORDER BY k.ord
+                       ) AS column_names
+                FROM pg_constraint con
+                JOIN pg_class rel ON rel.oid = con.conrelid
+                JOIN pg_namespace nsp ON nsp.oid = rel.relnamespace
+                WHERE nsp.nspname = 'public'
+                  AND rel.relname = 'webhook_events'
+                  AND con.contype = 'u'
+                  AND con.conname = 'uq_webhook_provider_delivery'
+                """
+            )
+        )
+        row = res.mappings().first()
+        assert row is not None, (
+            "PostgreSQL table 'webhook_events' is missing unique constraint 'uq_webhook_provider_delivery'"
+        )
+        assert list(row["column_names"]) == [
+            "tenant_id",
+            "provider",
+            "provider_delivery_id",
+        ]
+
+
+@pytest.mark.asyncio
+async def test_removing_unique_constraint_makes_duplicate_delivery_test_fail():
+    """
+    SCRUM-337 AC 2: "Removing the unique constraint makes a test fail."
+
+    Verifies against live PostgreSQL that if `uq_webhook_provider_delivery` is removed from
+    `webhook_events`:
+    1. `stage_webhook_event_idempotent` (`ON CONFLICT (tenant_id, provider, provider_delivery_id) DO NOTHING`)
+       raises a PostgreSQL `DBAPIError` (`InvalidColumnReferenceError`), and the webhook endpoint
+       fails to return HTTP 202 (returning 503 instead).
+    2. Without the unique constraint, inserting the same `(tenant_id, provider, provider_delivery_id)`
+       twice produces 2 rows in `webhook_events`, causing the single-row assertion (`len(rows) == 1`)
+       to fail with `AssertionError`.
+    3. Restoring `uq_webhook_provider_delivery` restores HTTP 202 + single-row idempotency.
+    """
+    tenant_id = await _provision_test_tenant("ConstraintDropVerify")
+    delivery_id = f"drop-uq-{uuid.uuid4().hex[:10]}"
+    headers, payload = _build_provider_webhook_request("github", delivery_id, tenant_id)
+
+    admin_engine = create_async_engine(
+        _get_admin_db_url(),
+        poolclass=pool.NullPool,
+        connect_args={"statement_cache_size": 0, "prepared_statement_cache_size": 0},
+    )
+    constraint_dropped = False
+    try:
+        async with admin_engine.begin() as admin_conn:
+            await admin_conn.execute(
+                text("ALTER TABLE webhook_events DROP CONSTRAINT uq_webhook_provider_delivery")
+            )
+            constraint_dropped = True
+
+        # Proof 1: With `uq_webhook_provider_delivery` removed, `stage_webhook_event_idempotent`
+        # fails in PostgreSQL because ON CONFLICT (tenant_id, provider, provider_delivery_id)
+        # has no matching unique constraint, and the HTTP endpoint fails the 202 assertion.
+        with pytest.raises(DBAPIError, match="no unique or exclusion constraint"):
+            async with get_tenant_db_context(tenant_id) as session:
+                await stage_webhook_event_idempotent(
+                    db=session,
+                    tenant_id=tenant_id,
+                    provider="github",
+                    provider_delivery_id=delivery_id,
+                    payload=payload,
+                    event_type="push",
+                )
+
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            res_without_uq = await ac.post("/api/v1/webhooks/github", json=payload, headers=headers)
+        with pytest.raises(AssertionError):
+            assert res_without_uq.status_code == 202
+
+        # Proof 2: Without `uq_webhook_provider_delivery`, delivering the same event twice via
+        # plain INSERT creates 2 duplicate rows, breaking the single-row (`len(rows) == 1`) test assertion.
+        now_utc = datetime.now(timezone.utc)
+        insert_plain_sql = text(
+            """
+            INSERT INTO webhook_events (
+                id, tenant_id, integration_id, provider, provider_delivery_id,
+                event_type, received_at, payload, status, attempts, created_at
+            ) VALUES (
+                :id, :tenant_id, NULL, 'github', :delivery_id,
+                'push', :now_utc, CAST(:payload_json AS jsonb), 'staged', 0, :now_utc
+            )
+            """
+        )
+        async with get_tenant_db_context(tenant_id) as session:
+            for _ in range(2):
+                await session.execute(
+                    insert_plain_sql,
+                    {
+                        "id": uuid.uuid4(),
+                        "tenant_id": tenant_id,
+                        "delivery_id": delivery_id,
+                        "now_utc": now_utc,
+                        "payload_json": json.dumps(payload),
+                    },
+                )
+
+        unconstrained_rows = await _query_tenant_webhook_rows(tenant_id, "github", delivery_id)
+        assert len(unconstrained_rows) == 2
+        with pytest.raises(AssertionError):
+            assert len(unconstrained_rows) == 1, (
+                f"Expected 1 row after duplicate delivery, found {len(unconstrained_rows)}"
+            )
+
+        # Clean up the duplicate rows before restoring the unique constraint
+        async with get_tenant_db_context(tenant_id) as session:
+            await session.execute(
+                text(
+                    "DELETE FROM webhook_events "
+                    "WHERE tenant_id = :tenant_id AND provider = 'github' AND provider_delivery_id = :delivery_id"
+                ),
+                {"tenant_id": tenant_id, "delivery_id": delivery_id},
+            )
+    finally:
+        if constraint_dropped:
+            async with admin_engine.begin() as admin_conn:
+                await admin_conn.execute(
+                    text(
+                        "DELETE FROM webhook_events a USING webhook_events b "
+                        "WHERE a.ctid < b.ctid "
+                        "  AND a.tenant_id = b.tenant_id "
+                        "  AND a.provider = b.provider "
+                        "  AND a.provider_delivery_id = b.provider_delivery_id"
+                    )
+                )
+                await admin_conn.execute(
+                    text(
+                        "ALTER TABLE webhook_events "
+                        "ADD CONSTRAINT uq_webhook_provider_delivery "
+                        "UNIQUE (tenant_id, provider, provider_delivery_id)"
+                    )
+                )
+        await admin_engine.dispose()
+
+    # Verify restoration: sending the event twice now succeeds with 202 both times and 1 row
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        r1 = await ac.post("/api/v1/webhooks/github", json=payload, headers=headers)
+        r2 = await ac.post("/api/v1/webhooks/github", json=payload, headers=headers)
+
+    assert r1.status_code == 202
+    assert r2.status_code == 202
+    assert r1.json()["duplicate"] is False
+    assert r2.json()["duplicate"] is True
+    restored_rows = await _query_tenant_webhook_rows(tenant_id, "github", delivery_id)
+    assert len(restored_rows) == 1
