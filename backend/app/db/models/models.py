@@ -181,6 +181,31 @@ class UserRole(Base):
     user: Mapped["User"] = relationship(back_populates="user_roles")
 
 
+class Invitation(Base):
+    __tablename__ = "invitations"
+
+    __table_args__ = (
+        Index("idx_invitations_tenant_id", "tenant_id"),
+        UniqueConstraint("token_hash", name="uq_invitations_token_hash"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    email: Mapped[str] = mapped_column(String(255), nullable=False)
+    role: Mapped[str] = mapped_column(String(32), ForeignKey("roles.id"), nullable=False)
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    invited_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, nullable=False
+    )
+
+
 # ============================================================================
 # DOMAIN 2: PROJECTS & INTEGRATIONS
 # ============================================================================
