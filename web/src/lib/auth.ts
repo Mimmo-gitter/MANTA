@@ -238,6 +238,7 @@ export async function logoutUser(
     }
 
     keysToRemove.forEach((key) => window.localStorage.removeItem(key));
+    window.sessionStorage.setItem("user_signed_out", "true");
   }
 
   // 2. Call Keycloak end_session_endpoint for IdP session termination

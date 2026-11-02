@@ -1,13 +1,9 @@
 import { test, expect } from "@playwright/test";
 
 test.describe("OIDC Authorization Code Flow with PKCE (SCRUM-273)", () => {
-  test("header Sign In button navigates to /login page", async ({ page }) => {
+  test("unauthenticated access redirects to /login page", async ({ page }) => {
     await page.goto("/");
-    const headerSignIn = page.getByTestId("header-signin-button");
-    await expect(headerSignIn).toBeVisible();
-    await headerSignIn.click();
-
-    await expect(page).toHaveURL(/\/login/);
+    await expect(page).toHaveURL(/\/login/, { timeout: 10000 });
     await expect(page.getByTestId("company-sso-button")).toBeVisible();
     await expect(page.getByRole("heading", { name: "M.A.N.T.A." })).toBeVisible();
     await expect(page.getByText("Engineering Intelligence Platform")).toBeVisible();

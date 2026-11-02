@@ -5,6 +5,13 @@ from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth.permissions import (
+    Permission,
+    build_stub_response,
+    require_permission,
+    stub_route_kwargs,
+)
+from app.auth.schemas import StubEndpointResponse, TokenClaims
 from app.db.session import get_db
 from app.tenants.rate_limiter import registration_rate_limiter
 from app.tenants.schemas import TenantRegisterRequest, TenantRegisterResponse
@@ -12,6 +19,22 @@ from app.tenants.schemas import TenantRegisterRequest, TenantRegisterResponse
 logger = logging.getLogger("app.tenants.router")
 
 router = APIRouter(prefix="/tenants", tags=["Tenants"])
+tenant_admin_router = APIRouter(prefix="/api/v1/tenants", tags=["Tenants", "Stubs"])
+
+
+@tenant_admin_router.get(
+    "/users",
+    **stub_route_kwargs(
+        Permission.MANAGE_TENANT_USERS_AND_ROLES,
+        summary="Manage Tenant Users and Roles",
+        description="Provision tenant user accounts, assign RBAC roles, and execute GDPR Article 17 right-to-erasure cryptographic salt destruction.",
+    ),
+)
+async def list_tenant_users(
+    user: TokenClaims = Depends(require_permission(Permission.MANAGE_TENANT_USERS_AND_ROLES)),
+) -> StubEndpointResponse:
+    """Provision tenant user accounts, assign RBAC roles, and execute GDPR Article 17 erasure requests."""
+    return build_stub_response(Permission.MANAGE_TENANT_USERS_AND_ROLES)
 
 
 @router.post(

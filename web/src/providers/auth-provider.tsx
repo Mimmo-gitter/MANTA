@@ -40,6 +40,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   const syncUser = useCallback((activeUser: User | null) => {
+    if (activeUser && typeof window !== "undefined") {
+      window.sessionStorage.removeItem("user_signed_out");
+    }
     setUser(activeUser);
     setIsLoading(false);
   }, []);

@@ -37,7 +37,9 @@ export default defineConfig({
         }
       ],
   webServer: {
-    command: hasProductionBuild ? "npm run start" : "npm run dev",
+    command: process.platform === "win32"
+      ? (hasProductionBuild ? "npm.cmd run start" : "npm.cmd run dev")
+      : (hasProductionBuild ? "npm run start" : "npm run dev"),
     url: "http://localhost:3000",
     reuseExistingServer: !process.env.CI,
     timeout: 120 * 1000

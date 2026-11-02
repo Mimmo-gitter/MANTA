@@ -1,10 +1,15 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.adr import adr_router
 from app.auth import JWKSClient, JWTAuthMiddleware, auth_router
 from app.config import settings
+from app.dora import dora_router
 from app.integrations import integrations_router
-from app.tenants import router as tenants_router
+from app.projects import projects_router
+from app.refactoring import refactoring_router
+from app.search import search_router
+from app.tenants import router as tenants_router, tenant_admin_router
 from app.webhooks import webhooks_router
 
 app = FastAPI(
@@ -41,11 +46,21 @@ app.include_router(auth_router)
 # Include tenant registration endpoints (SCRUM-289)
 app.include_router(tenants_router)
 
+# Include tenant administration stub endpoints (SCRUM-308)
+app.include_router(tenant_admin_router)
+
 # Include webhook intake endpoints (SCRUM-335)
 app.include_router(webhooks_router)
 
 # Include integration connection and management endpoints (SCRUM-322, SCRUM-323)
 app.include_router(integrations_router)
+
+# Include stub endpoints for future iteration actions (SCRUM-308)
+app.include_router(dora_router)
+app.include_router(projects_router)
+app.include_router(refactoring_router)
+app.include_router(search_router)
+app.include_router(adr_router)
 
 
 @app.get("/health")

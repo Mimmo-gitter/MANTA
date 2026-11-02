@@ -338,6 +338,21 @@ test.describe("OIDC Callback Handling & Multi-Tenant Dashboard (SCRUM-274)", () 
     let capturedState: string | null = null;
     let capturedNonce: string | null = null;
 
+    await page.route("**/realms/manta/.well-known/openid-configuration", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          issuer: "http://localhost:8080/realms/manta",
+          authorization_endpoint: "http://localhost:8080/realms/manta/protocol/openid-connect/auth",
+          token_endpoint: "http://localhost:8080/realms/manta/protocol/openid-connect/token",
+          userinfo_endpoint: "http://localhost:8080/realms/manta/protocol/openid-connect/userinfo",
+          end_session_endpoint: "http://localhost:8080/realms/manta/protocol/openid-connect/logout",
+          jwks_uri: "http://localhost:8080/realms/manta/protocol/openid-connect/certs",
+        }),
+      });
+    });
+
     await page.route("**/protocol/openid-connect/certs", async (route) => {
       await route.fulfill({
         status: 200,
@@ -412,7 +427,11 @@ test.describe("OIDC Callback Handling & Multi-Tenant Dashboard (SCRUM-274)", () 
     await expect.poll(() => capturedState, { timeout: 10000 }).not.toBeNull();
 
     await page.goto(`/auth/callback?code=mock_code&state=${capturedState}`);
-    await expect(page).toHaveURL("/", { timeout: 15000 });
+    await expect(page.getByTestId("user-profile-name")).toContainText("Alpha Developer", { timeout: 15000 });
+
+    // Verify navigating to /login while authenticated redirects back to /
+    await page.goto("/login");
+    await expect(page).toHaveURL("/", { timeout: 10000 });
 
     const signOutBtn = page.getByTestId("header-signout-button");
     await expect(signOutBtn).toBeVisible();
