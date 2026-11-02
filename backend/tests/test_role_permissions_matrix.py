@@ -269,6 +269,25 @@ class TestRolePermissionsMatrix(unittest.TestCase):
                 f"TOP_MANAGEMENT must not possess operational permission {action}",
             )
 
+    def test_bundled_backend_fallback_matrix_matches_docs(self):
+        """
+        Verify the bundled fallback matrix inside backend/app/auth/roles-permissions.json
+        (used when running inside the standalone Docker container without /docs mounted)
+        is identical to docs/roles-permissions.json.
+        """
+        bundled_file = REPO_ROOT / "backend" / "app" / "auth" / "roles-permissions.json"
+        self.assertTrue(
+            bundled_file.is_file(),
+            f"Bundled fallback matrix missing at {bundled_file}",
+        )
+        with open(bundled_file, "r", encoding="utf-8") as f:
+            bundled_data = json.load(f)
+        self.assertEqual(
+            bundled_data,
+            self.data,
+            "backend/app/auth/roles-permissions.json must stay in sync with docs/roles-permissions.json",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
