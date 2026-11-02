@@ -107,7 +107,7 @@ async def stage_webhook_event_idempotent(
 
     # 2. Case A: Newly inserted event
     if inserted_id is not None:
-        logger.info(
+        logger.debug(
             f"Staged new webhook event {inserted_id} for provider '{prov}' (delivery: {delivery_id})"
         )
         return WebhookStagingResult(
