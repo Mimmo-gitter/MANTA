@@ -67,7 +67,7 @@ Scope item #2 requires verifying that all tables, constraints, and indexes built
 | `project_members` | `(id)` | `uq_project_member (project_id, user_id)` | `idx_project_members_tenant_id` | `tenant_isolation_policy` |
 | `project_links` | `(id)` | `uq_project_link (project_id, link_type, external_id)` | `idx_project_links_tenant_id` | `tenant_isolation_policy` |
 | `integrations` | `(id)` | `uq_tenant_provider_acc (tenant_id, provider, external_account_id)` | `idx_integrations_tenant_id` | `tenant_isolation_policy` |
-| `webhook_events` | `(id)` | `uq_webhook_provider_delivery (provider, provider_delivery_id)` | `idx_webhook_events_tenant_id` | `tenant_isolation_policy` |
+| `webhook_events` | `(id)` | `uq_webhook_provider_delivery (tenant_id, provider, provider_delivery_id)` | `idx_webhook_events_tenant_id` | `tenant_isolation_policy` |
 | `dead_letter_events` | `(id)` | — | `idx_dead_letter_events_tenant_id` | `tenant_isolation_policy` |
 | `outbox_events` | `(id)` | — | `idx_outbox_events_tenant_id` | `tenant_isolation_policy` |
 | `job_leases` | `(job_id)` | — | `idx_job_leases_tenant_id` | `tenant_isolation_policy` |
