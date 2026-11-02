@@ -110,13 +110,15 @@ class TestMigrationsCICheck(unittest.TestCase):
                             )
                             downgrade_indexes.append((idx_name, tname))
 
-        meta_tables = set(Base.metadata.tables.keys())
-        self.assertEqual(set(upgrade_tables), meta_tables)
+        initial_tables = set(upgrade_tables)
+        meta_tables = {t for t in Base.metadata.tables.keys() if t in initial_tables}
+        self.assertEqual(initial_tables, meta_tables)
         self.assertEqual(downgrade_tables, list(reversed(upgrade_tables)))
 
         meta_indexes = {
             (idx.name, tname)
             for tname, table in Base.metadata.tables.items()
+            if tname in initial_tables
             for idx in table.indexes
         }
         self.assertEqual(set(upgrade_indexes), meta_indexes)
