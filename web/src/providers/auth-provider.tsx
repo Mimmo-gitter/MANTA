@@ -17,6 +17,7 @@ import {
   getTenantDisplayName,
   type BackendUserClaims,
 } from "@/lib/auth";
+import { initAuthSync } from "@/lib/auth-tab-sync";
 
 interface AuthContextValue {
   user: User | null;
@@ -52,6 +53,27 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const manager = getUserManager();
 
+    const stopSync = initAuthSync((message) => {
+      if (
+        message.type === "RENEW_COMPLETED" ||
+        message.type === "LOGIN_COMPLETED"
+      ) {
+        getCurrentUser().then((updatedUser) => {
+          syncUser(updatedUser);
+        });
+      }
+
+      if (message.type === "RENEW_FAILED") {
+        console.error("Token renewal failed in another tab.");
+      }
+
+      if (message.type === "LOGOUT") {
+        setUser(null);
+        setBackendUser(null);
+        setIsLoading(false);
+      }
+    });
+
     // Initial hydration from sessionStorage
     getCurrentUser().then((initialUser) => {
       syncUser(initialUser);
@@ -81,6 +103,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       manager.events.removeUserLoaded(onUserLoaded);
       manager.events.removeUserUnloaded(onUserUnloaded);
       manager.events.removeUserSignedOut(onUserSignedOut);
+
+      stopSync();
     };
   }, [syncUser]);
 
