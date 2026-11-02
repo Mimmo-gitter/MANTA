@@ -4,7 +4,7 @@ from app.db.session import async_engine
 
 
 @pytest.fixture(autouse=True)
-async def cleanup_db_engine():
+def cleanup_db_engine():
     """Ensure SQLAlchemy async engine connection pool is cleanly disposed.
 
     In pytest-asyncio with function-scoped event loops, underlying asyncpg
@@ -12,6 +12,6 @@ async def cleanup_db_engine():
     the engine pool before and after each test ensures that no stale connection
     references an already-closed event loop.
     """
-    await async_engine.dispose()
+    async_engine.sync_engine.dispose()
     yield
-    await async_engine.dispose()
+    async_engine.sync_engine.dispose()

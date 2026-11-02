@@ -19,7 +19,6 @@ from httpx import ASGITransport, AsyncClient
 import jwt
 from jwt.algorithms import RSAAlgorithm
 import pytest
-from fastapi import Depends
 from starlette.requests import Request
 
 from app.auth.jwks import JWKSClient
@@ -34,7 +33,6 @@ from app.auth.permissions import (
 )
 from app.auth.schemas import TokenClaims
 from app.config import settings
-from app.db.session import async_engine
 from app.main import app
 
 TENANT_ID = "11111111-1111-1111-1111-111111111111"
@@ -103,16 +101,47 @@ def auth_fixture():
     app.state.jwks_client = original_client
 
 
-@pytest.fixture(autouse=True)
-async def cleanup_engine():
-    """Teardown database engine connections per test event loop."""
-    await async_engine.dispose()
-    yield
-    await async_engine.dispose()
+# ==============================================================================
+# Matrix Actions & Stub Route Mapping (SCRUM-308)
+# ==============================================================================
+
+ACTION_ROUTE_MAP: dict[Permission, tuple[str, str]] = {
+    Permission.VIEW_PROJECT_DORA: (
+        "GET",
+        "/api/v1/dora/projects/11111111-1111-1111-1111-111111111111",
+    ),
+    Permission.VIEW_PORTFOLIO_OVERVIEW: ("GET", "/api/v1/dora/portfolio"),
+    Permission.VIEW_SPRINT_BURNDOWN_WIP: (
+        "GET",
+        "/api/v1/projects/11111111-1111-1111-1111-111111111111/sprints/burndown",
+    ),
+    Permission.RECEIVE_SCOPE_CREEP_ALERT: (
+        "GET",
+        "/api/v1/projects/11111111-1111-1111-1111-111111111111/scope-alerts",
+    ),
+    Permission.REASSIGN_PR_REVIEWER_MOBILE: (
+        "POST",
+        "/api/v1/projects/11111111-1111-1111-1111-111111111111/pull-requests/pr-1/reassign-reviewer",
+    ),
+    Permission.VIEW_OWN_CODE_QUALITY: ("GET", "/api/v1/refactoring/code-quality/me"),
+    Permission.VIEW_TECH_DEBT_AND_SCIP_GRAPH: (
+        "GET",
+        "/api/v1/refactoring/projects/11111111-1111-1111-1111-111111111111/scip-graph",
+    ),
+    Permission.TRIGGER_REFACTOR_ANALYSIS: (
+        "POST",
+        "/api/v1/refactoring/projects/11111111-1111-1111-1111-111111111111/analyze",
+    ),
+    Permission.SEARCH_ADR: ("GET", "/api/v1/search/adrs"),
+    Permission.APPROVE_ADR_TENANT_PRIVATE: ("POST", "/api/v1/adrs/adr-1/approve"),
+    Permission.PUBLISH_GLOBAL_ADR: ("POST", "/api/v1/adrs/adr-1/publish-global"),
+    Permission.MANAGE_WEBHOOK_INTEGRATIONS: ("GET", "/api/v1/integrations"),
+    Permission.MANAGE_TENANT_USERS_AND_ROLES: ("GET", "/api/v1/tenants/users"),
+}
 
 
 # ==============================================================================
-# AC 1: Each protected route has a declared permission
+# AC 1: Each protected route has a declared permission & OpenAPI schema marking
 # ==============================================================================
 
 
@@ -152,69 +181,125 @@ def test_each_protected_route_has_declared_permission():
     )
 
 
+@pytest.mark.asyncio
+async def test_all_12_stub_endpoints_in_openapi_schema():
+    """
+    SCRUM-308 AC 2: Verify all 12 placeholder stubs are clearly marked in the OpenAPI schema:
+    1. Summary prefixed with '[STUB]'.
+    2. Tagged with 'Stubs'.
+    3. Custom vendor extensions: 'x-stub' is True and 'x-required-permission' is set.
+    4. HTTP 501 response defined with StubEndpointResponse schema.
+    """
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        resp = await ac.get("/openapi.json")
+
+    assert resp.status_code == 200
+    schema = resp.json()
+    paths = schema.get("paths", {})
+
+    stub_permissions = {p for p in Permission if p != Permission.MANAGE_WEBHOOK_INTEGRATIONS}
+    found_stubs: set[str] = set()
+
+    for perm in stub_permissions:
+        method, url = ACTION_ROUTE_MAP[perm]
+        # Normalize route path to OpenAPI template format (e.g. {project_id})
+        # Find matching OpenAPI path
+        matched_op = None
+        for path_pattern, path_item in paths.items():
+            if method.lower() in path_item:
+                op = path_item[method.lower()]
+                if op.get("x-required-permission") == perm.value:
+                    matched_op = op
+                    break
+
+        assert matched_op is not None, f"Stub endpoint for {perm.value} not found in OpenAPI schema"
+        assert matched_op.get("x-stub") is True, f"Missing x-stub on {perm.value}"
+        assert matched_op.get("x-required-permission") == perm.value
+        assert matched_op.get("summary", "").startswith("[STUB]"), (
+            f"Summary missing [STUB] prefix for {perm.value}"
+        )
+        assert "Stubs" in matched_op.get("tags", []), f"Missing 'Stubs' tag on {perm.value}"
+        assert "501" in matched_op.get("responses", {}), (
+            f"Missing 501 response schema for {perm.value}"
+        )
+
+        found_stubs.add(perm.value)
+
+    assert len(found_stubs) == 12, f"Expected 12 stub endpoints, found {len(found_stubs)}"
+
+
+@pytest.mark.asyncio
+async def test_stub_endpoints_unauthenticated_returns_401():
+    """Unauthenticated calls to all stub endpoints return HTTP 401 Unauthorized."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        for perm, (method, url) in ACTION_ROUTE_MAP.items():
+            if perm == Permission.MANAGE_WEBHOOK_INTEGRATIONS:
+                continue
+            resp = await ac.request(method, url)
+            assert resp.status_code == 401, (
+                f"Expected 401 on unauthenticated call to {method} {url}, got {resp.status_code}"
+            )
+            assert resp.json() == {"detail": "Not authenticated"}
+
+
 # ==============================================================================
-# AC 2: Unauthorised calls return HTTP 403 with consistent error body
+# AC 2: Unauthorised calls return HTTP 403 with consistent error body,
+#       Authorized calls reach 501 stub payload (or 200 for real endpoints)
 # ==============================================================================
 
 
 @pytest.mark.asyncio
 async def test_all_91_matrix_decisions_enforced(auth_fixture):
     """
-    Exhaustively evaluate all 91 (role, action) pairs in docs/roles-permissions.json.
-    Verifies that ALLOW yields HTTP 200, and DENY yields HTTP 403 with consistent error body.
+    SCRUM-308 Acceptance Criteria:
+    - Stubs exist for each matrix action not yet implemented.
+    - Permission checks apply to stubs the same way as to real endpoints.
+
+    Exhaustively evaluate all 91 (role, action) pairs in docs/roles-permissions.json
+    against the actual registered application endpoints.
+    - DENY: HTTP 403 with consistent FORBIDDEN_RESPONSE.
+    - ALLOW on stubs: HTTP 501 with StubEndpointResponse.
+    - ALLOW on real endpoint (MANAGE_WEBHOOK_INTEGRATIONS): HTTP 200.
     """
     matrix = get_permission_matrix()
     pk = auth_fixture["private_key"]
 
-    # Register temporary test endpoint for each action to isolate matrix evaluation
-    from fastapi import APIRouter
-
-    test_router = APIRouter(prefix="/api/v1/test-matrix", tags=["matrix-test"])
-    for perm_key in matrix.actions_data.keys():
-        perm_action = Permission(perm_key)
-
-        def make_endpoint(p):
-            async def handler(u: TokenClaims = Depends(require_permission(p))):
-                return {"action": p, "sub": u.sub}
-
-            return handler
-
-        endpoint = make_endpoint(perm_action)
-        test_router.add_api_route(
-            f"/{perm_key.lower()}",
-            endpoint,
-            methods=["GET"],
-        )
-
-    app.include_router(test_router)
-
-    try:
+    with mock.patch(
+        "app.integrations.router.list_tenant_integrations",
+        mock.AsyncMock(return_value=[]),
+    ):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             for role_id, role_actions in matrix.matrix.items():
                 token = make_token(pk, roles=[role_id], sub=f"user_{role_id.lower()}")
                 headers = {"Authorization": f"Bearer {token}"}
 
                 for action_id, cell in role_actions.items():
+                    perm_action = Permission(action_id)
+                    method, url = ACTION_ROUTE_MAP[perm_action]
                     expected_decision = cell["decision"]
-                    url = f"/api/v1/test-matrix/{action_id.lower()}"
 
-                    resp = await ac.get(url, headers=headers)
+                    resp = await ac.request(method, url, headers=headers)
+
                     if expected_decision == "ALLOW":
-                        assert resp.status_code == 200, (
-                            f"Expected ALLOW for [{role_id}][{action_id}], got {resp.status_code}: {resp.text}"
-                        )
+                        if perm_action == Permission.MANAGE_WEBHOOK_INTEGRATIONS:
+                            assert resp.status_code == 200, (
+                                f"Expected 200 for [{role_id}][{action_id}], got {resp.status_code}: {resp.text}"
+                            )
+                        else:
+                            assert resp.status_code == 501, (
+                                f"Expected 501 for [{role_id}][{action_id}], got {resp.status_code}: {resp.text}"
+                            )
+                            body = resp.json()
+                            assert body["status"] == "not_implemented"
+                            assert body["action"] == action_id
+                            assert "placeholder stub" in body["detail"]
                     else:
                         assert resp.status_code == 403, (
-                            f"Expected DENY for [{role_id}][{action_id}], got {resp.status_code}: {resp.text}"
+                            f"Expected 403 for [{role_id}][{action_id}], got {resp.status_code}: {resp.text}"
                         )
                         assert resp.json() == FORBIDDEN_RESPONSE, (
-                            f"Expected consistent 403 body, got: {resp.json()}"
+                            f"Expected consistent 403 body for [{role_id}][{action_id}], got: {resp.json()}"
                         )
-    finally:
-        # Clean up temporary test routes
-        app.routes[:] = [
-            r for r in app.routes if not getattr(r, "path", "").startswith("/api/v1/test-matrix")
-        ]
 
 
 @pytest.mark.asyncio

@@ -5,6 +5,7 @@ exclude = [
     ".git",
     ".venv",
     "backend/migrations/versions",
+    "migrations/versions",
     "web",
     "sandbox",
 ]
