@@ -477,9 +477,10 @@ test.describe("Authentication Journey E2E against Keycloak Test Realm (SCRUM-240
     await expect(kcError.first()).toContainText(/Invalid username or password/i);
     expect(page.url()).toContain("/realms/manta/");
 
-    // 4. Navigate back to portal and verify no user session was created
+    // 4. Navigate back to portal and verify unauthenticated user is redirected to /login
     await page.goto("/");
-    await expect(page.getByTestId("header-signin-button")).toBeVisible();
+    await expect(page).toHaveURL(/\/login/, { timeout: 10000 });
+    await expect(page.getByTestId("company-sso-button")).toBeVisible();
     await expect(page.getByTestId("user-profile-name")).not.toBeVisible();
     await expect(page.getByTestId("user-tenant-badge")).not.toBeVisible();
 
