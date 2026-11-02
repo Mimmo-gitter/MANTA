@@ -1,6 +1,6 @@
 # Webhook Duplicate-Delivery Protection Test Scenarios (GitHub, Jira & Slack)
 
-**Task:** Create test scenarios for GitHub, Jira and Slack duplicates (`SCRUM-336`)  
+**Tasks:** Create test scenarios for GitHub, Jira and Slack duplicates (`SCRUM-336`) & Write automated pytest tests for duplicate delivery (`SCRUM-337`)  
 **Parent User Story:** `SCRUM-252` (`US-16` Duplicate delivery protection)  
 **Related Tickets:** `SCRUM-335` (Delivery ID extraction & idempotent staging), `SCRUM-325` / `SCRUM-326` (HMAC-SHA256 & Slack replay verification), `SCRUM-327` (Integration-bound tenant routing), `SCRUM-331` (PostgreSQL outage resilience)  
 **Target Database Table:** `webhook_events` (`uq_webhook_provider_delivery (tenant_id, provider, provider_delivery_id)`)  
@@ -253,6 +253,17 @@ All test scenarios operate against two isolated tenants (`Tenant A` and `Tenant 
 
 ---
 
+### 4.4 Unique Constraint Guardrail & Regression Scenarios (`SCRUM-337`)
+
+| Scenario ID | Scenario Name | Verification Target | Expected Outcome | Automated Pytest Mapping |
+| :--- | :--- | :--- | :--- | :--- |
+| **TC-DUP-INTEG-001** | **Integration-Bound Same Event Twice** | `POST /api/v1/webhooks/integrations/{integration_id}` (`github`, `jira`, `slack`) | Sending each signed event twice returns `HTTP 202 Accepted` both times (`duplicate: false` then `duplicate: true`) and stores **`1 row`** in `webhook_events`. | `test_send_each_integration_bound_event_twice_asserts_single_row_and_202_both_times` |
+| **TC-DUP-CAT-001** | **Multi-Event Catalog Sent Twice** | 9 distinct GitHub, Jira, and Slack event types sent 2x each (`18` deliveries) | Every delivery returns `HTTP 202 Accepted`; each unique event stores **`1 row`** (**`9 rows`** total across the 9 distinct events). | `test_send_multiple_event_types_twice_asserts_single_row_per_event_and_202_both_times` |
+| **TC-DUP-UQ-001** | **Unique Constraint Schema & Catalog Guardrail** | `WebhookEvent.__table__` & `pg_constraint` (`uq_webhook_provider_delivery`) | Verifies `uq_webhook_provider_delivery` is present on `(tenant_id, provider, provider_delivery_id)`. Removing the constraint from models or migrations fails the test. | `test_webhook_events_unique_constraint_schema_and_catalog_guardrail` |
+| **TC-DUP-UQ-002** | **Removing Unique Constraint Makes Test Fail** | Live PostgreSQL `ALTER TABLE webhook_events DROP CONSTRAINT uq_webhook_provider_delivery` | Dropping `uq_webhook_provider_delivery` causes `ON CONFLICT (tenant_id, provider, provider_delivery_id) DO NOTHING` to fail (`DBAPIError`, breaking `HTTP 202`) and allows duplicate `INSERT`s to create **`2 rows`** (breaking `len(rows) == 1`). Restoring the constraint restores `HTTP 202` + **`1 row`**. | `test_removing_unique_constraint_makes_duplicate_delivery_test_fail` |
+
+---
+
 ## 5. Running the Automated Verification Suite
 
 ### Locally Against PostgreSQL 16
@@ -266,4 +277,4 @@ python -m pytest backend/tests/test_webhook_delivery_idempotency.py -v
 ```
 
 ### In GitHub Actions CI (`.github/workflows/ci.yml`)
-Every pull request and push executes [`backend/tests/test_webhook_delivery_idempotency.py`](../backend/tests/test_webhook_delivery_idempotency.py) inside the `backend-test` workflow job against PostgreSQL 16 under `eng_app_user` (`FORCE ROW LEVEL SECURITY`), gating merges via `ci-gate`.
+Every pull request and push executes [`backend/tests/test_webhook_delivery_idempotency.py`](../backend/tests/test_webhook_delivery_idempotency.py) inside both the `backend-test` and `pgbouncer-integration` workflow jobs against PostgreSQL 16 under `eng_app_user` (`FORCE ROW LEVEL SECURITY`), gating merges via `ci-gate`.
