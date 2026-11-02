@@ -98,10 +98,11 @@ test.describe("Login Page Accessibility & Responsiveness (320px to 4K)", () => {
   test("a11y: keyboard navigation through all interactive elements", async ({ page }) => {
     await page.goto("/login");
 
+    const ssoButton = page.getByTestId("company-sso-button");
+    await expect(ssoButton).toBeVisible();
+
     // Press Tab from page start
     await page.keyboard.press("Tab");
-    // Focus should be on Company SSO button
-    const ssoButton = page.getByTestId("company-sso-button");
     await expect(ssoButton).toBeFocused();
 
     // Tab to email input
