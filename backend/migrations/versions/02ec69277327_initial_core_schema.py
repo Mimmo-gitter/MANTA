@@ -429,7 +429,7 @@ def upgrade() -> None:
     sa.ForeignKeyConstraint(['integration_id'], ['integrations.id'], ondelete='SET NULL'),
     sa.ForeignKeyConstraint(['tenant_id'], ['tenants.id'], ondelete='CASCADE'),
     sa.PrimaryKeyConstraint('id'),
-    sa.UniqueConstraint('provider', 'provider_delivery_id', name='uq_webhook_provider_delivery')
+    sa.UniqueConstraint('tenant_id', 'provider', 'provider_delivery_id', name='uq_webhook_provider_delivery')
     )
     op.create_index('idx_webhook_events_tenant_id', 'webhook_events', ['tenant_id'], unique=False)
     op.create_table('acceptance_criteria_versions',

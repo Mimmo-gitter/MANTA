@@ -320,7 +320,12 @@ class WebhookEvent(Base):
 
     __table_args__ = (
         Index("idx_webhook_events_tenant_id", "tenant_id"),
-        UniqueConstraint("provider", "provider_delivery_id", name="uq_webhook_provider_delivery"),
+        UniqueConstraint(
+            "tenant_id",
+            "provider",
+            "provider_delivery_id",
+            name="uq_webhook_provider_delivery",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
