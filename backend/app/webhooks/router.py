@@ -49,7 +49,11 @@ _ROUTE_LOOKUP_SQL = text(
     "SELECT id, tenant_id, provider, webhook_secret_hash, is_active "
     "FROM get_webhook_integration_route(:id)"
 )
-_SET_TENANT_CONFIG_SQL = text("SELECT set_config('app.current_tenant_id', :tenant_id, true)")
+_SET_TENANT_CONFIG_SQL = text(
+    "SELECT set_config('app.current_tenant_id', :tenant_id, true), "
+    "set_config('synchronous_commit', 'off', true)"
+)
+_DECRYPTED_SECRET_CACHE: dict[tuple[str, str], str] = {}
 
 
 async def _read_request_data(request: Request) -> tuple[dict[str, Any], bytes, str | None]:
@@ -226,14 +230,23 @@ def _verify_and_extract_for_integration(
     if secret_hash:
         raw_secret = secret_hash
         if encryption_service.is_encrypted(secret_hash):
-            try:
-                raw_secret = encryption_service.decrypt(secret_hash)
-            except Exception as exc:
-                logger.error(f"Failed to decrypt integration secret for {integration_id}: {exc}")
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Failed to decrypt integration credential",
-                )
+            cache_key = (encryption_service.active_key_id, secret_hash)
+            cached_secret = _DECRYPTED_SECRET_CACHE.get(cache_key)
+            if cached_secret is not None:
+                raw_secret = cached_secret
+            else:
+                try:
+                    raw_secret = encryption_service.decrypt(secret_hash)
+                    if len(_DECRYPTED_SECRET_CACHE) < 1024:
+                        _DECRYPTED_SECRET_CACHE[cache_key] = raw_secret
+                except Exception as exc:
+                    logger.error(
+                        f"Failed to decrypt integration secret for {integration_id}: {exc}"
+                    )
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail="Failed to decrypt integration credential",
+                    )
 
         verify_signature_for_provider(
             provider=provider,

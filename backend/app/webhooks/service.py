@@ -1,11 +1,12 @@
 """
-SCRUM-335: Idempotent Webhook Staging Service.
+SCRUM-335 / SCRUM-336: Idempotent Webhook Staging Service.
 
 Inserts incoming webhook events into `webhook_events` table using PostgreSQL
-`ON CONFLICT (provider, provider_delivery_id) DO NOTHING`.
+`ON CONFLICT (tenant_id, provider, provider_delivery_id) DO NOTHING`.
 
 Guarantees:
-- Duplicate redeliveries are recognized and ignored cleanly.
+- Duplicate redeliveries within the same tenant and provider are recognized and ignored cleanly.
+- Identical delivery IDs across different tenants or different providers are both stored.
 - No unhandled unique constraint exceptions are raised.
 - Events are committed immediately before returning HTTP 202.
 """
@@ -30,7 +31,7 @@ _STAGE_WEBHOOK_SQL = text(
         :id, :tenant_id, :integration_id, :provider, :provider_delivery_id,
         :event_type, :received_at, CAST(:payload_json AS jsonb), 'staged', 0, :created_at
     )
-    ON CONFLICT (provider, provider_delivery_id) DO NOTHING
+    ON CONFLICT (tenant_id, provider, provider_delivery_id) DO NOTHING
     RETURNING id
     """
 )
@@ -39,7 +40,8 @@ _SELECT_EXISTING_WEBHOOK_ID_SQL = text(
     """
     SELECT id
     FROM webhook_events
-    WHERE provider = :provider
+    WHERE tenant_id = :tenant_id
+      AND provider = :provider
       AND provider_delivery_id = :provider_delivery_id
     LIMIT 1
     """
@@ -105,7 +107,7 @@ async def stage_webhook_event_idempotent(
 
     # 2. Case A: Newly inserted event
     if inserted_id is not None:
-        logger.info(
+        logger.debug(
             f"Staged new webhook event {inserted_id} for provider '{prov}' (delivery: {delivery_id})"
         )
         return WebhookStagingResult(
@@ -122,6 +124,7 @@ async def stage_webhook_event_idempotent(
     existing_res = await db.execute(
         _SELECT_EXISTING_WEBHOOK_ID_SQL,
         {
+            "tenant_id": tenant_id,
             "provider": prov,
             "provider_delivery_id": delivery_id,
         },

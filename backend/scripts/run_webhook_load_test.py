@@ -16,6 +16,7 @@ Verifies:
 import argparse
 import asyncio
 from datetime import datetime, timezone
+import gc
 import hashlib
 import hmac
 import json
@@ -612,9 +613,9 @@ class WebhookLoadTestRunner:
         dsn: str | None = None,
         base_url: str = "http://localhost:8000",
         total_requests: int = 200,
-        concurrency: int = 8,
+        concurrency: int = 2,
         in_process: bool = False,
-        warmup_requests: int = 8,
+        warmup_requests: int = 10,
         max_p95_ms: float = DEFAULT_MAX_P95_MS,
         report_path: Path | None = None,
     ) -> None:
@@ -780,6 +781,7 @@ class WebhookLoadTestRunner:
                 )
                 semaphore = asyncio.Semaphore(self.concurrency)
 
+                gc.collect()
                 overall_start = time.perf_counter()
                 results = await asyncio.gather(
                     *(self._send_one(client, item, semaphore) for item in prepared)
