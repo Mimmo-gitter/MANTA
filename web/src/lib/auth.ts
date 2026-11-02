@@ -57,6 +57,7 @@ export function getOidcSettings(): UserManagerSettings {
     post_logout_redirect_uri: postLogoutRedirectUri,
     response_type: "code",
     scope: "openid profile email",
+    automaticSilentRenew: true,
     // Explicit endpoints so redirection works even before Keycloak network discovery
     metadata: {
       issuer: AUTHORITY,
@@ -72,6 +73,7 @@ export function getOidcSettings(): UserManagerSettings {
 }
 
 let userManagerInstance: UserManager | null = null;
+let silentRenewPromise: ReturnType<UserManager["signinSilent"]> | null = null;
 
 export function getUserManager(): UserManager {
   if (typeof window === "undefined") {
@@ -80,7 +82,21 @@ export function getUserManager(): UserManager {
 
   if (!userManagerInstance) {
     userManagerInstance = new UserManager(getOidcSettings());
+
+    const originalSigninSilent =
+      userManagerInstance.signinSilent.bind(userManagerInstance);
+
+    userManagerInstance.signinSilent = (...args) => {
+      if (!silentRenewPromise) {
+        silentRenewPromise = originalSigninSilent(...args).finally(() => {
+          silentRenewPromise = null;
+        });
+      }
+
+      return silentRenewPromise;
+    };
   }
+
   return userManagerInstance;
 }
 
