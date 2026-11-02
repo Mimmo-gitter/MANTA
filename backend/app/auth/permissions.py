@@ -57,8 +57,13 @@ class PermissionMatrix:
 
     def __init__(self, matrix_path: Path | str | None = None) -> None:
         if matrix_path is None:
-            repo_root = Path(__file__).resolve().parent.parent.parent.parent
-            matrix_path = repo_root / "docs" / "roles-permissions.json"
+            resolved = Path(__file__).resolve()
+            candidates = [
+                resolved.parent.parent.parent.parent / "docs" / "roles-permissions.json",
+                resolved.parent.parent.parent / "docs" / "roles-permissions.json",
+                resolved.parent / "roles-permissions.json",
+            ]
+            matrix_path = next((p for p in candidates if p.is_file()), candidates[0])
         self.matrix_path = Path(matrix_path)
         if not self.matrix_path.is_file():
             raise FileNotFoundError(f"Role permissions matrix file not found: {self.matrix_path}")
