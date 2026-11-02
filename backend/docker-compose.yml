@@ -77,6 +77,8 @@ services:
       - REDIS_URL=${REDIS_URL:-redis://valkey:6379/0}
       - KEYCLOAK_URL=${KEYCLOAK_INTERNAL_URL:-http://keycloak:8080}
       - KEYCLOAK_REALM=${KEYCLOAK_REALM:-manta}
+    volumes:
+      - ../docs/roles-permissions.json:/docs/roles-permissions.json:ro
     ports:
       - "${APP_PORT:-8000}:8000"
     networks:

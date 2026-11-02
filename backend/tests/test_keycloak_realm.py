@@ -30,13 +30,15 @@ class TestKeycloakRealmExport(unittest.TestCase):
         self.assertEqual(data.get("sslRequired"), "none")
 
     def test_required_roles_present(self):
-        """Verify all 5 required roles from Blueprint Section 6.2 are declared."""
+        """Verify all 7 canonical roles from SRS §2.3 are declared, and DELIVERY_EXEC is removed."""
         data = self._load_realm()
         expected_roles = {
             "DEVELOPER",
             "SCRUM_MASTER",
+            "PROJECT_MANAGER",
             "SOLUTION_ARCHITECT",
-            "DELIVERY_EXEC",
+            "DELIVERY_DIRECTOR",
+            "TOP_MANAGEMENT",
             "TENANT_ADMIN",
         }
         realm_roles = {
@@ -47,6 +49,11 @@ class TestKeycloakRealmExport(unittest.TestCase):
             missing_roles,
             set(),
             f"Missing required realm roles: {missing_roles}",
+        )
+        self.assertNotIn(
+            "DELIVERY_EXEC",
+            realm_roles,
+            "DELIVERY_EXEC must be deprecated and removed from Keycloak realm roles",
         )
 
     def test_portal_client_pkce_and_urls(self):
@@ -134,7 +141,7 @@ class TestKeycloakRealmExport(unittest.TestCase):
         data = self._load_realm()
         users = {u.get("username"): u for u in data.get("users", [])}
 
-        required_test_users = ["alpha_admin", "alpha_dev", "beta_admin", "beta_dev"]
+        required_test_users = ["alpha_admin", "alpha_dev", "beta_admin", "beta_dev", "beta_exec"]
         for username in required_test_users:
             self.assertIn(username, users, f"Expected user {username} to exist")
             user = users[username]
@@ -143,6 +150,52 @@ class TestKeycloakRealmExport(unittest.TestCase):
             self.assertTrue(len(credentials) > 0)
             self.assertEqual(credentials[0].get("type"), "password")
             self.assertTrue(len(user.get("realmRoles", [])) > 0)
+
+    def test_all_seven_roles_assigned_to_test_users(self):
+        """Verify that every one of the 7 roles is assigned to at least one test user in realm-export.json."""
+        data = self._load_realm()
+        expected_roles = {
+            "DEVELOPER",
+            "SCRUM_MASTER",
+            "PROJECT_MANAGER",
+            "SOLUTION_ARCHITECT",
+            "DELIVERY_DIRECTOR",
+            "TOP_MANAGEMENT",
+            "TENANT_ADMIN",
+        }
+        assigned_roles = set()
+        for user in data.get("users", []):
+            for role in user.get("realmRoles", []):
+                assigned_roles.add(role)
+
+        unassigned = expected_roles - assigned_roles
+        self.assertEqual(
+            unassigned,
+            set(),
+            f"Expected all 7 roles to have at least one test user assignment, but unassigned: {unassigned}",
+        )
+
+    def test_realm_roles_match_roles_permissions_json(self):
+        """Verify Keycloak realm roles exactly match roles defined in docs/roles-permissions.json (no drift)."""
+        data = self._load_realm()
+        realm_roles = {
+            role["name"] for role in data.get("roles", {}).get("realm", []) if "name" in role
+        }
+
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        repo_root = os.path.abspath(os.path.join(current_dir, "..", ".."))
+        matrix_path = os.path.join(repo_root, "docs", "roles-permissions.json")
+        self.assertTrue(os.path.isfile(matrix_path), f"Expected {matrix_path} to exist")
+
+        with open(matrix_path, "r", encoding="utf-8") as f:
+            matrix_data = json.load(f)
+
+        matrix_roles = {r["id"] for r in matrix_data.get("roles", [])}
+        self.assertEqual(
+            realm_roles,
+            matrix_roles,
+            f"Keycloak realm roles and docs/roles-permissions.json roles must match. Diff: {realm_roles ^ matrix_roles}",
+        )
 
 
 if __name__ == "__main__":

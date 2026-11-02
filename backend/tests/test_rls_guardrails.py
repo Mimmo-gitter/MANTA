@@ -58,8 +58,8 @@ async def test_all_tenant_id_tables_have_rls_and_force_rls():
                 f"Found tenant tables without FORCE RLS enabled: {', '.join(unprotected)}"
             )
 
-            # Exactly 40 tenant tables in schema
-            assert len(rows) == 40, f"Expected 40 tenant tables, found {len(rows)}"
+            # Exactly 41 tenant tables in schema
+            assert len(rows) == 41, f"Expected 41 tenant tables, found {len(rows)}"
     finally:
         await async_engine.dispose()
 
@@ -171,8 +171,8 @@ def test_sqlalchemy_models_match_tenant_rls_expectations():
         if "tenant_id" in table_obj.columns:
             models_with_tenant_id.add(table_name)
 
-    assert len(models_with_tenant_id) == 39, (
-        f"Expected 39 SQLAlchemy models with tenant_id, found {len(models_with_tenant_id)}"
+    assert len(models_with_tenant_id) == 40, (
+        f"Expected 40 SQLAlchemy models with tenant_id, found {len(models_with_tenant_id)}"
     )
 
     # Global exempt tables must never contain a tenant_id column

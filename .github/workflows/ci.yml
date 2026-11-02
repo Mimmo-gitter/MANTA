@@ -170,10 +170,18 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
 
+      - name: Apply migrations to head (creates tables & eng_app_user role)
+        env:
+          MIGRATION_DATABASE_URL: postgresql+asyncpg://manta_user:manta_password@localhost:5432/manta_db
+        run: |
+          cd backend
+          python scripts/verify_migrations.py --step upgrade
+
       - name: Run live pooler isolation tests
         env:
           PGBOUNCER_TEST_DSN: postgresql://manta_user:manta_password@localhost:6432/manta_db
-        run: python -m pytest backend/tests/test_pgbouncer_isolation.py -v
+          DATABASE_URL: postgresql+asyncpg://eng_app_user:eng_app_pass_change_in_prod@localhost:6432/manta_db
+        run: python -m pytest backend/tests/test_pgbouncer_isolation.py backend/tests/test_pgbouncer_load.py backend/tests/test_webhook_load.py backend/tests/test_webhook_staging_and_outage.py -v
 
       - name: Collect PgBouncer logs on failure
         if: failure()
@@ -227,6 +235,60 @@ jobs:
       - name: Build Next.js application
         run: npm run build
 
+  web-e2e:
+    name: Web Portal Playwright E2E Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Start Postgres and Keycloak test realm
+        run: |
+          docker compose -f backend/docker-compose.yml up -d --wait postgres
+          docker compose -f backend/docker-compose.yml up -d keycloak
+          echo "Waiting for Keycloak 'manta' test realm OIDC discovery endpoint..."
+          for i in $(seq 1 60); do
+            if curl -sf http://localhost:8080/realms/manta/.well-known/openid-configuration | grep -q "manta"; then
+              echo "Keycloak 'manta' realm is ready!"
+              break
+            fi
+            if [ "$i" -eq 60 ]; then
+              echo "Keycloak failed to become ready within timeout."
+              docker compose -f backend/docker-compose.yml logs keycloak
+              exit 1
+            fi
+            sleep 2
+          done
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Build Next.js application for E2E
+        working-directory: web
+        run: npm run build
+
+      - name: Install Playwright Chromium browser
+        working-directory: web
+        run: npx playwright install --with-deps chromium
+
+      - name: Run Playwright E2E tests against Keycloak test realm
+        working-directory: web
+        env:
+          CI: "true"
+        run: npm run test:e2e
+
+      - name: Collect Keycloak logs on failure
+        if: failure()
+        run: docker compose -f backend/docker-compose.yml logs keycloak postgres
+
   ci-gate:
     name: CI Status Check
     runs-on: ubuntu-latest
@@ -237,6 +299,7 @@ jobs:
       - pgbouncer-integration
       - backend-docker-build
       - web-checks
+      - web-e2e
     if: always()
     steps:
       - name: Evaluate overall CI pipeline status
@@ -248,13 +311,15 @@ jobs:
           echo "PgBouncer Integration:   ${{ needs.pgbouncer-integration.result }}"
           echo "Backend Docker Build:    ${{ needs.backend-docker-build.result }}"
           echo "Web Checks:              ${{ needs.web-checks.result }}"
+          echo "Web E2E Tests:           ${{ needs.web-e2e.result }}"
 
           if [ "${{ needs.backend-lint.result }}" != "success" ] || \
              [ "${{ needs.backend-test.result }}" != "success" ] || \
              [ "${{ needs.backend-migrations.result }}" != "success" ] || \
              [ "${{ needs.pgbouncer-integration.result }}" != "success" ] || \
              [ "${{ needs.backend-docker-build.result }}" != "success" ] || \
-             [ "${{ needs.web-checks.result }}" != "success" ]; then
+             [ "${{ needs.web-checks.result }}" != "success" ] || \
+             [ "${{ needs.web-e2e.result }}" != "success" ]; then
             echo "CI Pipeline failed: One or more stages failed or were cancelled. Merging is blocked."
             exit 1
           fi

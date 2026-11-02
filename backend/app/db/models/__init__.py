@@ -42,6 +42,7 @@ from .models import (
     ProcessedOutboxEvent,
     ContributorPseudonymSalt,
     AuditLog,
+    Invitation,
 )
 
 __all__ = [
@@ -52,6 +53,7 @@ __all__ = [
     "UserSession",
     "Role",
     "UserRole",
+    "Invitation",
     "Project",
     "ProjectMember",
     "ProjectLink",
