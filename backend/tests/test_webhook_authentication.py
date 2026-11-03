@@ -1,7 +1,8 @@
 """
-SCRUM-325, SCRUM-326, SCRUM-327, SCRUM-328, SCRUM-331:
+SCRUM-325, SCRUM-326, SCRUM-327, SCRUM-328, SCRUM-331, SCRUM-351:
 Comprehensive Automated Pytest Suite for Webhook Authentication, Signature Verification,
 Replay Protection, Tenant Routing, and Database Outage Resilience.
+Documented test scenarios: docs/webhook-auth-test-scenarios.md
 
 Parent User Story: SCRUM-250 (US-14: Authenticated webhook intake)
 
