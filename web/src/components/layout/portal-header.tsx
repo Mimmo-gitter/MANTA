@@ -370,10 +370,16 @@ export function PortalHeader({
         data-testid="portal-header"
         role="banner"
         aria-label="Application Header"
-        className="backdrop-blur-[6px] bg-[rgba(10,13,20,0.8)] border-b border-[#1e2638] border-solid flex h-[56px] items-center justify-between px-[20px] shrink-0 w-full z-30"
+        className={cn(
+          "backdrop-blur-[6px] bg-[#171B26] border-b border-[#252B3B] border-solid flex h-[56px] items-center px-[20px] shrink-0 w-full z-30",
+          "justify-between max-[768px]:justify-end",
+        )}
       >
         {/* Left: Workspace / Overview Breadcrumb */}
-        <nav aria-label="Header Breadcrumb" className="flex gap-[8px] items-center">
+        <nav
+          aria-label="Header Breadcrumb"
+          className="hidden min-[769px]:flex gap-[8px] items-center"
+        >
           <span className="font-normal text-[#8b95a5] text-[14px] leading-[20px]">
             {breadcrumb.section}
           </span>
@@ -408,12 +414,16 @@ export function PortalHeader({
                 {currentWorkspaceName}
               </span>
               <img
-                src="/icons/shell/86330.svg"
+                src={
+                  workspaceMenuOpen
+                    ? "/icons/shell/efef2.svg"
+                    : "/icons/shell/d5590.svg"
+                }
                 alt=""
                 aria-hidden="true"
                 className={cn(
-                  "h-[10px] w-[8.75px] shrink-0 transition-transform duration-150",
-                  workspaceMenuOpen && "rotate-180"
+                  "size-[12px] shrink-0 transition-transform duration-150",
+                  workspaceMenuOpen && "rotate-180",
                 )}
               />
             </button>
@@ -424,24 +434,20 @@ export function PortalHeader({
           <div
             data-testid="environment-badge"
             aria-label="Deployment Environment: Production US-East-1"
-            className="bg-[rgba(16,185,129,0.1)] border border-[rgba(16,185,129,0.3)] border-solid flex gap-[6px] h-[32px] items-center px-[11px] py-px rounded-[6px]"
+            className="hidden min-[769px]:flex bg-[rgba(16,185,129,0.1)] border border-[rgba(16,185,129,0.3)] border-solid gap-[6px] h-[28px] items-center px-[11px] py-px rounded-[6px]"
           >
-            <span
-              className="bg-[#10b981] rounded-full shadow-[0px_0px_5px_0px_#10b981] size-[6px] shrink-0"
-              aria-hidden="true"
-            />
             <span className="font-mono font-semibold text-[#10b981] text-[11px] leading-[16.5px] tracking-[0.275px] whitespace-nowrap">
               PROD US-EAST-1
             </span>
           </div>
 
           {/* Search Field */}
-          <div className="relative h-[32px] w-[176px]">
+          <div className="relative h-[32px] w-[140px] sm:w-[160px]">
             <input
               type="text"
               placeholder="Search..."
               aria-label="Search projects"
-              className="bg-[#121722] border border-[#1e2638] border-solid h-[32px] w-full rounded-[6px] pl-[32px] pr-[36px] py-[7px] text-[12px] leading-[16px] text-[#f0f4f8] placeholder:text-[#6b7280] focus:border-[#10b981] focus:outline-none"
+              className="bg-[#0A0E18] border border-[#1e2638] border-solid h-[32px] w-full rounded-[6px] pl-[32px] pr-[36px] py-[7px] text-[12px] leading-[16px] text-[#f0f4f8] placeholder:text-[#6b7280] focus:border-[#10b981] focus:outline-none"
             />
             <img
               src="/icons/shell/6dd21.svg"
@@ -449,9 +455,6 @@ export function PortalHeader({
               aria-hidden="true"
               className="pointer-events-none absolute left-[10px] top-1/2 -translate-y-1/2 size-[12px]"
             />
-            <kbd className="pointer-events-none absolute right-[8px] top-1/2 -translate-y-1/2 bg-[#0a0d14] border border-[#1e2638] border-solid px-[5px] py-[3px] rounded-[4px] font-mono text-[#8b95a5] text-[10px] leading-[10px]">
-              ⌘K
-            </kbd>
           </div>
 
           {/* Notification Bell */}
@@ -469,9 +472,6 @@ export function PortalHeader({
             />
           </Link>
 
-          {/* Vertical Divider */}
-          <div className="bg-[#1e2638] h-[20px] w-px shrink-0" aria-hidden="true" />
-
           {/* User Profile & Sign Out */}
           <div ref={userMenuRef} className="relative flex items-center gap-[10px] pl-[4px]">
             <span data-testid="user-tenant-badge" className="sr-only">
@@ -487,7 +487,7 @@ export function PortalHeader({
               aria-label={`User menu for ${effectiveDisplayName}`}
               className="flex items-center gap-[8px] rounded-[6px]"
             >
-              <div className="bg-[rgba(16,185,129,0.15)] border border-[rgba(16,185,129,0.3)] border-solid flex size-[28px] items-center justify-center rounded-[6px] p-px">
+              <div className="bg-[#0A0E18)] border border-[rgba(16,185,129,0.3)] border-solid flex size-[28px] items-center justify-center rounded-[6px] p-px">
                 <span className="font-mono font-bold text-[#10b981] text-[11px] leading-[16.5px]">
                   {getInitials(effectiveDisplayName)}
                 </span>
@@ -547,10 +547,10 @@ export function PortalHeader({
             aria-haspopup="menu"
             aria-label={`Current Workspace: ${currentWorkspaceName}. Click to switch.`}
             className={cn(
-              "flex gap-[8px] items-center px-[11px] py-[5px] rounded-[6px] border border-solid transition-all focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#00e599]",
+              "flex w-[150px] h-[32px] shrink-0 gap-[8px] items-center px-[11px] rounded-[6px] border border-solid transition-all focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#00e599]",
               workspaceMenuOpen
-                ? "bg-[#161b26] border-[#00e599] shadow-[0px_0px_10px_0px_rgba(0,229,153,0.1)]"
-                : "bg-[#0f131d] border-[#1f2433] hover:border-[#7c839b]/40"
+                ? "bg-[#171B26] border-[#00e599] shadow-[0px_0px_10px_0px_rgba(0,229,153,0.1)]"
+                : "bg-[#171B26] border-[#252B3B] hover:border-[#7c839b]/40",
             )}
           >
             <img
@@ -565,14 +565,14 @@ export function PortalHeader({
             <img
               src={
                 workspaceMenuOpen
-                  ? "/icons/shell/9d7ba.svg"
-                  : "/icons/shell/9d9a4.svg"
+                  ? "/icons/shell/efef2.svg"
+                  : "/icons/shell/d5590.svg"
               }
               alt=""
               aria-hidden="true"
               className={cn(
-                "size-[12px] shrink-0 transition-transform duration-150",
-                workspaceMenuOpen && "rotate-180"
+                "ml-auto size-[12px] shrink-0 transition-transform duration-150",
+                workspaceMenuOpen && "rotate-180",
               )}
             />
           </button>
@@ -584,7 +584,7 @@ export function PortalHeader({
         <div
           data-testid="environment-badge"
           aria-label="Deployment Environment: Production US-East-1"
-          className="hidden sm:flex bg-[rgba(0,229,153,0.1)] border border-[rgba(0,229,153,0.2)] border-solid items-center px-[9px] py-[3px] rounded-[4px]"
+          className="hidden sm:flex h-[28px] w-[102px] shrink-0 items-center justify-center bg-[rgba(0,229,153,0.1)] border border-[rgba(0,229,153,0.2)] border-solid rounded-[6px]"
         >
           <span className="font-mono text-[#00e599] text-[10px] leading-[15px] tracking-[0.5px] uppercase whitespace-nowrap">
             PROD US-EAST-1
@@ -612,7 +612,7 @@ export function PortalHeader({
           href="/risks-alerts"
           aria-label="View Risks and Alerts (active notifications pending)"
           data-testid="header-alerts-link"
-          className="bg-[#0f131d] border border-[#1f2433] border-solid flex items-center justify-center p-px rounded-[6px] relative shrink-0 size-[28px] hover:border-[#7c839b]/40 transition-colors"
+          className="bg-[#171b26] border border-[#252b3b] border-solid flex items-center justify-center rounded-[6px] relative shrink-0 size-[32px] hover:border-[#7c839b]/40 transition-colors"
         >
           <img
             src="/icons/shell/cea19.svg"
@@ -621,13 +621,10 @@ export function PortalHeader({
             className="size-[14px]"
           />
           <span
-            className="absolute bg-[#f59e0b] right-[5px] rounded-full shadow-[0px_0px_6px_0px_#f59e0b] size-[6px] top-[5px]"
+            className="absolute bg-[#fbbf24] right-[8px] rounded-full size-[6px] top-[7px]"
             aria-hidden="true"
           />
         </Link>
-
-        {/* 5. Vertical Divider (Figma 325:2848) */}
-        <div className="bg-[#1f2433] h-[16px] shrink-0 w-px" aria-hidden="true" />
 
         {/* 6. User Profile Trigger & Sign Out (Figma 325:2849 & 321:1972) */}
         {showProfile ? (
@@ -644,14 +641,14 @@ export function PortalHeader({
               aria-haspopup="menu"
               aria-label={`User menu for ${effectiveDisplayName}`}
               className={cn(
-                "flex gap-[8px] items-center rounded-[6px] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#00e599]",
+                "flex gap-[8px] items-center rounded-[6px] border border-solid px-[7px] py-[5px] bg-[#0A0E18]/10 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#00e599]",
                 userMenuOpen
-                  ? "bg-[#161b26] border border-[#1f2433] border-solid px-[7px] py-[5px]"
-                  : "px-[6px] py-[4px] hover:bg-white/[0.03]"
+                  ? "border-[#00e599]"
+                  : "border-[#252b3b] hover:border-[#7c839b]/40",
               )}
             >
               {/* Avatar (24x24) */}
-              <div className="bg-[rgba(0,229,153,0.15)] border border-[rgba(0,229,153,0.3)] border-solid flex items-center justify-center p-px rounded-[6px] shrink-0 size-[24px]">
+              <div className="bg-[#0A0E18] border border-[rgba(0,229,153,0.3)] border-solid flex items-center justify-center p-px rounded-[6px] shrink-0 size-[24px]">
                 <span className="font-bold text-[#00e599] text-[10px] leading-[15px] text-center">
                   {getInitials(effectiveDisplayName)}
                 </span>
@@ -666,7 +663,7 @@ export function PortalHeader({
                   {effectiveDisplayName}
                 </span>
                 <span className="hidden md:inline-flex pl-[6px]">
-                  <span className="bg-[rgba(0,229,153,0.1)] border border-[rgba(0,229,153,0.2)] border-solid inline-flex items-center px-[7px] py-[3px] rounded-[4px] font-mono text-[#00e599] text-[10px] leading-[10px] whitespace-nowrap">
+                  <span className="bg-[background: rgba(10, 14, 24, 0.1);] border border-[rgba(0,229,153,0.3)] border-solid inline-flex items-center px-[7px] py-[3px] rounded-[4px] font-mono text-[#00e599] text-[10px] leading-[10px] whitespace-nowrap">
                     Tenant Admin
                   </span>
                 </span>

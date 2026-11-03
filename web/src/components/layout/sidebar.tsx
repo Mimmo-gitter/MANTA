@@ -121,18 +121,6 @@ export function Sidebar({
                   />
                 </div>
               </button>
-
-              {logoHovered && (
-                <div
-                  role="tooltip"
-                  className="pointer-events-none absolute left-[48px] top-1/2 -translate-y-1/2 z-50 backdrop-blur-[12px] bg-[rgba(10,14,24,0.95)] border border-[rgba(0,229,153,0.6)] border-solid flex gap-[6px] items-center px-[9px] py-[5px] rounded-[2px] shadow-[0px_4px_16px_0px_rgba(0,0,0,0.6)] whitespace-nowrap"
-                >
-                  <div className="bg-[#00e599] rounded-[12px] shrink-0 size-[6px]" />
-                  <span className="font-mono font-semibold text-[#00e599] text-[9px] leading-[13.5px] tracking-[-0.225px]">
-                    Click Logo to Expand / Collapse
-                  </span>
-                </div>
-              )}
             </div>
 
             {/* Collapsed Navigation: 14 Icons across 3 groups */}
@@ -169,7 +157,7 @@ export function Sidebar({
                               : "text-[#64748b] hover:bg-white/[0.04] hover:text-[#94a3b8]",
                           )}
                         >
-                          <IconComponent className="shrink-0 size-[14px]" />
+                          <IconComponent className="shrink-0 size-[16px]" />
                         </Link>
                       );
                     })}
@@ -199,23 +187,6 @@ export function Sidebar({
             {/* M.A.N.T.A. Hexagonal Emblem Mark as Toggle Button */}
             <div className="flex items-center px-[16px] relative shrink-0 w-full">
               <div className="flex flex-1 gap-[12px] items-center min-w-0 relative">
-                {/* Tooltip & Pointer Overlay from Figma 340:13029 */}
-                {logoHovered && (
-                  <div
-                    role="tooltip"
-                    className="pointer-events-none absolute bottom-[-20px] left-[-4px] z-50 flex flex-col items-start"
-                  >
-                    <div className="h-[19.5px] relative shrink-0 w-[206.44px]">
-                      <div className="absolute backdrop-blur-[12px] bg-[rgba(10,14,24,0.95)] border border-[rgba(0,229,153,0.6)] border-solid flex gap-[6px] items-center left-[16px] px-[9px] py-[5px] rounded-[2px] shadow-[0px_4px_16px_0px_rgba(0,0,0,0.6)] top-[-4px]">
-                        <div className="bg-[#00e599] relative rounded-[12px] shrink-0 size-[6px]" />
-                        <span className="font-mono font-semibold text-[#00e599] text-[9px] leading-[13.5px] tracking-[-0.225px] whitespace-nowrap">
-                          Click Logo to Expand / Collapse
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
                 <button
                   type="button"
                   onClick={onToggleCollapse}
@@ -289,7 +260,7 @@ export function Sidebar({
                             <div className="flex items-center gap-[10px] min-w-0">
                               <IconComponent
                                 className={cn(
-                                  "shrink-0 size-[14px]",
+                                  "shrink-0 size-[16px]",
                                   active ? "text-[#00e599]" : "text-[#64748b]",
                                 )}
                               />

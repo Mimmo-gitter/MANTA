@@ -19,7 +19,7 @@ export function PlaceholderPage({
   return (
     <div
       data-testid="placeholder-page"
-      className="flex min-h-[calc(100vh-48px)] w-full items-center justify-center p-[24px]"
+      className="flex min-h-[calc(100%-48px)] w-full items-center justify-center p-[24px] box-border"
     >
       <div className="flex flex-col items-center max-w-[448px] w-full text-center">
         {/* Centered 48x48 Icon Box matching Figma 335:7712 */}

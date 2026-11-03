@@ -19,7 +19,7 @@ export function PortalLayout({ children }: PortalLayoutProps) {
   useEffect(() => {
     function handleResize() {
       const width = window.innerWidth;
-      if (width >= 768 && width < 1024) {
+      if (width >= 768 && width <= 1024) {
         setIsTablet(true);
         setTabletCollapsed(true);
       } else {
@@ -61,7 +61,7 @@ export function PortalLayout({ children }: PortalLayoutProps) {
         />
 
         {/* Main Area: Top Bar + Page Content */}
-        <div className="flex flex-1 flex-col overflow-hidden min-w-0">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
           <PortalHeader
             onMobileMenuToggle={() => setMobileOpen((prev) => !prev)}
             isTabletCollapsed={tabletCollapsed}
@@ -74,8 +74,8 @@ export function PortalLayout({ children }: PortalLayoutProps) {
             tabIndex={-1}
             role="main"
             className={cn(
-              "relative flex-1 overflow-y-auto outline-none focus:outline-none",
-              isTablet ? "bg-[#0a0d14]" : "bg-[#0f131d]"
+              "relative min-h-0 min-w-0 flex-1 overflow-y-auto overflow-x-hidden outline-none focus:outline-none [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+              isTablet ? "bg-[#0a0d14]" : "bg-[#0f131d]",
             )}
           >
             {children}
