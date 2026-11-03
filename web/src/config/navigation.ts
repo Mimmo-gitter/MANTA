@@ -19,6 +19,7 @@ export interface NavItemConfig {
   badge?: string;
   hasAlertDot?: boolean;
   description: string;
+  requiredRole?: string;
 }
 
 export interface NavSectionConfig {
@@ -223,6 +224,7 @@ export const NAVIGATION_SECTIONS: NavSectionConfig[] = [
         tabletLabel: "Workspace Settings",
         href: "/workspace-settings",
         section: "ADMINISTRATION",
+        requiredRole: "TENANT_ADMIN",
         icon: "/icons/shell/e0670.svg",
         activeIcon: "/icons/shell/e0670-active.svg",
         tabletCollapsedIcon: "/icons/shell/aed70.svg",
@@ -242,6 +244,7 @@ export const NAVIGATION_SECTIONS: NavSectionConfig[] = [
         tabletLabel: "Integrations",
         href: "/integrations",
         section: "ADMINISTRATION",
+        requiredRole: "TENANT_ADMIN",
         icon: "/icons/shell/9a85f.svg",
         activeIcon: "/icons/shell/9a85f-active.svg",
         tabletCollapsedIcon: "/icons/shell/7a396.svg",
@@ -261,6 +264,7 @@ export const NAVIGATION_SECTIONS: NavSectionConfig[] = [
         tabletLabel: "Access & Roles",
         href: "/access-roles",
         section: "ADMINISTRATION",
+        requiredRole: "TENANT_ADMIN",
         icon: "/icons/shell/39c1f.svg",
         activeIcon: "/icons/shell/39c1f-active.svg",
         tabletCollapsedIcon: "/icons/shell/6d0cc.svg",
@@ -280,6 +284,7 @@ export const NAVIGATION_SECTIONS: NavSectionConfig[] = [
         tabletLabel: "Privacy & Erasure",
         href: "/privacy-erasure",
         section: "ADMINISTRATION",
+        requiredRole: "TENANT_ADMIN",
         icon: "/icons/shell/597b1.svg",
         activeIcon: "/icons/shell/597b1-active.svg",
         tabletCollapsedIcon: "/icons/shell/c1f3b.svg",
@@ -299,6 +304,7 @@ export const NAVIGATION_SECTIONS: NavSectionConfig[] = [
         tabletLabel: "ADR Governance",
         href: "/adr-governance",
         section: "ADMINISTRATION",
+        requiredRole: "TENANT_ADMIN",
         icon: "/icons/shell/00a87.svg",
         activeIcon: "/icons/shell/00a87-active.svg",
         tabletCollapsedIcon: "/icons/shell/7167b.svg",
