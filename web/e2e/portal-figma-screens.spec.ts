@@ -3,6 +3,7 @@ import { test, expect } from "@playwright/test";
 test.describe("Figma Portal Shell Screens & Accessibility Suite (9 Figma Frames 1-to-1)", () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => {
+      window.localStorage.clear();
       window.sessionStorage.setItem("manta_demo", "true");
     });
   });
