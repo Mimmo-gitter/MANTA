@@ -19,6 +19,7 @@ import {
   fetchCurrentUserFromBackend,
   setIsLoggingOut,
   getIsLoggingOut,
+  getDemoBackendUser,
   type BackendUserClaims,
 } from "@/lib/auth";
 import { initAuthSync } from "@/lib/auth-tab-sync";
@@ -40,7 +41,9 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [backendUser, setBackendUser] = useState<BackendUserClaims | null>(null);
+  const [backendUser, setBackendUser] = useState<BackendUserClaims | null>(() =>
+    getDemoBackendUser(),
+  );
   const [isLoading, setIsLoading] = useState(true);
 
   const syncRequestId = useRef(0);
@@ -54,7 +57,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     setUser(activeUser);
 
-    if (!activeUser || activeUser.expired || !activeUser.access_token) {
+    if (!activeUser) {
+      setBackendUser(getDemoBackendUser());
+      setIsLoading(false);
+      return;
+    }
+
+    if (activeUser.expired || !activeUser.access_token) {
       setBackendUser(null);
       setIsLoading(false);
       return;
@@ -133,7 +142,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const onUserUnloaded = () => {
       syncRequestId.current += 1;
       setUser(null);
-      setBackendUser(null);
+      setBackendUser(getDemoBackendUser());
       if (!getIsLoggingOut()) {
         setIsLoading(false);
       }
@@ -142,7 +151,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const onUserSignedOut = () => {
       syncRequestId.current += 1;
       setUser(null);
-      setBackendUser(null);
+      setBackendUser(getDemoBackendUser());
       if (!getIsLoggingOut()) {
         setIsLoading(false);
       }
@@ -193,9 +202,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Compute authoritative tenant ID and friendly name
   const tenantId =
-    backendUser?.tenant_id ||
-    (user?.profile?.tenant_id as string) ||
-    null;
+    backendUser?.tenant_id || (user?.profile?.tenant_id as string) || null;
 
   const tenantName = getTenantDisplayName(tenantId);
 
