@@ -77,7 +77,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     });
 
-    // Initial hydration from sessionStorage
+    // Initial hydration from localStorage
     getCurrentUser().then((initialUser) => {
       syncUser(initialUser);
     });

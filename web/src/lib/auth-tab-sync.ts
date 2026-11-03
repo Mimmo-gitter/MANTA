@@ -14,14 +14,6 @@ export type AuthSyncMessage =
 
 let channel: BroadcastChannel | null = null;
 
-const pendingRenewals = new Map<
-  string,
-  {
-    resolve: (message: AuthSyncMessage) => void;
-    timeout: ReturnType<typeof setTimeout>;
-  }
->();
-
 export function initAuthSync(
   onMessage: (message: AuthSyncMessage) => void,
 ): () => void {
@@ -32,19 +24,7 @@ export function initAuthSync(
   channel = new BroadcastChannel(CHANNEL_NAME);
 
   channel.onmessage = (event: MessageEvent<AuthSyncMessage>) => {
-    const message = event.data;
-
-    if (message.type === "RENEW_COMPLETED" || message.type === "RENEW_FAILED") {
-      const pending = pendingRenewals.get(message.tabId);
-
-      if (pending) {
-        clearTimeout(pending.timeout);
-        pending.resolve(message);
-        pendingRenewals.delete(message.tabId);
-      }
-    }
-
-    onMessage(message);
+    onMessage(event.data);
   };
 
   return () => {
@@ -59,7 +39,8 @@ export function broadcastAuthMessage(message: AuthSyncMessage): void {
 
 export async function withRenewLock<T>(callback: () => Promise<T>): Promise<T> {
   if (typeof navigator === "undefined" || !navigator.locks) {
-    throw new Error("Web Locks API is not supported in this browser");
+    // Fallback: no cross-tab lock available; in-tab single-flight still applies.
+    return callback();
   }
 
   return navigator.locks.request("manta_oidc_renew_lock", async () => {
