@@ -6,6 +6,7 @@ import React, {
   useEffect,
   useState,
   useCallback,
+  useRef,
   type ReactNode,
 } from "react";
 import { User } from "oidc-client-ts";
@@ -15,6 +16,7 @@ import {
   logoutUser,
   initiateLogin,
   getTenantDisplayName,
+  fetchCurrentUserFromBackend,
   type BackendUserClaims,
 } from "@/lib/auth";
 import { initAuthSync } from "@/lib/auth-tab-sync";
@@ -39,18 +41,56 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [backendUser, setBackendUser] = useState<BackendUserClaims | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  const syncUser = useCallback((activeUser: User | null) => {
+  const syncRequestId = useRef(0);
+
+  const syncUser = useCallback(async (activeUser: User | null) => {
+    const requestId = ++syncRequestId.current;
+
     if (activeUser && typeof window !== "undefined") {
       window.sessionStorage.removeItem("user_signed_out");
     }
+
     setUser(activeUser);
-    setIsLoading(false);
+
+    if (!activeUser || activeUser.expired || !activeUser.access_token) {
+      setBackendUser(null);
+      setIsLoading(false);
+      return;
+    }
+
+    try {
+      const currentBackendUser = await fetchCurrentUserFromBackend(
+        activeUser.access_token,
+      );
+
+      // Не применяем результат устаревшего запроса.
+      if (requestId !== syncRequestId.current) return;
+
+      setBackendUser(currentBackendUser);
+    } catch (error) {
+      if (requestId !== syncRequestId.current) return;
+
+      console.error("Failed to fetch backend user:", error);
+      setBackendUser(null);
+    } finally {
+      if (requestId === syncRequestId.current) {
+        setIsLoading(false);
+      }
+    }
   }, []);
 
   const refresh = useCallback(async () => {
     setIsLoading(true);
-    const u = await getCurrentUser();
-    syncUser(u);
+
+    try {
+      const currentUser = await getCurrentUser();
+      await syncUser(currentUser);
+    } catch (error) {
+      console.error("Failed to refresh user:", error);
+      setUser(null);
+      setBackendUser(null);
+      setIsLoading(false);
+    }
   }, [syncUser]);
 
   useEffect(() => {
@@ -87,12 +127,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
 
     const onUserUnloaded = () => {
+      syncRequestId.current += 1;
       setUser(null);
       setBackendUser(null);
       setIsLoading(false);
     };
 
     const onUserSignedOut = () => {
+      syncRequestId.current += 1;
       setUser(null);
       setBackendUser(null);
       setIsLoading(false);
@@ -116,6 +158,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
+    syncRequestId.current += 1;
     setIsLoading(true);
     setUser(null);
     setBackendUser(null);
