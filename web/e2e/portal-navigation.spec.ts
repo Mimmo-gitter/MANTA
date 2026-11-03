@@ -3,6 +3,7 @@ import { test, expect } from "@playwright/test";
 test.describe("Portal Layout & Navigation (SCRUM-266 & SCRUM-267)", () => {
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => {
+      window.localStorage.clear();
       window.sessionStorage.setItem("manta_demo", "true");
     });
   });
