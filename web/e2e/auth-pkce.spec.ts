@@ -93,23 +93,23 @@ test.describe("OIDC Authorization Code Flow with PKCE (SCRUM-273)", () => {
     expect(capturedStates[0]).not.toBe(capturedStates[1]);
   });
 
-  test("stores PKCE verifier and state in sessionStorage", async ({ page }) => {
+  test("stores PKCE verifier and state in localStorage", async ({ page }) => {
     let capturedStorageValue: string | null = null;
 
-    // Expose a function to capture sessionStorage writes before cross-origin navigation
-    await page.exposeFunction("onSessionStorageItemSet", (key: string, val: string) => {
+    // Expose a function to capture localStorage writes before cross-origin navigation
+    await page.exposeFunction("onLocalStorageItemSet", (key: string, val: string) => {
       if (key.startsWith("oidc.")) {
         capturedStorageValue = val;
       }
     });
 
     await page.addInitScript(() => {
-      const originalSetItem = sessionStorage.setItem.bind(sessionStorage);
-      sessionStorage.setItem = (key: string, value: string) => {
+      const originalSetItem = localStorage.setItem.bind(localStorage);
+      localStorage.setItem = (key: string, value: string) => {
         originalSetItem(key, value);
         // Notify test runner via exposed function
-        const fn = (window as unknown as { onSessionStorageItemSet?: (k: string, v: string) => void })
-          .onSessionStorageItemSet;
+        const fn = (window as unknown as { onLocalStorageItemSet?: (k: string, v: string) => void })
+          .onLocalStorageItemSet;
         if (fn) {
           fn(key, value);
         }
@@ -127,7 +127,7 @@ test.describe("OIDC Authorization Code Flow with PKCE (SCRUM-273)", () => {
     await page.goto("/login");
     await page.getByTestId("company-sso-button").click();
 
-    // Await captured sessionStorage entry
+    // Await captured localStorage entry
     await expect.poll(() => capturedStorageValue, { timeout: 10000 }).not.toBeNull();
 
     expect(capturedStorageValue).toBeTruthy();

@@ -485,8 +485,8 @@ test.describe("Authentication Journey E2E against Keycloak Test Realm (SCRUM-240
     await expect(page.getByTestId("user-tenant-badge")).not.toBeVisible();
 
     const hasUserToken = await page.evaluate(() => {
-      for (let i = 0; i < window.sessionStorage.length; i++) {
-        const k = window.sessionStorage.key(i);
+      for (let i = 0; i < window.localStorage.length; i++) {
+        const k = window.localStorage.key(i);
         if (k && k.startsWith("oidc.user:")) return true;
       }
       return false;
@@ -526,8 +526,8 @@ test.describe("Authentication Journey E2E against Keycloak Test Realm (SCRUM-240
 
     // 5. Verify user remains unauthenticated
     const hasUserToken = await page.evaluate(() => {
-      for (let i = 0; i < window.sessionStorage.length; i++) {
-        const k = window.sessionStorage.key(i);
+      for (let i = 0; i < window.localStorage.length; i++) {
+        const k = window.localStorage.key(i);
         if (k && k.startsWith("oidc.user:")) return true;
       }
       return false;
@@ -568,11 +568,11 @@ test.describe("Authentication Journey E2E against Keycloak Test Realm (SCRUM-240
       "Disconnected from workspace Tenant Alpha."
     );
 
-    // 4. Verify sessionStorage tokens are completely purged
+    // 4. Verify localStorage tokens are completely purged
     const remainingKeys = await page.evaluate(() => {
       const keys: string[] = [];
-      for (let i = 0; i < window.sessionStorage.length; i++) {
-        const k = window.sessionStorage.key(i);
+      for (let i = 0; i < window.localStorage.length; i++) {
+        const k = window.localStorage.key(i);
         if (k && (k.startsWith("oidc.") || k.startsWith("manta."))) keys.push(k);
       }
       return keys;

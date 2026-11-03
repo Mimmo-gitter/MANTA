@@ -193,11 +193,11 @@ test.describe("OIDC Sign-Out & Session Termination (SCRUM-275)", () => {
   }) => {
     const { logoutRequests } = await setupAuthenticatedUser(page);
 
-    // Verify sessionStorage has OIDC tokens prior to sign out
+    // Verify localStorage has OIDC tokens prior to sign out
     const tokenCountBefore = await page.evaluate(() => {
       let count = 0;
-      for (let i = 0; i < window.sessionStorage.length; i++) {
-        const k = window.sessionStorage.key(i);
+      for (let i = 0; i < window.localStorage.length; i++) {
+        const k = window.localStorage.key(i);
         if (k && (k.startsWith("oidc.") || k.startsWith("manta."))) count++;
       }
       return count;
@@ -228,11 +228,11 @@ test.describe("OIDC Sign-Out & Session Termination (SCRUM-275)", () => {
     await expect(page).toHaveURL(/\/login/, { timeout: 10000 });
     await expect(page.getByTestId("company-sso-button")).toBeVisible();
 
-    // Verify complete purging of local tokens & session state in sessionStorage
+    // Verify complete purging of local tokens & session state in localStorage
     const remainingKeys = await page.evaluate(() => {
       const keys: string[] = [];
-      for (let i = 0; i < window.sessionStorage.length; i++) {
-        const k = window.sessionStorage.key(i);
+      for (let i = 0; i < window.localStorage.length; i++) {
+        const k = window.localStorage.key(i);
         if (k && (k.startsWith("oidc.") || k.startsWith("manta."))) keys.push(k);
       }
       return keys;
@@ -260,9 +260,9 @@ test.describe("OIDC Sign-Out & Session Termination (SCRUM-275)", () => {
 
     // Storage must remain clean
     const oidcUser = await page.evaluate(() => {
-      for (let i = 0; i < window.sessionStorage.length; i++) {
-        const k = window.sessionStorage.key(i);
-        if (k && k.startsWith("oidc.user:")) return window.sessionStorage.getItem(k);
+      for (let i = 0; i < window.localStorage.length; i++) {
+        const k = window.localStorage.key(i);
+        if (k && k.startsWith("oidc.user:")) return window.localStorage.getItem(k);
       }
       return null;
     });
