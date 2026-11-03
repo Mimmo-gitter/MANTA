@@ -20,6 +20,9 @@ export function SignedOutCard({
   const router = useRouter();
 
   const handleSignInAgain = () => {
+    if (typeof window !== "undefined") {
+      window.sessionStorage.removeItem("user_signed_out");
+    }
     if (onSignInAgain) {
       onSignInAgain();
     } else {
@@ -28,6 +31,9 @@ export function SignedOutCard({
   };
 
   const handleDifferentOrg = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    if (typeof window !== "undefined") {
+      window.sessionStorage.removeItem("user_signed_out");
+    }
     if (onDifferentOrganization) {
       e.preventDefault();
       onDifferentOrganization();
@@ -119,6 +125,9 @@ export function SignedOutCard({
           href="/login"
           data-testid="sign-in-again-button"
           onClick={(e) => {
+            if (typeof window !== "undefined") {
+              window.sessionStorage.removeItem("user_signed_out");
+            }
             if (onSignInAgain) {
               e.preventDefault();
               onSignInAgain();

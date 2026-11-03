@@ -3,9 +3,10 @@
 
 import { useState, useRef, useEffect, useId } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { Menu } from "lucide-react";
 import { useAuth } from "@/providers/auth-provider";
+import { setIsLoggingOut } from "@/lib/auth";
 import { sidebarSections } from "@/config/navigation";
 import { cn } from "@/lib/utils";
 
@@ -37,6 +38,7 @@ export function PortalHeader({
   const [activeWorkspace, setActiveWorkspace] = useState("Acme Consulting");
   const [workspaceSearch, setWorkspaceSearch] = useState("");
   const pathname = usePathname();
+  const router = useRouter();
 
   // Figma 321:1283 default specification: Pavlo Zhuk (director@manta.ai)
   const effectiveDisplayName =
@@ -93,14 +95,19 @@ export function PortalHeader({
   }, []);
 
   const handleSignOut = () => {
+    setIsLoggingOut(true);
     if (typeof window !== "undefined") {
       window.sessionStorage.removeItem("manta_demo");
       window.sessionStorage.setItem("user_signed_out", "true");
     }
+    const workspaceQuery =
+      currentWorkspaceName && currentWorkspaceName !== "Unknown Tenant"
+        ? `?workspace=${encodeURIComponent(currentWorkspaceName)}`
+        : "";
+    router.replace(`/signed-out${workspaceQuery}`);
+
     if (isAuthenticated) {
       logout();
-    } else {
-      window.location.href = "/signed-out";
     }
   };
 
@@ -216,7 +223,7 @@ export function PortalHeader({
                         src="/icons/shell/lightning-emerald.svg"
                         alt=""
                         aria-hidden="true"
-                        className="size-[14px]"
+                        className="h-[14px] w-[8px]"
                       />
                     </div>
                   )}
@@ -392,10 +399,10 @@ export function PortalHeader({
               className="bg-[#121722] border border-[#1e2638] border-solid flex gap-[8px] h-[32px] items-center px-[11px] py-px rounded-[6px]"
             >
               <img
-                src="/icons/shell/e1e79.svg"
+                src="/icons/shell/lightning-emerald.svg"
                 alt=""
                 aria-hidden="true"
-                className="h-[11.25px] w-[10.125px] shrink-0"
+                className="h-[9px] w-[5px] shrink-0"
               />
               <span className="font-medium text-[#f0f4f8] text-[12px] leading-[16px] whitespace-nowrap">
                 {currentWorkspaceName}
@@ -490,22 +497,6 @@ export function PortalHeader({
               </span>
             </button>
 
-            <button
-              type="button"
-              data-testid="header-signout-button"
-              onClick={handleSignOut}
-              title="Sign Out"
-              aria-label="Sign Out"
-              className="bg-[#121722] border border-[#1e2638] border-solid flex h-[32px] items-center justify-center px-[11px] py-px rounded-[6px]"
-            >
-              <img
-                src="/icons/shell/040ec.svg"
-                alt=""
-                aria-hidden="true"
-                className="size-[12.75px] shrink-0"
-              />
-            </button>
-
             {renderUserDropdown()}
           </div>
         </div>
@@ -566,7 +557,7 @@ export function PortalHeader({
               src="/icons/shell/lightning-emerald.svg"
               alt=""
               aria-hidden="true"
-              className="size-[12px] shrink-0"
+              className="h-[9px] w-[5px] shrink-0"
             />
             <span className="font-medium text-[#e2e8f0] text-[12px] leading-[16px] whitespace-nowrap">
               {currentWorkspaceName}
@@ -601,26 +592,19 @@ export function PortalHeader({
         </div>
 
         {/* 3. Global Search Field (Figma 325:2839) */}
-        <div className="relative hidden lg:flex bg-[#0f131d] border border-[#1f2433] border-solid h-[28px] items-center justify-between px-[11px] py-px rounded-[6px] w-[192px]">
-          <div className="flex gap-[8px] items-center min-w-0 flex-1">
-            <img
-              src="/icons/shell/4738c.svg"
-              alt=""
-              aria-hidden="true"
-              className="size-[12px] shrink-0"
-            />
-            <input
-              type="text"
-              placeholder="Search projects..."
-              aria-label="Search projects"
-              className="w-full bg-transparent font-normal text-[#e2e8f0] text-[11px] leading-[16.5px] placeholder:text-[#7c839b] focus:outline-none"
-            />
-          </div>
-          <kbd className="bg-[#161b26] border border-[#1f2433] border-solid flex items-center px-[5px] py-px rounded-[4px] shrink-0">
-            <span className="font-mono text-[#7c839b] text-[9px] leading-[13.5px]">
-              ⌘K
-            </span>
-          </kbd>
+        <div className="relative hidden lg:flex bg-[#0a0e18] border border-[#252b3b] border-solid h-[32px] items-center px-[9px] py-px rounded-[6px] w-[192px] gap-[6px]">
+          <img
+            src="/icons/shell/4738c.svg"
+            alt=""
+            aria-hidden="true"
+            className="size-[12px] shrink-0"
+          />
+          <input
+            type="text"
+            placeholder="Search projects..."
+            aria-label="Search projects"
+            className="w-full bg-transparent border-0 border-none outline-none focus:outline-none focus:ring-0 text-[#e2e8f0] placeholder:text-[#64748b] text-[11px] leading-normal p-0 m-0"
+          />
         </div>
 
         {/* 4. Notification Bell Icon Button (Figma 325:2845) */}
@@ -702,18 +686,6 @@ export function PortalHeader({
                   userMenuOpen && "rotate-180"
                 )}
               />
-            </button>
-
-            {/* Direct Sign Out Button (Figma 325:2859) */}
-            <button
-              type="button"
-              data-testid="header-signout-button"
-              onClick={handleSignOut}
-              title="Sign Out"
-              aria-label="Sign Out"
-              className="bg-[#0f131d] border border-[#1f2433] border-solid flex items-center justify-center px-[11px] py-[5px] rounded-[6px] font-medium text-[#e2e8f0] text-[11px] leading-[16.5px] whitespace-nowrap hover:border-[#7c839b]/40 transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#00e599]"
-            >
-              Sign Out
             </button>
 
             {renderUserDropdown()}

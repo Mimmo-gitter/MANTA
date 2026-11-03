@@ -37,11 +37,8 @@ test.describe("Figma Portal Shell Screens & Accessibility Suite (9 Figma Frames 
     await expect(sidebar.getByText("ENGINEERING", { exact: true })).toBeVisible();
     await expect(sidebar.getByText("ADMINISTRATION", { exact: true })).toBeVisible();
 
-    // Sidebar footer: "Zero-Trust Enforced" + "14ms"
-    const footer = page.getByTestId("sidebar-footer");
-    await expect(footer).toBeVisible();
-    await expect(footer.getByText("Zero-Trust Enforced")).toBeVisible();
-    await expect(footer.getByText("14ms")).toBeVisible();
+    // Sidebar footer: removed per design specification
+    await expect(page.getByTestId("sidebar-footer")).not.toBeVisible();
 
     // Header (48px height)
     const header = page.getByTestId("portal-header");
@@ -223,9 +220,8 @@ test.describe("Figma Portal Shell Screens & Accessibility Suite (9 Figma Frames 
     const sidebar = page.getByTestId("portal-sidebar");
     await expect(sidebar).toBeVisible();
 
-    // Tablet status pill: "RLS:ON" (Figma 338:12871)
-    const footer = page.getByTestId("sidebar-footer");
-    await expect(footer.getByText("RLS:ON")).toBeVisible();
+    // Tablet status pill / footer removed per design specification
+    await expect(page.getByTestId("sidebar-footer")).not.toBeVisible();
 
     // Tablet starts collapsed (72px wide)
     await expect(sidebar).toHaveCSS("width", "72px");
@@ -246,7 +242,7 @@ test.describe("Figma Portal Shell Screens & Accessibility Suite (9 Figma Frames 
     const expandedBox = await sidebar.boundingBox();
     expect(expandedBox?.width).toBeCloseTo(240, 1);
     await expect(sidebar.getByText("M.A.N.T.A.")).toBeVisible();
-    await expect(footer.getByText("Zero-Trust Enforced")).toBeVisible();
+    await expect(page.getByTestId("sidebar-footer")).not.toBeVisible();
 
     // Hover logo in expanded mode shows tooltip: "Click Logo to Expand / Collapse" (Figma 340:13023)
     const expandedLogoToggle = page.getByTestId("sidebar-collapse-toggle");
