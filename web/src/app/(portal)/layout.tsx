@@ -1,13 +1,19 @@
 "use client";
 
 import { useEffect, Suspense } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { useAuth } from "@/providers/auth-provider";
 import { PortalLayout } from "@/components/layout/portal-layout";
 
 function PortalAuthGuard({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, isLoading } = useAuth();
+  const {
+    isAuthenticated,
+    isLoading,
+    backendUser,
+  } = useAuth();
+
   const router = useRouter();
+  const pathname = usePathname();
 
   const isDemo =
     typeof window !== "undefined" &&
@@ -15,13 +21,50 @@ function PortalAuthGuard({ children }: { children: React.ReactNode }) {
       window.location.search.includes("demo=true") ||
       window.sessionStorage.getItem("manta_demo") === "true");
 
-  useEffect(() => {
-    if (!isLoading && !isAuthenticated && !isDemo) {
-      router.replace("/login");
-    }
-  }, [isLoading, isAuthenticated, isDemo, router]);
+  const adminRoutes = [
+    "/workspace-settings",
+    "/integrations",
+    "/access-roles",
+    "/privacy-erasure",
+    "/adr-governance",
+  ];
 
-  if (!isLoading && !isAuthenticated && !isDemo) {
+  const isAdminRoute = adminRoutes.some(
+    (route) => pathname === route || pathname.startsWith(`${route}/`)
+  );
+
+  const isTenantAdmin =
+    backendUser?.roles.includes("TENANT_ADMIN") ?? false;
+
+  useEffect(() => {
+    if (isLoading) return;
+
+    if (!isAuthenticated && !isDemo) {
+      router.replace("/login");
+      return;
+    }
+
+    if (isAdminRoute && !isTenantAdmin) {
+      router.replace("/");
+    }
+  }, [
+    isLoading,
+    isAuthenticated,
+    isDemo,
+    isAdminRoute,
+    isTenantAdmin,
+    router,
+  ]);
+
+  if (isLoading) {
+    return null;
+  }
+
+  if (!isAuthenticated && !isDemo) {
+    return null;
+  }
+
+  if (isAdminRoute && !isTenantAdmin) {
     return null;
   }
 
