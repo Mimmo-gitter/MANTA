@@ -84,6 +84,8 @@ export function getOidcSettings(): UserManagerSettings {
 }
 
 let userManagerInstance: UserManager | null = null;
+// Must be greater than oidc-client-ts accessTokenExpiringNotificationTimeInSeconds (default 60).
+const RENEW_SKIP_THRESHOLD_SECONDS = 120;
 let silentRenewPromise: ReturnType<UserManager["signinSilent"]> | null = null;
 
 export function getUserManager(): UserManager {
@@ -103,9 +105,14 @@ export function getUserManager(): UserManager {
           // Read the latest user from shared localStorage
           const currentUser = await userManagerInstance!.getUser();
 
-          // If another tab already renewed the token,
-          // reuse the updated user instead of sending another request.
-          if (currentUser && !currentUser.expired) {
+          // If another tab already renewed the token (i.e. it is no longer
+          // inside the expiring window), reuse it instead of sending another
+          // request. Checking only `expired` would skip the scheduled renewal,
+          // which fires before expiry.
+          if (
+            currentUser &&
+            (currentUser.expires_in ?? 0) > RENEW_SKIP_THRESHOLD_SECONDS
+          ) {
             return currentUser;
           }
 
