@@ -430,10 +430,6 @@ export function PortalHeader({
             aria-label="Deployment Environment: Production US-East-1"
             className="bg-[rgba(16,185,129,0.1)] border border-[rgba(16,185,129,0.3)] border-solid flex gap-[6px] h-[32px] items-center px-[11px] py-px rounded-[6px]"
           >
-            <span
-              className="bg-[#10b981] rounded-full shadow-[0px_0px_5px_0px_#10b981] size-[6px] shrink-0"
-              aria-hidden="true"
-            />
             <span className="font-mono font-semibold text-[#10b981] text-[11px] leading-[16.5px] tracking-[0.275px] whitespace-nowrap">
               PROD US-EAST-1
             </span>
@@ -485,7 +481,7 @@ export function PortalHeader({
               aria-label={`User menu for ${effectiveDisplayName}`}
               className="flex items-center gap-[8px] rounded-[6px]"
             >
-              <div className="bg-[rgba(16,185,129,0.15)] border border-[rgba(16,185,129,0.3)] border-solid flex size-[28px] items-center justify-center rounded-[6px] p-px">
+              <div className="bg-[#0A0E18)] border border-[rgba(16,185,129,0.3)] border-solid flex size-[28px] items-center justify-center rounded-[6px] p-px">
                 <span className="font-mono font-bold text-[#10b981] text-[11px] leading-[16.5px]">
                   {getInitials(effectiveDisplayName)}
                 </span>
