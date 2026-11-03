@@ -19,7 +19,7 @@ export function PortalLayout({ children }: PortalLayoutProps) {
   useEffect(() => {
     function handleResize() {
       const width = window.innerWidth;
-      if (width >= 768 && width < 1024) {
+      if (width >= 768 && width <= 1024) {
         setIsTablet(true);
         setTabletCollapsed(true);
       } else {
