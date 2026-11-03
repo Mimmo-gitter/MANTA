@@ -1,8 +1,10 @@
+
 "use client";
 
 import { useEffect, Suspense } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useAuth } from "@/providers/auth-provider";
+import { getIsLoggingOut } from "@/lib/auth";
 import { PortalLayout } from "@/components/layout/portal-layout";
 
 function PortalAuthGuard({ children }: { children: React.ReactNode }) {
@@ -40,6 +42,11 @@ function PortalAuthGuard({ children }: { children: React.ReactNode }) {
     if (isLoading) return;
 
     if (!isAuthenticated && !isDemo) {
+      if (getIsLoggingOut()) {
+        router.replace("/signed-out");
+        return;
+      }
+
       router.replace("/login");
       return;
     }
@@ -60,7 +67,7 @@ function PortalAuthGuard({ children }: { children: React.ReactNode }) {
     return null;
   }
 
-  if (!isAuthenticated && !isDemo) {
+  if ((!isAuthenticated && !isDemo) || getIsLoggingOut()) {
     return null;
   }
 

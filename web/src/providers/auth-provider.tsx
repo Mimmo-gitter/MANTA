@@ -17,6 +17,8 @@ import {
   initiateLogin,
   getTenantDisplayName,
   fetchCurrentUserFromBackend,
+  setIsLoggingOut,
+  getIsLoggingOut,
   type BackendUserClaims,
 } from "@/lib/auth";
 import { initAuthSync } from "@/lib/auth-tab-sync";
@@ -63,7 +65,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         activeUser.access_token,
       );
 
-      // Не применяем результат устаревшего запроса.
       if (requestId !== syncRequestId.current) return;
 
       setBackendUser(currentBackendUser);
@@ -111,6 +112,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       if (message.type === "LOGOUT") {
+        if (typeof window !== "undefined") {
+          window.sessionStorage.setItem("user_signed_out", "true");
+        }
         setUser(null);
         setBackendUser(null);
         setIsLoading(false);
@@ -130,14 +134,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       syncRequestId.current += 1;
       setUser(null);
       setBackendUser(null);
-      setIsLoading(false);
+      if (!getIsLoggingOut()) {
+        setIsLoading(false);
+      }
     };
 
     const onUserSignedOut = () => {
       syncRequestId.current += 1;
       setUser(null);
       setBackendUser(null);
-      setIsLoading(false);
+      if (!getIsLoggingOut()) {
+        setIsLoading(false);
+      }
     };
 
     manager.events.addUserLoaded(onUserLoaded);
@@ -159,6 +167,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const logout = useCallback(async () => {
     syncRequestId.current += 1;
+    setIsLoggingOut(true);
+    if (typeof window !== "undefined") {
+      window.sessionStorage.setItem("user_signed_out", "true");
+    }
     setIsLoading(true);
     setUser(null);
     setBackendUser(null);
@@ -166,6 +178,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await logoutUser();
     } finally {
       setIsLoading(false);
+      setIsLoggingOut(false);
     }
   }, []);
 

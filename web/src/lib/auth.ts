@@ -88,6 +88,16 @@ let userManagerInstance: UserManager | null = null;
 const RENEW_SKIP_THRESHOLD_SECONDS = 120;
 let silentRenewPromise: ReturnType<UserManager["signinSilent"]> | null = null;
 
+let isLoggingOutInProgress = false;
+
+export function setIsLoggingOut(inProgress: boolean): void {
+  isLoggingOutInProgress = inProgress;
+}
+
+export function getIsLoggingOut(): boolean {
+  return isLoggingOutInProgress;
+}
+
 export function getUserManager(): UserManager {
   if (typeof window === "undefined") {
     return new UserManager(getOidcSettings());
@@ -209,6 +219,11 @@ export async function getCurrentUser(): Promise<User | null> {
 export async function logoutUser(
   postLogoutRedirectUri?: string,
 ): Promise<void> {
+  setIsLoggingOut(true);
+  if (typeof window !== "undefined") {
+    window.sessionStorage.setItem("user_signed_out", "true");
+  }
+
   const manager = getUserManager();
   const user = await manager.getUser();
 

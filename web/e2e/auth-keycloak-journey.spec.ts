@@ -417,7 +417,6 @@ test.describe("Authentication Journey E2E against Keycloak Test Realm (SCRUM-240
     // 4. Assert displayed user name and tenant after login (Acceptance Criterion #2)
     const profileName = page.getByTestId("user-profile-name");
     const tenantBadge = page.getByTestId("user-tenant-badge");
-    const signOutBtn = page.getByTestId("header-signout-button");
 
     await expect(profileName).toBeVisible();
     await expect(profileName).toContainText("Alpha Developer");
@@ -425,7 +424,7 @@ test.describe("Authentication Journey E2E against Keycloak Test Realm (SCRUM-240
     await expect(tenantBadge).toBeVisible();
     await expect(tenantBadge).toContainText("Tenant Alpha");
 
-    await expect(signOutBtn).toBeVisible();
+    await expect(page.getByTestId("header-signout-button")).not.toBeVisible();
   });
 
   test("Scenario 1B: Successful sign-in via Keycloak test realm (Tenant Beta) asserts displayed user name and tenant", async ({
@@ -553,8 +552,9 @@ test.describe("Authentication Journey E2E against Keycloak Test Realm (SCRUM-240
     await expect(page.getByTestId("user-profile-name")).toContainText("Alpha Developer");
     await expect(page.getByTestId("user-tenant-badge")).toContainText("Tenant Alpha");
 
-    // 2. Click Sign Out button in dashboard header
-    const signOutBtn = page.getByTestId("header-signout-button");
+    // 2. Click Sign Out button in profile menu
+    await page.getByTestId("user-profile-menu-trigger").click();
+    const signOutBtn = page.getByTestId("dropdown-signout-button");
     await expect(signOutBtn).toBeVisible();
     await signOutBtn.click();
 
