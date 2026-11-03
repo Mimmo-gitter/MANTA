@@ -143,7 +143,7 @@ export function Sidebar({
                               : "text-[#64748b] hover:bg-white/[0.04] hover:text-[#94a3b8]",
                           )}
                         >
-                          <IconComponent className="shrink-0 size-[14px]" />
+                          <IconComponent className="shrink-0 size-[16px]" />
                         </Link>
                       );
                     })}
@@ -173,7 +173,6 @@ export function Sidebar({
             {/* M.A.N.T.A. Hexagonal Emblem Mark as Toggle Button */}
             <div className="flex items-center px-[16px] relative shrink-0 w-full">
               <div className="flex flex-1 gap-[12px] items-center min-w-0 relative">
-
                 <button
                   type="button"
                   onClick={onToggleCollapse}
@@ -247,7 +246,7 @@ export function Sidebar({
                             <div className="flex items-center gap-[10px] min-w-0">
                               <IconComponent
                                 className={cn(
-                                  "shrink-0 size-[14px]",
+                                  "shrink-0 size-[16px]",
                                   active ? "text-[#00e599]" : "text-[#64748b]",
                                 )}
                               />
