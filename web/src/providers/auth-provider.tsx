@@ -17,6 +17,7 @@ import {
   getTenantDisplayName,
   setIsLoggingOut,
   getIsLoggingOut,
+  getDemoBackendUser,
   type BackendUserClaims,
 } from "@/lib/auth";
 import { initAuthSync } from "@/lib/auth-tab-sync";
@@ -38,7 +39,7 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [backendUser, setBackendUser] = useState<BackendUserClaims | null>(null);
+  const [backendUser, setBackendUser] = useState<BackendUserClaims | null>(() => getDemoBackendUser());
   const [isLoading, setIsLoading] = useState(true);
 
   const syncUser = useCallback((activeUser: User | null) => {
@@ -46,6 +47,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       window.sessionStorage.removeItem("user_signed_out");
     }
     setUser(activeUser);
+    if (!activeUser) {
+      setBackendUser(getDemoBackendUser());
+    }
     setIsLoading(false);
   }, []);
 
@@ -93,7 +97,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const onUserUnloaded = () => {
       setUser(null);
-      setBackendUser(null);
+      setBackendUser(getDemoBackendUser());
       if (!getIsLoggingOut()) {
         setIsLoading(false);
       }
@@ -101,7 +105,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     const onUserSignedOut = () => {
       setUser(null);
-      setBackendUser(null);
+      setBackendUser(getDemoBackendUser());
       if (!getIsLoggingOut()) {
         setIsLoading(false);
       }

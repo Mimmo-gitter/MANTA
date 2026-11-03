@@ -42,6 +42,42 @@ export function getTenantDisplayName(tenantId?: string | null): string {
   return `Tenant: ${tenantId}`;
 }
 
+export const DEMO_BACKEND_USER: BackendUserClaims = {
+  sub: "demo-user-id",
+  name: "Pavlo Zhuk",
+  preferred_username: "pzhuk",
+  email: "director@manta.ai",
+  tenant_id: "",
+  roles: ["TENANT_ADMIN"],
+};
+
+export function getDemoBackendUser(): BackendUserClaims | null {
+  if (typeof window === "undefined") return null;
+  const isDemo =
+    window.location.search.includes("state=") ||
+    window.location.search.includes("demo=true") ||
+    window.sessionStorage.getItem("manta_demo") === "true";
+
+  if (!isDemo || window.sessionStorage.getItem("user_signed_out") === "true") {
+    return null;
+  }
+
+  let roles = ["TENANT_ADMIN"];
+  try {
+    const customRoles = window.sessionStorage.getItem("manta_demo_roles");
+    if (customRoles) {
+      roles = JSON.parse(customRoles);
+    }
+  } catch {
+    // fallback to default
+  }
+
+  return {
+    ...DEMO_BACKEND_USER,
+    roles,
+  };
+}
+
 export function getOidcSettings(): UserManagerSettings {
   const redirectUri =
     process.env.NEXT_PUBLIC_REDIRECT_URI ||
