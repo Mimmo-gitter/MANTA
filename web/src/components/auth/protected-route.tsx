@@ -3,6 +3,7 @@
 import React, { useEffect, type ReactNode } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useAuth } from "@/providers/auth-provider";
+import { getIsLoggingOut } from "@/lib/auth";
 
 interface ProtectedRouteProps {
   children: ReactNode;
@@ -15,6 +16,11 @@ export function ProtectedRoute({ children }: ProtectedRouteProps) {
 
   useEffect(() => {
     if (!isLoading && !isAuthenticated) {
+      if (getIsLoggingOut()) {
+        router.replace("/signed-out");
+        return;
+      }
+
       const target = pathname ? `/login?redirect=${encodeURIComponent(pathname)}` : "/login";
       router.replace(target);
     }

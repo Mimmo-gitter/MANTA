@@ -18,10 +18,27 @@ export function SignedOutContent() {
         (navEntries[0] as PerformanceNavigationTiming).type === "reload";
 
       if (isReload) {
+        window.sessionStorage.removeItem("user_signed_out");
         router.replace("/login");
       }
     }
   }, [router]);
 
-  return <SignedOutCard workspaceName={workspaceParam} />;
+  return (
+    <SignedOutCard
+      workspaceName={workspaceParam}
+      onSignInAgain={() => {
+        if (typeof window !== "undefined") {
+          window.sessionStorage.removeItem("user_signed_out");
+        }
+        router.push("/login");
+      }}
+      onDifferentOrganization={() => {
+        if (typeof window !== "undefined") {
+          window.sessionStorage.removeItem("user_signed_out");
+        }
+        router.push("/login");
+      }}
+    />
+  );
 }

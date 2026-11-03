@@ -165,19 +165,6 @@ export function Sidebar({
             </nav>
           </div>
         </div>
-
-        {/* Bottom Area: RLS:ON */}
-        <div
-          data-testid="sidebar-footer"
-          className="flex flex-col items-center pb-[4px] relative shrink-0 w-full"
-        >
-          <div className="bg-[#0a0e18] border border-[#1c2433] border-solid flex gap-[4px] items-center px-[7px] py-[3px] relative rounded-[2px] shrink-0">
-            <div className="bg-[#00e599] relative rounded-[12px] shrink-0 size-[6px]" />
-            <span className="font-mono font-semibold text-[#a9c8b0] text-[9px] leading-[13.5px] tracking-[-0.225px] whitespace-nowrap">
-              RLS:ON
-            </span>
-          </div>
-        </div>
       </aside>
     );
   }
@@ -322,24 +309,6 @@ export function Sidebar({
                 ))}
               </div>
             </nav>
-          </div>
-        </div>
-
-        {/* Bottom Area: RLS Security Indicator (Figma 340:13181) */}
-        <div
-          data-testid="sidebar-footer"
-          className="relative shrink-0 w-full"
-        >
-          <div className="flex flex-col items-center pb-[4px] px-[12px] relative size-full">
-            <div className="bg-[#0a0e18] border border-[#1c2433] border-solid flex gap-[6px] items-center justify-center overflow-clip px-[9px] py-[5px] relative rounded-[2px] shrink-0 w-full">
-              <div className="bg-[#00e599] relative rounded-[12px] shrink-0 size-[6px]" />
-              <span className="font-mono font-semibold text-[#a9c8b0] text-[9px] leading-[13.5px] tracking-[-0.225px] whitespace-nowrap">
-                RLS:ON
-              </span>
-              <span className="font-mono font-normal text-[#a4a8b8] text-[9px] leading-[13.5px] pl-[4px] whitespace-nowrap">
-                Zero-Trust Enforced
-              </span>
-            </div>
           </div>
         </div>
       </aside>
@@ -494,29 +463,6 @@ export function Sidebar({
               </div>
             ))}
           </nav>
-        </div>
-
-        {/* Bottom User Profile Footer (Compact anchored footer — Figma 325:2816) */}
-        <div
-          data-testid="sidebar-footer"
-          className="bg-[#0f131d] border-[rgba(37,43,59,0.6)] border-solid border-t relative shrink-0 w-full"
-        >
-          <div className="flex flex-col items-start pb-[8px] pt-[9px] px-[8px] relative size-full">
-            <div className="flex items-center justify-between px-[4px] relative w-full">
-              <div className="flex items-center gap-[6px]">
-                <FigmaMantaEmblem className="size-[12px] text-[#8b949e]" />
-                <span className="font-mono font-normal text-[#64748b] text-[9px] leading-[13.5px] whitespace-nowrap">
-                  Zero-Trust Enforced
-                </span>
-              </div>
-              <div className="flex items-center gap-[4px] shrink-0">
-                <div className="bg-[#00e599] rounded-full size-[4px] shrink-0" />
-                <span className="font-mono font-normal text-[#00e599] text-[9px] leading-[13.5px] whitespace-nowrap">
-                  14ms
-                </span>
-              </div>
-            </div>
-          </div>
         </div>
       </aside>
     </>

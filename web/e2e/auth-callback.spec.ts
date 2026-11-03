@@ -156,7 +156,6 @@ test.describe("OIDC Callback Handling & Multi-Tenant Dashboard (SCRUM-274)", () 
     // Verify user name and tenant badge in dashboard header
     const profileName = page.getByTestId("user-profile-name");
     const tenantBadge = page.getByTestId("user-tenant-badge");
-    const signOutBtn = page.getByTestId("header-signout-button");
 
     await expect(profileName).toBeVisible();
     await expect(profileName).toContainText("Alpha Developer");
@@ -164,7 +163,7 @@ test.describe("OIDC Callback Handling & Multi-Tenant Dashboard (SCRUM-274)", () 
     await expect(tenantBadge).toBeVisible();
     await expect(tenantBadge).toContainText("Tenant Alpha");
 
-    await expect(signOutBtn).toBeVisible();
+    await expect(page.getByTestId("header-signout-button")).not.toBeVisible();
   });
 
   test("AC 3: Users from Tenant Beta see their own user name and Tenant Beta badge", async ({
@@ -433,9 +432,10 @@ test.describe("OIDC Callback Handling & Multi-Tenant Dashboard (SCRUM-274)", () 
     await page.goto("/login");
     await expect(page).toHaveURL("/", { timeout: 10000 });
 
-    const signOutBtn = page.getByTestId("header-signout-button");
-    await expect(signOutBtn).toBeVisible();
-    await signOutBtn.click();
+    await page.getByTestId("user-profile-menu-trigger").click();
+    const dropdownSignOut = page.getByTestId("dropdown-signout-button");
+    await expect(dropdownSignOut).toBeVisible();
+    await dropdownSignOut.click();
 
     // Verify user is redirected to /signed-out, confirmation is shown and profile elements are gone
     await expect(page).toHaveURL(/\/signed-out/, { timeout: 10000 });

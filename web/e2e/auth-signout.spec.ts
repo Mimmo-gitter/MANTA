@@ -183,7 +183,7 @@ test.describe("OIDC Sign-Out & Session Termination (SCRUM-275)", () => {
     await expect(profileName).toContainText("Alpha Developer");
     await expect(tenantBadge).toBeVisible();
     await expect(tenantBadge).toContainText("Tenant Alpha");
-    await expect(signOutBtn).toBeVisible();
+    await expect(page.getByTestId("header-signout-button")).not.toBeVisible();
 
     return { authRequests, logoutRequests };
   }
@@ -204,10 +204,11 @@ test.describe("OIDC Sign-Out & Session Termination (SCRUM-275)", () => {
     });
     expect(tokenCountBefore).toBeGreaterThan(0);
 
-    // Click Sign Out button
-    const signOutBtn = page.getByTestId("header-signout-button");
-    await expect(signOutBtn).toBeVisible();
-    await signOutBtn.click();
+    // Click Sign Out button in dropdown menu
+    await page.getByTestId("user-profile-menu-trigger").click();
+    const dropdownSignOut = page.getByTestId("dropdown-signout-button");
+    await expect(dropdownSignOut).toBeVisible();
+    await dropdownSignOut.click();
 
     // Verify browser is redirected to /signed-out via post_logout_redirect_uri
     await expect(page).toHaveURL(/\/signed-out/, { timeout: 10000 });
@@ -245,9 +246,9 @@ test.describe("OIDC Sign-Out & Session Termination (SCRUM-275)", () => {
   }) => {
     await setupAuthenticatedUser(page);
 
-    // Perform sign out
-    const signOutBtn = page.getByTestId("header-signout-button");
-    await signOutBtn.click();
+    // Perform sign out via dropdown
+    await page.getByTestId("user-profile-menu-trigger").click();
+    await page.getByTestId("dropdown-signout-button").click();
     await expect(page).toHaveURL(/\/signed-out/, { timeout: 10000 });
 
     // 1. Test Browser Back Button
@@ -282,8 +283,9 @@ test.describe("OIDC Sign-Out & Session Termination (SCRUM-275)", () => {
   }) => {
     const { authRequests, logoutRequests } = await setupAuthenticatedUser(page);
 
-    // Sign out
-    await page.getByTestId("header-signout-button").click();
+    // Sign out via dropdown
+    await page.getByTestId("user-profile-menu-trigger").click();
+    await page.getByTestId("dropdown-signout-button").click();
     await expect(page).toHaveURL(/\/signed-out/, { timeout: 10000 });
     expect(logoutRequests.length).toBe(1);
 

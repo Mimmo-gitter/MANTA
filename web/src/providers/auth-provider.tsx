@@ -15,6 +15,8 @@ import {
   logoutUser,
   initiateLogin,
   getTenantDisplayName,
+  setIsLoggingOut,
+  getIsLoggingOut,
   type BackendUserClaims,
 } from "@/lib/auth";
 import { initAuthSync } from "@/lib/auth-tab-sync";
@@ -71,6 +73,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
 
       if (message.type === "LOGOUT") {
+        if (typeof window !== "undefined") {
+          window.sessionStorage.setItem("user_signed_out", "true");
+        }
         setUser(null);
         setBackendUser(null);
         setIsLoading(false);
@@ -89,13 +94,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const onUserUnloaded = () => {
       setUser(null);
       setBackendUser(null);
-      setIsLoading(false);
+      if (!getIsLoggingOut()) {
+        setIsLoading(false);
+      }
     };
 
     const onUserSignedOut = () => {
       setUser(null);
       setBackendUser(null);
-      setIsLoading(false);
+      if (!getIsLoggingOut()) {
+        setIsLoading(false);
+      }
     };
 
     manager.events.addUserLoaded(onUserLoaded);
@@ -116,6 +125,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
+    setIsLoggingOut(true);
+    if (typeof window !== "undefined") {
+      window.sessionStorage.setItem("user_signed_out", "true");
+    }
     setIsLoading(true);
     setUser(null);
     setBackendUser(null);
@@ -123,6 +136,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       await logoutUser();
     } finally {
       setIsLoading(false);
+      setIsLoggingOut(false);
     }
   }, []);
 

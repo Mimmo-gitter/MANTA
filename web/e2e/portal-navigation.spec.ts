@@ -28,7 +28,7 @@ test.describe("Portal Layout & Navigation (SCRUM-266 & SCRUM-267)", () => {
     await expect(sidebar.getByText("WORKSPACE", { exact: true })).toBeVisible();
     await expect(sidebar.getByText("ENGINEERING", { exact: true })).toBeVisible();
     await expect(sidebar.getByText("ADMINISTRATION", { exact: true })).toBeVisible();
-    await expect(page.getByTestId("sidebar-footer")).toBeVisible();
+    await expect(page.getByTestId("sidebar-footer")).not.toBeVisible();
 
     // Verify Header (48px)
     const header = page.getByTestId("portal-header");
