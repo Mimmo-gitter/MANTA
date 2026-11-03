@@ -6,6 +6,7 @@ import React, {
   useEffect,
   useState,
   useCallback,
+  useRef,
   type ReactNode,
 } from "react";
 import { User } from "oidc-client-ts";
@@ -15,6 +16,7 @@ import {
   logoutUser,
   initiateLogin,
   getTenantDisplayName,
+  fetchCurrentUserFromBackend,
   setIsLoggingOut,
   getIsLoggingOut,
   getDemoBackendUser,
@@ -39,24 +41,66 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [backendUser, setBackendUser] = useState<BackendUserClaims | null>(() => getDemoBackendUser());
+  const [backendUser, setBackendUser] = useState<BackendUserClaims | null>(() =>
+    getDemoBackendUser(),
+  );
   const [isLoading, setIsLoading] = useState(true);
 
-  const syncUser = useCallback((activeUser: User | null) => {
+  const syncRequestId = useRef(0);
+
+  const syncUser = useCallback(async (activeUser: User | null) => {
+    const requestId = ++syncRequestId.current;
+
     if (activeUser && typeof window !== "undefined") {
       window.sessionStorage.removeItem("user_signed_out");
     }
+
     setUser(activeUser);
+
     if (!activeUser) {
       setBackendUser(getDemoBackendUser());
+      setIsLoading(false);
+      return;
     }
-    setIsLoading(false);
+
+    if (activeUser.expired || !activeUser.access_token) {
+      setBackendUser(null);
+      setIsLoading(false);
+      return;
+    }
+
+    try {
+      const currentBackendUser = await fetchCurrentUserFromBackend(
+        activeUser.access_token,
+      );
+
+      if (requestId !== syncRequestId.current) return;
+
+      setBackendUser(currentBackendUser);
+    } catch (error) {
+      if (requestId !== syncRequestId.current) return;
+
+      console.error("Failed to fetch backend user:", error);
+      setBackendUser(null);
+    } finally {
+      if (requestId === syncRequestId.current) {
+        setIsLoading(false);
+      }
+    }
   }, []);
 
   const refresh = useCallback(async () => {
     setIsLoading(true);
-    const u = await getCurrentUser();
-    syncUser(u);
+
+    try {
+      const currentUser = await getCurrentUser();
+      await syncUser(currentUser);
+    } catch (error) {
+      console.error("Failed to refresh user:", error);
+      setUser(null);
+      setBackendUser(null);
+      setIsLoading(false);
+    }
   }, [syncUser]);
 
   useEffect(() => {
@@ -96,6 +140,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
 
     const onUserUnloaded = () => {
+      syncRequestId.current += 1;
       setUser(null);
       setBackendUser(getDemoBackendUser());
       if (!getIsLoggingOut()) {
@@ -104,6 +149,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     };
 
     const onUserSignedOut = () => {
+      syncRequestId.current += 1;
       setUser(null);
       setBackendUser(getDemoBackendUser());
       if (!getIsLoggingOut()) {
@@ -129,6 +175,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
+    syncRequestId.current += 1;
     setIsLoggingOut(true);
     if (typeof window !== "undefined") {
       window.sessionStorage.setItem("user_signed_out", "true");
@@ -155,9 +202,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   // Compute authoritative tenant ID and friendly name
   const tenantId =
-    backendUser?.tenant_id ||
-    (user?.profile?.tenant_id as string) ||
-    null;
+    backendUser?.tenant_id || (user?.profile?.tenant_id as string) || null;
 
   const tenantName = getTenantDisplayName(tenantId);
 

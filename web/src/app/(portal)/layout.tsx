@@ -1,14 +1,21 @@
+
 "use client";
 
 import { useEffect, Suspense } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { useAuth } from "@/providers/auth-provider";
 import { getIsLoggingOut } from "@/lib/auth";
 import { PortalLayout } from "@/components/layout/portal-layout";
 
 function PortalAuthGuard({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, isLoading } = useAuth();
+  const {
+    isAuthenticated,
+    isLoading,
+    backendUser,
+  } = useAuth();
+
   const router = useRouter();
+  const pathname = usePathname();
 
   const isDemo =
     typeof window !== "undefined" &&
@@ -16,18 +23,55 @@ function PortalAuthGuard({ children }: { children: React.ReactNode }) {
       window.location.search.includes("demo=true") ||
       window.sessionStorage.getItem("manta_demo") === "true");
 
+  const adminRoutes = [
+    "/workspace-settings",
+    "/integrations",
+    "/access-roles",
+    "/privacy-erasure",
+    "/adr-governance",
+  ];
+
+  const isAdminRoute = adminRoutes.some(
+    (route) => pathname === route || pathname.startsWith(`${route}/`)
+  );
+
+  const isTenantAdmin =
+    backendUser?.roles.includes("TENANT_ADMIN") ?? false;
+
   useEffect(() => {
-    if (!isLoading && !isAuthenticated && !isDemo) {
+    if (isLoading) return;
+
+    if (!isAuthenticated && !isDemo) {
       if (getIsLoggingOut()) {
         router.replace("/signed-out");
         return;
       }
 
       router.replace("/login");
+      return;
     }
-  }, [isLoading, isAuthenticated, isDemo, router]);
 
-  if ((!isLoading && !isAuthenticated && !isDemo) || getIsLoggingOut()) {
+    if (isAdminRoute && !isTenantAdmin) {
+      router.replace("/");
+    }
+  }, [
+    isLoading,
+    isAuthenticated,
+    isDemo,
+    isAdminRoute,
+    isTenantAdmin,
+    router,
+  ]);
+
+  if (isLoading) {
+    return null;
+  }
+
+  if ((!isAuthenticated && !isDemo) || getIsLoggingOut()) {
+    return null;
+  }
+
+  if (isAdminRoute && !isTenantAdmin) {
     return null;
   }
 

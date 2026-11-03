@@ -7,6 +7,7 @@ import { usePathname } from "next/navigation";
 import { NAVIGATION_SECTIONS } from "@/config/navigation";
 import { useShellState } from "@/components/layout/shell-context";
 import { cn } from "@/lib/utils";
+import { useAuth } from "@/providers/auth-provider";
 import {
   FigmaOverviewIcon,
   FigmaProjectsIcon,
@@ -59,6 +60,16 @@ export function Sidebar({
 }: SidebarProps) {
   const pathname = usePathname();
   const { shellState } = useShellState();
+  const { backendUser } = useAuth();
+
+  const visibleNavigationSections = NAVIGATION_SECTIONS.map((section) => ({
+    ...section,
+    items: section.items.filter(
+      (item) =>
+        !item.requiredRole ||
+        (backendUser?.roles ?? []).includes(item.requiredRole),
+    ),
+  })).filter((section) => section.items.length > 0);
   const [logoHovered, setLogoHovered] = useState(false);
 
   const isCurrentRoute = (href: string) => {
@@ -129,8 +140,11 @@ export function Sidebar({
               aria-label="Primary Navigation"
               className="flex flex-col gap-[4px] items-center px-[8px] relative shrink-0 w-full"
             >
-              {NAVIGATION_SECTIONS.map((section, sectionIdx) => (
-                <div key={section.id} className="flex flex-col gap-[4px] items-center w-full">
+              {visibleNavigationSections.map((section, sectionIdx) => (
+                <div
+                  key={section.id}
+                  className="flex flex-col gap-[4px] items-center w-full"
+                >
                   {sectionIdx > 0 && (
                     <div className="flex flex-col h-[9px] items-start py-[4px] relative shrink-0 w-[32px]">
                       <div className="bg-[#1c2433] h-px opacity-80 shrink-0 w-[32px]" />
@@ -241,7 +255,7 @@ export function Sidebar({
               className="flex flex-col items-start pt-[4px] relative shrink-0 w-full"
             >
               <div className="flex flex-col gap-[2px] items-start overflow-x-clip overflow-y-auto px-[12px] relative shrink-0 w-full">
-                {NAVIGATION_SECTIONS.map((section, sectionIdx) => (
+                {visibleNavigationSections.map((section, sectionIdx) => (
                   <div key={section.id} className="flex flex-col w-full">
                     {sectionIdx > 0 && (
                       <div className="flex flex-col h-[9px] items-start py-[4px] relative shrink-0 w-full">
@@ -380,7 +394,7 @@ export function Sidebar({
             aria-label="Primary Navigation"
             className="flex flex-1 flex-col gap-[11px] items-start min-h-0 overflow-y-auto pt-[7px] pb-[16px] px-[8px] relative w-full"
           >
-            {NAVIGATION_SECTIONS.map((section) => (
+            {visibleNavigationSections.map((section) => (
               <div
                 key={section.id}
                 className="flex flex-col gap-[4px] items-start relative shrink-0 w-full"
