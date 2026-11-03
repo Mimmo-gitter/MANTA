@@ -370,10 +370,16 @@ export function PortalHeader({
         data-testid="portal-header"
         role="banner"
         aria-label="Application Header"
-        className="backdrop-blur-[6px] bg-[#171B26] border-b border-[#252B3B] border-solid flex h-[56px] items-center justify-between px-[20px] shrink-0 w-full z-30"
+        className={cn(
+          "backdrop-blur-[6px] bg-[#171B26] border-b border-[#252B3B] border-solid flex h-[56px] items-center px-[20px] shrink-0 w-full z-30",
+          "justify-between max-[768px]:justify-end",
+        )}
       >
         {/* Left: Workspace / Overview Breadcrumb */}
-        <nav aria-label="Header Breadcrumb" className="flex gap-[8px] items-center">
+        <nav
+          aria-label="Header Breadcrumb"
+          className="hidden min-[769px]:flex gap-[8px] items-center"
+        >
           <span className="font-normal text-[#8b95a5] text-[14px] leading-[20px]">
             {breadcrumb.section}
           </span>
@@ -428,7 +434,7 @@ export function PortalHeader({
           <div
             data-testid="environment-badge"
             aria-label="Deployment Environment: Production US-East-1"
-            className="bg-[rgba(16,185,129,0.1)] border border-[rgba(16,185,129,0.3)] border-solid flex gap-[6px] h-[32px] items-center px-[11px] py-px rounded-[6px]"
+            className="hidden min-[769px]:flex bg-[rgba(16,185,129,0.1)] border border-[rgba(16,185,129,0.3)] border-solid gap-[6px] h-[28px] items-center px-[11px] py-px rounded-[6px]"
           >
             <span className="font-mono font-semibold text-[#10b981] text-[11px] leading-[16.5px] tracking-[0.275px] whitespace-nowrap">
               PROD US-EAST-1
@@ -441,7 +447,7 @@ export function PortalHeader({
               type="text"
               placeholder="Search..."
               aria-label="Search projects"
-              className="bg-[#121722] border border-[#1e2638] border-solid h-[32px] w-full rounded-[6px] pl-[32px] pr-[36px] py-[7px] text-[12px] leading-[16px] text-[#f0f4f8] placeholder:text-[#6b7280] focus:border-[#10b981] focus:outline-none"
+              className="bg-[#0A0E18] border border-[#1e2638] border-solid h-[32px] w-full rounded-[6px] pl-[32px] pr-[36px] py-[7px] text-[12px] leading-[16px] text-[#f0f4f8] placeholder:text-[#6b7280] focus:border-[#10b981] focus:outline-none"
             />
             <img
               src="/icons/shell/6dd21.svg"
@@ -578,7 +584,7 @@ export function PortalHeader({
         <div
           data-testid="environment-badge"
           aria-label="Deployment Environment: Production US-East-1"
-          className="hidden sm:flex h-[32px] w-[102px] shrink-0 items-center justify-center bg-[rgba(0,229,153,0.1)] border border-[rgba(0,229,153,0.2)] border-solid rounded-[6px]"
+          className="hidden sm:flex h-[28px] w-[102px] shrink-0 items-center justify-center bg-[rgba(0,229,153,0.1)] border border-[rgba(0,229,153,0.2)] border-solid rounded-[6px]"
         >
           <span className="font-mono text-[#00e599] text-[10px] leading-[15px] tracking-[0.5px] uppercase whitespace-nowrap">
             PROD US-EAST-1
