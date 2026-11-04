@@ -35,13 +35,17 @@ export function SignedOutContent() {
       onSignInAgain={() => {
         if (typeof window !== "undefined") {
           window.sessionStorage.removeItem("user_signed_out");
-          if (redirectParam) {
+          if (isSessionExpired && redirectParam) {
             window.sessionStorage.setItem("manta_auth_return_to", redirectParam);
           }
         }
-        const target = redirectParam
-          ? `/login?redirect=${encodeURIComponent(redirectParam)}`
-          : "/login";
+        const target = isSessionExpired
+          ? (redirectParam
+              ? `/login?reason=session_expired&redirect=${encodeURIComponent(redirectParam)}`
+              : "/login?reason=session_expired")
+          : (redirectParam
+              ? `/login?redirect=${encodeURIComponent(redirectParam)}`
+              : "/login");
         router.push(target);
       }}
       onDifferentOrganization={() => {

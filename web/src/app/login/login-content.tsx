@@ -25,9 +25,9 @@ export function LoginContent() {
 
   const [showSignedOut, setShowSignedOut] = useState(isSignedOutInitial);
 
-  // Persist redirect target into sessionStorage for callback flow
+  // Persist redirect target into sessionStorage for callback flow only when recovering from session expiration
   useEffect(() => {
-    if (redirectParam && typeof window !== "undefined") {
+    if (isSessionExpired && redirectParam && typeof window !== "undefined") {
       try {
         window.sessionStorage.setItem("manta_auth_return_to", redirectParam);
       } catch {
@@ -82,7 +82,7 @@ export function LoginContent() {
         onSignInAgain={() => {
           if (typeof window !== "undefined") {
             window.sessionStorage.removeItem("user_signed_out");
-            if (redirectParam) {
+            if (isSessionExpired && redirectParam) {
               window.sessionStorage.setItem("manta_auth_return_to", redirectParam);
             }
           }

@@ -151,7 +151,7 @@ test.describe("Silent Session Renewal & Expiration (SCRUM-283)", () => {
           refresh_token: `mock-refresh-token-alpha-${tokenCallCount}`,
           id_token: idToken,
           token_type: "Bearer",
-          expires_in: 60,
+          expires_in: 300,
           scope: "openid profile email",
         }),
       });
@@ -336,6 +336,7 @@ test.describe("Silent Session Renewal & Expiration (SCRUM-283)", () => {
     const signInAgainBtn = page.getByTestId("sign-in-again-button");
     await expect(signInAgainBtn).toBeVisible();
     await signInAgainBtn.click();
+    await page.waitForURL(/\/login\?redirect=%2Frefactoring-verification/);
 
     // Now on SignInCard, click Company SSO to complete re-authentication
     const ssoBtn = page.getByTestId("company-sso-button");

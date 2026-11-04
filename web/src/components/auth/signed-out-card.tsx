@@ -27,7 +27,7 @@ export function SignedOutCard({
   const handleSignInAgain = () => {
     if (typeof window !== "undefined") {
       window.sessionStorage.removeItem("user_signed_out");
-      if (redirectUrl) {
+      if (isExpired && redirectUrl) {
         window.sessionStorage.setItem("manta_auth_return_to", redirectUrl);
       }
     }
@@ -178,7 +178,7 @@ export function SignedOutCard({
           onClick={(e) => {
             if (typeof window !== "undefined") {
               window.sessionStorage.removeItem("user_signed_out");
-              if (redirectUrl) {
+              if (isExpired && redirectUrl) {
                 window.sessionStorage.setItem("manta_auth_return_to", redirectUrl);
               }
             }
