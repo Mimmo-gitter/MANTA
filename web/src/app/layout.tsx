@@ -1,9 +1,7 @@
 import type { Metadata } from "next";
-import { Inter } from "next/font/google";
 import "./globals.css";
 import { QueryProvider } from "@/providers/query-provider";
-
-const inter = Inter({ subsets: ["latin"] });
+import { AuthProvider } from "@/providers/auth-provider";
 
 export const metadata: Metadata = {
   title: "MANTA — Engineering Intelligence Platform",
@@ -16,9 +14,11 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="h-full">
-      <body className={`${inter.className} min-h-full antialiased`}>
-        <QueryProvider>{children}</QueryProvider>
+    <html lang="en" className="dark h-full">
+      <body className="min-h-full antialiased" suppressHydrationWarning>
+        <QueryProvider>
+          <AuthProvider>{children}</AuthProvider>
+        </QueryProvider>
       </body>
     </html>
   );

@@ -21,6 +21,7 @@ Dockerfile* text eol=lf
 *.yml text eol=lf
 *.yaml text eol=lf
 *.toml text eol=lf
+*.ini text eol=lf
 *.md text eol=lf
 
 # Binary assets & protobuf graphs
