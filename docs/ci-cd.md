@@ -47,6 +47,7 @@ Backend Lint  Backend Tests  Migration Check  Docker Build      Web Checks
 | **Docker Build** | `backend-docker-build` | Docker Buildx (`docker/build-push-action`) | GitHub Actions cache backend (`type=gha`, `mode=max`) | Validates multi-stage Docker image compilation and dependency resolution without pushing unverified images. |
 | **Web Checks** | `web-checks` | Next.js 15, ESLint | GitHub Actions npm cache (`web/package-lock.json`) | Verifies web portal TypeScript types, ESLint compliance, and production static site builds. |
 | **Web E2E Tests** | `web-e2e` | Playwright, Keycloak 24 (`manta` realm) | GitHub Actions npm cache (`web/package-lock.json`) | Boots Keycloak with `infra/keycloak/realm-export.json` and runs automated browser tests covering sign-in, wrong password, cancelled login, sign-out, and protected route access (`docs/auth-test-scenarios.md`). |
+| **Mobile Quality & Build** | `mobile-ci` (`.github/workflows/mobile-ci.yml`) | Gradle 9, Ktlint, Android Lint, JUnit | GitHub Actions Gradle cache (`actions/setup-java@v4`) | Enforces Kotlin code formatting (`ktlintCheck`), Android static analysis (`lintDebug`), unit tests (`testDebugUnitTest`), and compiles debug APKs (`assembleDebug`). |
 | **Unified Status Gate** | `ci-gate` | Bash status evaluator | N/A | Consolidates upstream results; exits `1` if any stage fails or cancels, emitting a unified status check to GitHub. |
 
 ---
@@ -116,4 +117,24 @@ cd web
 npm run lint
 npm run build
 npm run test:e2e
+```
+
+### Mobile App (Android)
+```bash
+cd mobile
+
+# Code format check (Ktlint)
+./gradlew ktlintCheck
+
+# Auto-format Kotlin code
+./gradlew ktlintFormat
+
+# Static analysis (Android Lint)
+./gradlew lintDebug
+
+# Run unit tests
+./gradlew testDebugUnitTest
+
+# Build debug APKs (dev and stage flavors)
+./gradlew assembleDebug
 ```
