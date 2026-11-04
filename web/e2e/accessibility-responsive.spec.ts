@@ -125,9 +125,9 @@ test.describe("Login Page Accessibility & Responsiveness (320px to 4K)", () => {
     const signInButton = page.getByRole("button", { name: "Sign In" });
     await expect(signInButton).toBeFocused();
 
-    // Tab to Sign up link
+    // Tab to Register / Sign up link
     await page.keyboard.press("Tab");
-    const signUpLink = page.getByRole("link", { name: "Sign up" });
+    const signUpLink = page.getByRole("link", { name: /Register your organization|Sign up/i });
     await expect(signUpLink).toBeFocused();
   });
 
