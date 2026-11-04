@@ -38,10 +38,7 @@ from app.config import settings  # noqa: E402
 DEFAULT_THROWAWAY_DB = "manta_rls_negative_test"
 DEFAULT_TARGET_TABLE = "projects"
 DEFAULT_TEST_TARGETS = [
-    "tests/test_rls_guardrails.py",
-    "tests/test_rls_isolation.py",
-    "-k",
-    "test_project_cross_tenant_read_isolation or test_all_tenant_id_tables_have_rls_and_force_rls",
+    "tests/security",
 ]
 
 
@@ -178,6 +175,7 @@ def run_security_test_stage(
     db_name: str,
     test_targets: Optional[list[str]] = None,
     extra_env: Optional[dict[str, str]] = None,
+    failfast: bool = False,
 ) -> tuple[int, str]:
     """Execute pytest security tests against the throwaway database.
 
@@ -192,6 +190,8 @@ def run_security_test_stage(
         env.update(extra_env)
 
     cmd = [sys.executable, "-m", "pytest"] + targets + ["-v"]
+    if failfast:
+        cmd.append("-x")
     result = subprocess.run(
         cmd,
         cwd=str(BACKEND_DIR),
@@ -283,7 +283,7 @@ async def run_single_negative_cycle(
 
     # 3. Security tests MUST fail
     print("[Phase 2] Running security tests (EXPECTING FAILURE)...")
-    fail_code, fail_output = run_security_test_stage(db_name, test_targets)
+    fail_code, fail_output = run_security_test_stage(db_name, test_targets, failfast=True)
     if fail_code == 0:
         raise RLSNegativeCheckError(
             f"[FATAL SAFETY NET FAILURE] Security tests PASSED despite '{mode}' on '{table}'!\n"
@@ -443,7 +443,7 @@ async def execute_step(args: argparse.Namespace) -> int:
         await tamper_rls(db_name, table, mode)
         return 0
     elif step == "expect-failure":
-        code, out = run_security_test_stage(db_name, targets)
+        code, out = run_security_test_stage(db_name, targets, failfast=True)
         if code == 0:
             raise RLSNegativeCheckError(
                 f"[FATAL] Security tests passed despite tampering ('{mode}' on '{table}')!",
