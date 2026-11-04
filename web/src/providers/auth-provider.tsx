@@ -204,7 +204,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const tenantId =
     backendUser?.tenant_id || (user?.profile?.tenant_id as string) || null;
 
-  const tenantName = getTenantDisplayName(tenantId);
+  const tenantName =
+    backendUser?.tenant_name ||
+    (user?.profile?.tenant_name as string) ||
+    getTenantDisplayName(tenantId);
 
   const value: AuthContextValue = {
     user,

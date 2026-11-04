@@ -334,6 +334,7 @@ The frontend registration flow (`web/src/app/register/page.tsx`) implements a 3-
 - **Step 1 (Tenant Profile):** Auto-derives slug as user types; continue button disabled until name $\ge 2$ characters and valid kebab-case slug.
 - **Step 2 (Admin Credentials):** Dynamic password policy checklist requiring 12+ characters, uppercase, number, and special character.
 - **Step 3 (Confirmation):** Submits payload to `POST /tenants/register` and transitions to `RegisterSuccessCard` upon `HTTP 201`.
+- **Step 4 (Administrator Sign-In & Workspace Access):** Clicks "Launch Workspace Dashboard" (`/login?workspace={slug}&email={email}&registered=true`), verifies prefilled email and registration confirmation banner, signs in with administrator credentials via enterprise SSO, validates token exchange, and verifies administrative role permissions on the platform dashboard (`/access-roles`). Each test generates unique tenant names and slugs to prevent cross-test collisions.
 
 ---
 
@@ -349,3 +350,5 @@ The frontend registration flow (`web/src/app/register/page.tsx`) implements a 3-
 | **Invalid payloads rejected** | **PASS** | `test_tenant_registration.py::test_register_tenant_validation_errors_422`<br>`test_register_tenant_extra_fields_forbidden_422` | **TC-REG-005A** - **TC-REG-005E** |
 | **Duplicate registration handled** | **PASS** | `test_tenant_registration.py::test_register_tenant_duplicate_slug_returns_409`<br>`test_cross_tenant_admin_email_coexistence_and_duplicate_slug_rejection` | **TC-REG-004A** - **TC-REG-004C** |
 | **Database least-privilege & atomicity** | **PASS** | `test_tenant_registration.py::test_direct_insert_tenants_denied_for_eng_app_user`<br>`test_security_definer_function_attributes`<br>`test_security_definer_atomicity_on_failure` | **TC-REG-008A** - **TC-REG-008C** |
+| **New administrator can sign in afterward** | **PASS** | `web/e2e/tenant-registration.spec.ts::Scope 2: Verify the new administrator can sign in afterward and access tenant workspace` | Scope 2 (Section 4) |
+| **Tests pass reliably in CI with unique tenant names** | **PASS** | `web/e2e/tenant-registration.spec.ts`<br>`.github/workflows/ci.yml` (`web-e2e` job) | All tests use isolated `crypto.randomUUID()` identifiers for tenants and credentials. |

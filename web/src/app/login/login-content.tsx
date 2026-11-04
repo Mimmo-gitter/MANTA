@@ -73,5 +73,16 @@ export function LoginContent() {
     );
   }
 
-  return <SignInCard initialError={initialError} />;
+  const emailParam = searchParams.get("email");
+  const workspaceParam = searchParams.get("workspace");
+  const registeredParam = searchParams.get("registered");
+
+  return (
+    <SignInCard
+      initialError={initialError}
+      defaultEmail={emailParam || ""}
+      workspace={workspaceParam}
+      isRegistered={registeredParam === "true"}
+    />
+  );
 }
