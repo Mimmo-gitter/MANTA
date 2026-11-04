@@ -1,0 +1,849 @@
+{
+  "$schema": "./roles-permissions.schema.json",
+  "version": "1.0.0",
+  "system": "M.A.N.T.A. Engineering Intelligence Platform",
+  "parent_story": "SCRUM-247 (US-11 Role-based access control)",
+  "task": "SCRUM-306 (Define role permission matrix for the seven roles)",
+  "sources": [
+    "AI-Augmented Engineering Intelligence Platform Architectural Blueprint & Defensible Technical Specification v3.0 §6.2, §6.5, §7.5, §10.3, §11.1, §11.2",
+    "M.A.N.T.A. Software Requirements Specification v1.0 §1.2, §2.3, §2.4.1, §3.1.1, §3.2.1, §3.2.5, §3.2.6, §3.2.7, §3.2.8, §3.2.9, §3.2.11"
+  ],
+  "scope_rules": {
+    "tenant_isolation": "Strict multi-tenant boundary enforced at PostgreSQL database layer via Row-Level Security (RLS) on app.current_tenant_id (Architecture §6.3, SRS §2.4.1).",
+    "project_scoping": "Within an authorized tenant, access to project data is further restricted to explicitly assigned projects by ABAC policy (SRS §2.4.1, §3.2.1.3).",
+    "contributor_data_scoping": "Developers may view only their own personal code quality and review telemetry; cross-contributor telemetry is restricted (SRS §2.3, §2.4.1)."
+  },
+  "roles": [
+    {
+      "id": "DEVELOPER",
+      "display_name": "Developer",
+      "description": "Software engineer responsible for feature implementation, code quality tracking, AST/SCIP call-tree exploration, and triggering refactor analysis.",
+      "aliases": [],
+      "source": "SRS §2.3, Architecture §6.2"
+    },
+    {
+      "id": "SCRUM_MASTER",
+      "display_name": "Scrum Master",
+      "description": "Agile facilitator responsible for sprint velocity, team burndown charts, WIP limit monitoring, and operational roadblock mitigation including reviewer reassignment.",
+      "aliases": [],
+      "source": "SRS §2.3, Architecture §6.2"
+    },
+    {
+      "id": "PROJECT_MANAGER",
+      "display_name": "Project Manager",
+      "description": "Project manager responsible for sprint planning, delivery milestone tracking, and primary evaluation and resolution of Jira Acceptance Criteria scope creep alerts.",
+      "aliases": [],
+      "source": "SRS §2.3, §3.2.5"
+    },
+    {
+      "id": "SOLUTION_ARCHITECT",
+      "display_name": "Solution Architect",
+      "description": "System architecture authority responsible for technical debt analysis, SCIP call graph lookups, mandatory review gate for sanitized ADRs, and sign-off for global pattern publishing.",
+      "aliases": [],
+      "source": "SRS §2.3, Architecture §6.2, §6.5, §7.5"
+    },
+    {
+      "id": "DELIVERY_DIRECTOR",
+      "display_name": "Delivery Director",
+      "description": "Delivery executive responsible for portfolio-wide delivery health oversight, bottleneck intervention, and mobile one-tap reviewer reassignment.",
+      "aliases": ["DELIVERY_EXEC"],
+      "source": "SRS §2.3, Architecture §6.2, §11.2"
+    },
+    {
+      "id": "TOP_MANAGEMENT",
+      "display_name": "Top Management",
+      "description": "Executive leadership with read-only strategic oversight of portfolio delivery health, deadline risks, and high-level DORA benchmarks.",
+      "aliases": [],
+      "source": "SRS §2.3"
+    },
+    {
+      "id": "TENANT_ADMIN",
+      "display_name": "Tenant Administrator",
+      "description": "Organization administrator with full administrative authority over tenant settings, user roles, webhook integration credentials, and GDPR Article 17 erasure requests.",
+      "aliases": [],
+      "source": "SRS §2.3, Architecture §6.2, §10.3"
+    }
+  ],
+  "actions": [
+    {
+      "id": "VIEW_PROJECT_DORA",
+      "domain": "DORA & Delivery Analytics",
+      "description": "Retrieve verified DORA metrics (Lead Time for Changes, Deployment Frequency, Change Failure Rate, Mean Time to Recovery) for an assigned project.",
+      "preconditions": [
+        "Authenticated tenant context verified via JWT",
+        "User assigned to target project (ABAC)"
+      ],
+      "source": "Architecture Blueprint §6.2, SRS §3.2.3"
+    },
+    {
+      "id": "VIEW_PORTFOLIO_OVERVIEW",
+      "domain": "DORA & Delivery Analytics",
+      "description": "View aggregate portfolio-wide delivery health, cross-project deadline risks, and consolidated DORA benchmarks.",
+      "preconditions": [
+        "Authenticated tenant context verified via JWT"
+      ],
+      "source": "SRS §2.3, §3.2.1.4"
+    },
+    {
+      "id": "VIEW_SPRINT_BURNDOWN_WIP",
+      "domain": "Sprint & Risk Management",
+      "description": "Monitor team velocity, sprint burndown charts, and Work In Progress (WIP) limit congestion.",
+      "preconditions": [
+        "Authenticated tenant context verified via JWT",
+        "User assigned to target project (ABAC)"
+      ],
+      "source": "SRS §2.3, §3.2.4, §3.2.6"
+    },
+    {
+      "id": "RECEIVE_SCOPE_CREEP_ALERT",
+      "domain": "Sprint & Risk Management",
+      "description": "Receive and act upon automated two-stage Acceptance Criteria scope creep alerts (POSSIBLE_SCOPE_CHANGE) via Slack and mobile push notifications.",
+      "preconditions": [
+        "Jira webhook AC modification detected and verified",
+        "Targeted LLM verifier emits structured scope alert JSON"
+      ],
+      "source": "SRS §3.2.5.4, Architecture §8.3"
+    },
+    {
+      "id": "REASSIGN_PR_REVIEWER_MOBILE",
+      "domain": "Sprint & Risk Management",
+      "description": "Execute privileged one-tap reviewer nudge or reassignment via mobile client companion or web dashboard.",
+      "preconditions": [
+        "Server-side biometric token or session authorization verified",
+        "PR pending review exceeds 48-hour threshold"
+      ],
+      "source": "Architecture Blueprint §6.2, §11.2, SRS §3.2.4.4"
+    },
+    {
+      "id": "VIEW_OWN_CODE_QUALITY",
+      "domain": "Code Intelligence & Refactoring",
+      "description": "Track personal contributor code quality metrics, review turnaround statistics, and assigned pull request statuses.",
+      "preconditions": [
+        "Authenticated user identity matches requested contributor scope (ABAC own-data)"
+      ],
+      "source": "SRS §2.3, §2.4.1"
+    },
+    {
+      "id": "VIEW_TECH_DEBT_AND_SCIP_GRAPH",
+      "domain": "Code Intelligence & Refactoring",
+      "description": "Explore interactive React Flow call graph visualizers, SCIP symbol hierarchies, and technical debt hotspots.",
+      "preconditions": [
+        "Authenticated tenant context verified via JWT",
+        "Repository SCIP index precomputed and cached in RAM"
+      ],
+      "source": "SRS §2.3, §3.1.1, §3.2.6, Architecture §9.2, §11.1"
+    },
+    {
+      "id": "TRIGGER_REFACTOR_ANALYSIS",
+      "domain": "Code Intelligence & Refactoring",
+      "description": "Trigger AI-assisted refactoring analysis and candidate PR generation with 4-tier deterministic sandbox verification.",
+      "preconditions": [
+        "ASSERT repository_head_sha == scip_index_metadata_sha",
+        "Execution contained within gVisor/Firecracker sandbox (--network none)"
+      ],
+      "source": "Architecture Blueprint §6.2, §9.1, SRS §3.2.9, §3.2.10"
+    },
+    {
+      "id": "SEARCH_ADR",
+      "domain": "Architecture Decision Records (ADR)",
+      "description": "Execute semantic vector search over approved architectural decision records within the tenant partition or globally visible patterns.",
+      "preconditions": [
+        "PostgreSQL RLS filter: tenant_id == current_setting('app.current_tenant_id') OR visibility == 'GLOBAL'"
+      ],
+      "source": "Architecture Blueprint §7.2, SRS §3.2.8"
+    },
+    {
+      "id": "APPROVE_ADR_TENANT_PRIVATE",
+      "domain": "Architecture Decision Records (ADR)",
+      "description": "Sign off on sanitized Architecture Decision Records (ADRs) to allow embedding and indexing in the tenant-private vector partition.",
+      "preconditions": [
+        "Mandatory Human-in-the-Loop review of Presidio PII scrub report and LLM abstraction diff",
+        "Transition record status from pending_review to approved"
+      ],
+      "source": "Architecture Blueprint §6.2, §7.5, SRS §3.2.7.4"
+    },
+    {
+      "id": "PUBLISH_GLOBAL_ADR",
+      "domain": "Architecture Decision Records (ADR)",
+      "description": "Promote an approved ADR from tenant-private to GLOBAL visibility across all enterprise tenants on the platform.",
+      "preconditions": [
+        "Strict RBAC Gate: User role is SOLUTION_ARCHITECT or TENANT_ADMIN (HTTP 403 otherwise)",
+        "Mandatory Precondition: ASSERT adr.status == 'approved' AND adr.sanitization_verified == true (HTTP 422 otherwise)"
+      ],
+      "source": "Architecture Blueprint §6.2, §6.5, SRS §3.2.7, §3.2.8"
+    },
+    {
+      "id": "MANAGE_WEBHOOK_INTEGRATIONS",
+      "domain": "Tenant Administration & Compliance",
+      "description": "Configure, update, or revoke OAuth tokens, HMAC signing secrets, and webhook endpoints for GitHub, Jira, and Slack integrations.",
+      "preconditions": [
+        "Authenticated TENANT_ADMIN role",
+        "Secrets encrypted via integration credential vault prior to PostgreSQL persistence"
+      ],
+      "source": "Architecture Blueprint §6.2, SRS §3.2.11"
+    },
+    {
+      "id": "MANAGE_TENANT_USERS_AND_ROLES",
+      "domain": "Tenant Administration & Compliance",
+      "description": "Provision tenant user accounts, assign RBAC roles, and execute GDPR Article 17 right-to-erasure cryptographic salt destruction.",
+      "preconditions": [
+        "Authenticated TENANT_ADMIN role",
+        "GDPR erasure permanently purges user salt in KMS and overwrites PII with [DELETED]"
+      ],
+      "source": "SRS §2.3, §3.2.11, Architecture §10.3"
+    }
+  ],
+  "matrix": {
+    "DEVELOPER": {
+      "VIEW_PROJECT_DORA": {
+        "decision": "ALLOW",
+        "source": "ARCHITECTURE_6.2",
+        "condition": "assigned_project_only",
+        "needs_ba_review": false,
+        "notes": "Developer may inspect DORA metrics for assigned repositories/projects."
+      },
+      "VIEW_PORTFOLIO_OVERVIEW": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Portfolio-level overview is restricted to management and delivery directors."
+      },
+      "VIEW_SPRINT_BURNDOWN_WIP": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": true,
+        "notes": "Team-level WIP and burndown charts are managed by Scrum Masters and Project Managers."
+      },
+      "RECEIVE_SCOPE_CREEP_ALERT": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Scope creep alerts are dispatched to Project Managers and Delivery Leads."
+      },
+      "REASSIGN_PR_REVIEWER_MOBILE": {
+        "decision": "DENY",
+        "source": "ARCHITECTURE_6.2",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Reviewer reassignment is restricted to delivery facilitators."
+      },
+      "VIEW_OWN_CODE_QUALITY": {
+        "decision": "ALLOW",
+        "source": "SRS_DERIVED",
+        "condition": "contributor_self_only",
+        "needs_ba_review": false,
+        "notes": "Developers track personal code quality, test coverage, and PR review status."
+      },
+      "VIEW_TECH_DEBT_AND_SCIP_GRAPH": {
+        "decision": "ALLOW",
+        "source": "SRS_DERIVED",
+        "condition": "assigned_project_only",
+        "needs_ba_review": false,
+        "notes": "Developers explore SCIP symbol hierarchies and caller/callee trees for assigned codebases."
+      },
+      "TRIGGER_REFACTOR_ANALYSIS": {
+        "decision": "ALLOW",
+        "source": "ARCHITECTURE_6.2",
+        "condition": "commit_sha_synchronized",
+        "needs_ba_review": false,
+        "notes": "Developers trigger AI refactoring proposals and run 4-tier verification in sandbox."
+      },
+      "SEARCH_ADR": {
+        "decision": "ALLOW",
+        "source": "SRS_DERIVED",
+        "condition": "tenant_or_global",
+        "needs_ba_review": false,
+        "notes": "Developers search institutional knowledge base for approved patterns."
+      },
+      "APPROVE_ADR_TENANT_PRIVATE": {
+        "decision": "DENY",
+        "source": "ARCHITECTURE_6.2",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Mandatory gate reserved for Solution Architect and Tenant Admin."
+      },
+      "PUBLISH_GLOBAL_ADR": {
+        "decision": "DENY",
+        "source": "ARCHITECTURE_6.2",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Regular developers are strictly restricted to TENANT_PRIVATE scope (Architecture §6.5)."
+      },
+      "MANAGE_WEBHOOK_INTEGRATIONS": {
+        "decision": "DENY",
+        "source": "ARCHITECTURE_6.2",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Credential vaults are accessible exclusively by Tenant Admin."
+      },
+      "MANAGE_TENANT_USERS_AND_ROLES": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Tenant administration privilege reserved for Tenant Admin."
+      }
+    },
+    "SCRUM_MASTER": {
+      "VIEW_PROJECT_DORA": {
+        "decision": "ALLOW",
+        "source": "ARCHITECTURE_6.2",
+        "condition": "assigned_project_only",
+        "needs_ba_review": false,
+        "notes": "Scrum Master monitors delivery speed and stability metrics."
+      },
+      "VIEW_PORTFOLIO_OVERVIEW": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Scrum Masters focus on specific project sprints rather than enterprise portfolio overview."
+      },
+      "VIEW_SPRINT_BURNDOWN_WIP": {
+        "decision": "ALLOW",
+        "source": "SRS_DERIVED",
+        "condition": "assigned_project_only",
+        "needs_ba_review": false,
+        "notes": "Core responsibility: velocity, sprint burndown, and WIP congestion monitoring."
+      },
+      "RECEIVE_SCOPE_CREEP_ALERT": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": true,
+        "notes": "SRS specifies alerts dispatched to Project Managers; BA to confirm if SM receives secondary alert."
+      },
+      "REASSIGN_PR_REVIEWER_MOBILE": {
+        "decision": "ALLOW",
+        "source": "ARCHITECTURE_6.2",
+        "condition": "review_pending_over_48h",
+        "needs_ba_review": false,
+        "notes": "Scrum Masters nudge reviewers and resolve PR bottlenecks via mobile or web."
+      },
+      "VIEW_OWN_CODE_QUALITY": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Scrum Masters oversee agile workflow metrics rather than personal code lines."
+      },
+      "VIEW_TECH_DEBT_AND_SCIP_GRAPH": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "SCIP symbol graphs are reserved for engineers and architects."
+      },
+      "TRIGGER_REFACTOR_ANALYSIS": {
+        "decision": "DENY",
+        "source": "ARCHITECTURE_6.2",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Explicitly denied in Architecture §6.2."
+      },
+      "SEARCH_ADR": {
+        "decision": "ALLOW",
+        "source": "SRS_DERIVED",
+        "condition": "tenant_or_global",
+        "needs_ba_review": false,
+        "notes": "Scrum Masters may search architectural decisions for context."
+      },
+      "APPROVE_ADR_TENANT_PRIVATE": {
+        "decision": "DENY",
+        "source": "ARCHITECTURE_6.2",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Explicitly denied in Architecture §6.2."
+      },
+      "PUBLISH_GLOBAL_ADR": {
+        "decision": "DENY",
+        "source": "ARCHITECTURE_6.2",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Explicitly denied in Architecture §6.2."
+      },
+      "MANAGE_WEBHOOK_INTEGRATIONS": {
+        "decision": "DENY",
+        "source": "ARCHITECTURE_6.2",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Explicitly denied in Architecture §6.2."
+      },
+      "MANAGE_TENANT_USERS_AND_ROLES": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Tenant administration privilege reserved for Tenant Admin."
+      }
+    },
+    "PROJECT_MANAGER": {
+      "VIEW_PROJECT_DORA": {
+        "decision": "ALLOW",
+        "source": "SRS_DERIVED",
+        "condition": "assigned_project_only",
+        "needs_ba_review": true,
+        "notes": "Project Managers monitor project delivery speed and stability benchmarks."
+      },
+      "VIEW_PORTFOLIO_OVERVIEW": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": true,
+        "notes": "Project Managers focus on assigned projects; portfolio-wide overview is executive scope."
+      },
+      "VIEW_SPRINT_BURNDOWN_WIP": {
+        "decision": "ALLOW",
+        "source": "SRS_DERIVED",
+        "condition": "assigned_project_only",
+        "needs_ba_review": false,
+        "notes": "Project Managers track team velocity, milestones, and WIP limits (SRS §2.3)."
+      },
+      "RECEIVE_SCOPE_CREEP_ALERT": {
+        "decision": "ALLOW",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Primary recipient of two-stage Acceptance Criteria scope alerts (SRS §3.2.5.4)."
+      },
+      "REASSIGN_PR_REVIEWER_MOBILE": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": true,
+        "notes": "Operational roadblock intervention belongs to Scrum Master and Delivery Director."
+      },
+      "VIEW_OWN_CODE_QUALITY": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Code quality telemetry is contributor-specific."
+      },
+      "VIEW_TECH_DEBT_AND_SCIP_GRAPH": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "SCIP symbol graph is engineering and architecture focused."
+      },
+      "TRIGGER_REFACTOR_ANALYSIS": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Code refactoring execution is restricted to engineering roles."
+      },
+      "SEARCH_ADR": {
+        "decision": "ALLOW",
+        "source": "SRS_DERIVED",
+        "condition": "tenant_or_global",
+        "needs_ba_review": false,
+        "notes": "Project Managers may search architectural patterns for planning."
+      },
+      "APPROVE_ADR_TENANT_PRIVATE": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Architectural review is restricted to Solution Architect and Tenant Admin."
+      },
+      "PUBLISH_GLOBAL_ADR": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Global publication gate restricted to Solution Architect and Tenant Admin."
+      },
+      "MANAGE_WEBHOOK_INTEGRATIONS": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Integration secrets are managed by Tenant Admin."
+      },
+      "MANAGE_TENANT_USERS_AND_ROLES": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Tenant administration privilege reserved for Tenant Admin."
+      }
+    },
+    "SOLUTION_ARCHITECT": {
+      "VIEW_PROJECT_DORA": {
+        "decision": "ALLOW",
+        "source": "ARCHITECTURE_6.2",
+        "condition": "assigned_project_only",
+        "needs_ba_review": false,
+        "notes": "Architects inspect DORA metrics to gauge architectural stability."
+      },
+      "VIEW_PORTFOLIO_OVERVIEW": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": true,
+        "notes": "Architectural scope is project and pattern focused."
+      },
+      "VIEW_SPRINT_BURNDOWN_WIP": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": true,
+        "notes": "Sprint burndown is managed by Scrum Masters and Project Managers."
+      },
+      "RECEIVE_SCOPE_CREEP_ALERT": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Scope creep alerts are sent to delivery leads and project managers."
+      },
+      "REASSIGN_PR_REVIEWER_MOBILE": {
+        "decision": "DENY",
+        "source": "ARCHITECTURE_6.2",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Explicitly denied in Architecture §6.2."
+      },
+      "VIEW_OWN_CODE_QUALITY": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Architects review macro system technical debt rather than individual dev scorecards."
+      },
+      "VIEW_TECH_DEBT_AND_SCIP_GRAPH": {
+        "decision": "ALLOW",
+        "source": "SRS_DERIVED",
+        "condition": "assigned_project_only",
+        "needs_ba_review": false,
+        "notes": "Core responsibility: SCIP symbol hierarchy and caller/callee trees exploration (SRS §2.3, §3.1.1)."
+      },
+      "TRIGGER_REFACTOR_ANALYSIS": {
+        "decision": "ALLOW",
+        "source": "ARCHITECTURE_6.2",
+        "condition": "commit_sha_synchronized",
+        "needs_ba_review": false,
+        "notes": "Architects initiate and review automated code refactoring proposals."
+      },
+      "SEARCH_ADR": {
+        "decision": "ALLOW",
+        "source": "SRS_DERIVED",
+        "condition": "tenant_or_global",
+        "needs_ba_review": false,
+        "notes": "Architects query institutional and global architectural knowledge."
+      },
+      "APPROVE_ADR_TENANT_PRIVATE": {
+        "decision": "ALLOW",
+        "source": "ARCHITECTURE_6.2",
+        "condition": "mandatory_human_gate",
+        "needs_ba_review": false,
+        "notes": "Mandatory Gate: Human-in-the-loop review of PII sanitization diff (Architecture §6.2, §7.5)."
+      },
+      "PUBLISH_GLOBAL_ADR": {
+        "decision": "ALLOW",
+        "source": "ARCHITECTURE_6.2",
+        "condition": "status_approved_and_sanitization_verified",
+        "needs_ba_review": false,
+        "notes": "Sign-Off: Explicitly authorized to promote patterns to GLOBAL visibility (Architecture §6.2, §6.5)."
+      },
+      "MANAGE_WEBHOOK_INTEGRATIONS": {
+        "decision": "DENY",
+        "source": "ARCHITECTURE_6.2",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Explicitly denied in Architecture §6.2."
+      },
+      "MANAGE_TENANT_USERS_AND_ROLES": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Tenant administration privilege reserved for Tenant Admin."
+      }
+    },
+    "DELIVERY_DIRECTOR": {
+      "VIEW_PROJECT_DORA": {
+        "decision": "ALLOW",
+        "source": "ARCHITECTURE_6.2",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Mapped from DELIVERY_EXEC in Architecture §6.2."
+      },
+      "VIEW_PORTFOLIO_OVERVIEW": {
+        "decision": "ALLOW",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "High-level overview of delivery health across entire project portfolio (SRS §2.3)."
+      },
+      "VIEW_SPRINT_BURNDOWN_WIP": {
+        "decision": "ALLOW",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Delivery Directors track operational blockers and team capacity."
+      },
+      "RECEIVE_SCOPE_CREEP_ALERT": {
+        "decision": "ALLOW",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": true,
+        "notes": "Delivery Leads receive P1/critical scope change escalations (Architecture Figure 6)."
+      },
+      "REASSIGN_PR_REVIEWER_MOBILE": {
+        "decision": "ALLOW",
+        "source": "ARCHITECTURE_6.2",
+        "condition": "review_pending_over_48h",
+        "needs_ba_review": false,
+        "notes": "Mapped from DELIVERY_EXEC: privileged mobile roadblock mitigation (Architecture §6.2, §11.2)."
+      },
+      "VIEW_OWN_CODE_QUALITY": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Delivery Directors evaluate aggregate team health, not personal coding lines."
+      },
+      "VIEW_TECH_DEBT_AND_SCIP_GRAPH": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Deep code graph visualizers are specialized for engineers and architects."
+      },
+      "TRIGGER_REFACTOR_ANALYSIS": {
+        "decision": "DENY",
+        "source": "ARCHITECTURE_6.2",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Explicitly denied for DELIVERY_EXEC in Architecture §6.2."
+      },
+      "SEARCH_ADR": {
+        "decision": "ALLOW",
+        "source": "SRS_DERIVED",
+        "condition": "tenant_or_global",
+        "needs_ba_review": false,
+        "notes": "Delivery Directors may search architectural patterns across teams."
+      },
+      "APPROVE_ADR_TENANT_PRIVATE": {
+        "decision": "DENY",
+        "source": "ARCHITECTURE_6.2",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Explicitly denied for DELIVERY_EXEC in Architecture §6.2."
+      },
+      "PUBLISH_GLOBAL_ADR": {
+        "decision": "DENY",
+        "source": "ARCHITECTURE_6.2",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Explicitly denied for DELIVERY_EXEC in Architecture §6.2."
+      },
+      "MANAGE_WEBHOOK_INTEGRATIONS": {
+        "decision": "DENY",
+        "source": "ARCHITECTURE_6.2",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Explicitly denied for DELIVERY_EXEC in Architecture §6.2."
+      },
+      "MANAGE_TENANT_USERS_AND_ROLES": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Tenant administration privilege reserved for Tenant Admin."
+      }
+    },
+    "TOP_MANAGEMENT": {
+      "VIEW_PROJECT_DORA": {
+        "decision": "ALLOW",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": true,
+        "notes": "Top Management requires delivery performance metrics (SRS §2.3)."
+      },
+      "VIEW_PORTFOLIO_OVERVIEW": {
+        "decision": "ALLOW",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "High-level overview of delivery health and deadline risk trends (SRS §2.3)."
+      },
+      "VIEW_SPRINT_BURNDOWN_WIP": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": true,
+        "notes": "Top Management focuses on macro trends rather than day-to-day burndown charts."
+      },
+      "RECEIVE_SCOPE_CREEP_ALERT": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Day-to-day sprint scope alerts are handled by Project Managers and Delivery Leads."
+      },
+      "REASSIGN_PR_REVIEWER_MOBILE": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": true,
+        "notes": "Top Management maintains strategic read-only oversight; operational nudges belong to Delivery Directors."
+      },
+      "VIEW_OWN_CODE_QUALITY": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Executive leadership does not track individual code lines."
+      },
+      "VIEW_TECH_DEBT_AND_SCIP_GRAPH": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "SCIP symbol graphs are engineering-specific."
+      },
+      "TRIGGER_REFACTOR_ANALYSIS": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Refactoring operations are restricted to engineering roles."
+      },
+      "SEARCH_ADR": {
+        "decision": "ALLOW",
+        "source": "SRS_DERIVED",
+        "condition": "tenant_or_global",
+        "needs_ba_review": false,
+        "notes": "Top Management may inspect corporate architectural patterns."
+      },
+      "APPROVE_ADR_TENANT_PRIVATE": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Architectural gate reserved for Solution Architect and Tenant Admin."
+      },
+      "PUBLISH_GLOBAL_ADR": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Global ADR publication gate restricted to Solution Architect and Tenant Admin."
+      },
+      "MANAGE_WEBHOOK_INTEGRATIONS": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Integration credentials managed strictly by Tenant Admin."
+      },
+      "MANAGE_TENANT_USERS_AND_ROLES": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Tenant administration privilege reserved for Tenant Admin."
+      }
+    },
+    "TENANT_ADMIN": {
+      "VIEW_PROJECT_DORA": {
+        "decision": "ALLOW",
+        "source": "ARCHITECTURE_6.2",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Tenant Admin has full administrative visibility across tenant data."
+      },
+      "VIEW_PORTFOLIO_OVERVIEW": {
+        "decision": "ALLOW",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Full visibility into tenant projects and portfolio health."
+      },
+      "VIEW_SPRINT_BURNDOWN_WIP": {
+        "decision": "ALLOW",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Full visibility across all sprint activities within tenant."
+      },
+      "RECEIVE_SCOPE_CREEP_ALERT": {
+        "decision": "ALLOW",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Admin may monitor all automated project threat alerts."
+      },
+      "REASSIGN_PR_REVIEWER_MOBILE": {
+        "decision": "ALLOW",
+        "source": "ARCHITECTURE_6.2",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Administrative authority to unblock PRs."
+      },
+      "VIEW_OWN_CODE_QUALITY": {
+        "decision": "ALLOW",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Admin oversight over code quality dashboards."
+      },
+      "VIEW_TECH_DEBT_AND_SCIP_GRAPH": {
+        "decision": "ALLOW",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Admin access to SCIP symbol graph and technical debt visualizations."
+      },
+      "TRIGGER_REFACTOR_ANALYSIS": {
+        "decision": "ALLOW",
+        "source": "ARCHITECTURE_6.2",
+        "condition": "commit_sha_synchronized",
+        "needs_ba_review": false,
+        "notes": "Administrative authority to trigger refactoring analysis."
+      },
+      "SEARCH_ADR": {
+        "decision": "ALLOW",
+        "source": "SRS_DERIVED",
+        "condition": "tenant_or_global",
+        "needs_ba_review": false,
+        "notes": "Full search access across tenant and global architectural patterns."
+      },
+      "APPROVE_ADR_TENANT_PRIVATE": {
+        "decision": "ALLOW",
+        "source": "ARCHITECTURE_6.2",
+        "condition": "administrative_override",
+        "needs_ba_review": false,
+        "notes": "Tenant Admin possesses administrative approval authority (Architecture §6.2)."
+      },
+      "PUBLISH_GLOBAL_ADR": {
+        "decision": "ALLOW",
+        "source": "ARCHITECTURE_6.2",
+        "condition": "status_approved_and_sanitization_verified",
+        "needs_ba_review": false,
+        "notes": "Tenant Admin authorized to publish global patterns subject to preconditions (Architecture §6.2, §6.5)."
+      },
+      "MANAGE_WEBHOOK_INTEGRATIONS": {
+        "decision": "ALLOW",
+        "source": "ARCHITECTURE_6.2",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Sole role authorized to configure third-party integration vaults (Architecture §6.2)."
+      },
+      "MANAGE_TENANT_USERS_AND_ROLES": {
+        "decision": "ALLOW",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Manages user invitations, role assignments, and executes GDPR Article 17 erasure requests."
+      }
+    }
+  }
+}
