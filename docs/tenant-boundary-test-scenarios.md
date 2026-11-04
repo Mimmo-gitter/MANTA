@@ -8,6 +8,7 @@
 - `SCRUM-240` / `SCRUM-277` / `SCRUM-278` (US-4 & US-5: RS256 JWT validation, JWKS refresh & HTTP 401 on failure)  
 - `SCRUM-248` / `SCRUM-322` / `SCRUM-323` (US-12: Tenant integration connection & ID-isolated management)  
 - `SCRUM-292` (`eng_app_user` least-privilege role), `SCRUM-318` (`FORCE ROW LEVEL SECURITY`), `SCRUM-293` (Automated RLS schema guardrails)  
+- `SCRUM-305` (Negative RLS safety net verification: pipeline fails when RLS policy is disabled, see [`docs/negative-rls-security-test.md`](negative-rls-security-test.md))  
 **Target Architecture Layers:**  
 1. **API Layer:** FastAPI, Starlette `JWTAuthMiddleware`, Pydantic claim validators, route handlers, and dependency injection (`get_current_tenant_id`, `require_permission`).  
 2. **Database Layer:** PostgreSQL 16 (`pgvector/pgvector:pg16`), Row-Level Security (`tenant_isolation_policy`), least-privilege runtime role (`eng_app_user`), and PgBouncer connection pool reset (`DISCARD ALL`).  
@@ -15,6 +16,7 @@
 **Supporting Pytest Suites:**  
 - [`backend/tests/security/test_cross_tenant_read_write.py`](../backend/tests/security/test_cross_tenant_read_write.py)  
 - [`backend/tests/security/test_forged_tenant_claim_and_session_without_tenant_context.py`](../backend/tests/security/test_forged_tenant_claim_and_session_without_tenant_context.py)  
+- [`backend/tests/security/test_rls_negative_pipeline.py`](../backend/tests/security/test_rls_negative_pipeline.py)  
 - [`backend/tests/test_rls_isolation.py`](../backend/tests/test_rls_isolation.py)  
 - [`backend/tests/test_jwt_claims_validation.py`](../backend/tests/test_jwt_claims_validation.py)  
 - [`backend/tests/test_integration_connect.py`](../backend/tests/test_integration_connect.py)  
