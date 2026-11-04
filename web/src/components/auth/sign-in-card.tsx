@@ -12,6 +12,7 @@ interface SignInCardProps {
   defaultEmail?: string;
   workspace?: string | null;
   isRegistered?: boolean;
+  sessionExpired?: boolean;
 }
 
 export function SignInCard({
@@ -19,6 +20,7 @@ export function SignInCard({
   defaultEmail = "",
   workspace = null,
   isRegistered = false,
+  sessionExpired = false,
 }: SignInCardProps) {
   const [email, setEmail] = useState(defaultEmail);
   const [password, setPassword] = useState("");
@@ -110,6 +112,26 @@ export function SignInCard({
           Engineering Intelligence Platform
         </p>
       </header>
+
+      {/* Session Expired Alert */}
+      {sessionExpired && (
+        <div
+          role="alert"
+          data-testid="session-expired-alert"
+          className="mb-3.5 sm:mb-4 flex w-full flex-row items-center gap-[8px] sm:gap-[10px] rounded-[6px] border border-[rgba(245,158,11,0.45)] bg-[rgba(245,158,11,0.1)] p-[10px_12px]"
+          style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
+        >
+          <div className="shrink-0 size-[8px] rounded-full bg-[#F59E0B]" aria-hidden="true" />
+          <div className="flex flex-col gap-[2px] text-left">
+            <span className="text-[12px] font-semibold text-[#FCD34D] leading-[16px]">
+              Session Expired
+            </span>
+            <span className="text-[11px] text-[#B9CBBD] leading-[14px]">
+              Your session could not be renewed. Please sign in again.
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Registration Success Confirmation */}
       {isRegistered && (

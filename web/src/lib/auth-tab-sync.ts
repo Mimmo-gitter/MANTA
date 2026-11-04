@@ -9,6 +9,7 @@ export type AuthSyncMessage =
   | { type: "RENEW_STARTED"; tabId: string }
   | { type: "RENEW_COMPLETED"; tabId: string }
   | { type: "RENEW_FAILED"; tabId: string }
+  | { type: "SESSION_EXPIRED"; tabId: string }
   | { type: "LOGIN_COMPLETED"; tabId: string }
   | { type: "LOGOUT"; tabId: string };
 
@@ -17,8 +18,23 @@ let channel: BroadcastChannel | null = null;
 export function initAuthSync(
   onMessage: (message: AuthSyncMessage) => void,
 ): () => void {
-  if (typeof window === "undefined" || !("BroadcastChannel" in window)) {
+  if (typeof window === "undefined") {
     return () => {};
+  }
+
+  const handleLocalEvent = (event: Event) => {
+    const customEvent = event as CustomEvent<AuthSyncMessage>;
+    if (customEvent.detail) {
+      onMessage(customEvent.detail);
+    }
+  };
+
+  window.addEventListener("manta:auth_sync", handleLocalEvent);
+
+  if (!("BroadcastChannel" in window)) {
+    return () => {
+      window.removeEventListener("manta:auth_sync", handleLocalEvent);
+    };
   }
 
   channel = new BroadcastChannel(CHANNEL_NAME);
@@ -28,6 +44,7 @@ export function initAuthSync(
   };
 
   return () => {
+    window.removeEventListener("manta:auth_sync", handleLocalEvent);
     channel?.close();
     channel = null;
   };
@@ -35,6 +52,9 @@ export function initAuthSync(
 
 export function broadcastAuthMessage(message: AuthSyncMessage): void {
   channel?.postMessage(message);
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent("manta:auth_sync", { detail: message }));
+  }
 }
 
 export async function withRenewLock<T>(callback: () => Promise<T>): Promise<T> {

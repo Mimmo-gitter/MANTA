@@ -120,6 +120,105 @@ export function getOidcSettings(): UserManagerSettings {
   };
 }
 
+export function isTemporaryNetworkError(error: unknown): boolean {
+  if (typeof navigator !== "undefined" && navigator.onLine === false) {
+    return true;
+  }
+  if (!error) return false;
+
+  const errorObj = error as Record<string, unknown>;
+  const errCode = String(errorObj?.error || "").toLowerCase();
+
+  // Terminal OAuth errors
+  if (
+    errCode === "invalid_grant" ||
+    errCode === "invalid_client" ||
+    errCode === "invalid_request" ||
+    errCode === "unauthorized_client" ||
+    errCode === "unsupported_grant_type" ||
+    errCode === "login_required" ||
+    errCode === "interaction_required"
+  ) {
+    return false;
+  }
+
+  // Transient OAuth server errors
+  if (
+    errCode === "service_unavailable" ||
+    errCode === "temporarily_unavailable" ||
+    errCode === "server_error"
+  ) {
+    return true;
+  }
+
+  const msg =
+    error instanceof Error ? error.message.toLowerCase() : String(error).toLowerCase();
+
+  // Explicit non-network / terminal auth errors (should not retry)
+  if (
+    msg.includes("invalid_grant") ||
+    msg.includes("invalid_client") ||
+    msg.includes("invalid_request") ||
+    msg.includes("unauthorized_client") ||
+    msg.includes("unsupported_grant_type") ||
+    msg.includes("login_required") ||
+    msg.includes("interaction_required") ||
+    msg.includes("revoked") ||
+    msg.includes("400") ||
+    msg.includes("401") ||
+    msg.includes("403")
+  ) {
+    return false;
+  }
+
+  // Network or transient server error indicators
+  if (
+    msg.includes("failed to fetch") ||
+    msg.includes("networkerror") ||
+    msg.includes("network error") ||
+    msg.includes("timeout") ||
+    msg.includes("aborted") ||
+    msg.includes("net::err") ||
+    msg.includes("econnreset") ||
+    msg.includes("econnrefused") ||
+    msg.includes("500") ||
+    msg.includes("502") ||
+    msg.includes("503") ||
+    msg.includes("504") ||
+    msg.includes("service unavailable") ||
+    msg.includes("service_unavailable") ||
+    msg.includes("temporarily_unavailable") ||
+    msg.includes("server_error") ||
+    msg.includes("bad gateway") ||
+    msg.includes("gateway timeout")
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+export async function purgeAllAuthTokens(): Promise<void> {
+  if (typeof window === "undefined") return;
+
+  try {
+    const manager = getUserManager();
+    await manager.removeUser();
+    await manager.clearStaleState();
+  } catch (err) {
+    console.warn("Error clearing UserManager store:", err);
+  }
+
+  const keysToRemove: string[] = [];
+  for (let i = 0; i < window.localStorage.length; i++) {
+    const key = window.localStorage.key(i);
+    if (key && (key.startsWith("oidc.") || key.startsWith("manta."))) {
+      keysToRemove.push(key);
+    }
+  }
+  keysToRemove.forEach((key) => window.localStorage.removeItem(key));
+}
+
 let userManagerInstance: UserManager | null = null;
 // Must be greater than oidc-client-ts accessTokenExpiringNotificationTimeInSeconds (default 60).
 const RENEW_SKIP_THRESHOLD_SECONDS = 120;
@@ -168,8 +267,27 @@ export function getUserManager(): UserManager {
             tabId: getTabId(),
           });
 
+          const executeWithRetry = async (
+            retriesLeft = 2,
+            delayMs = 1000,
+          ): Promise<User | null> => {
+            try {
+              return await originalSigninSilent(...args);
+            } catch (err) {
+              if (retriesLeft > 0 && isTemporaryNetworkError(err)) {
+                console.warn(
+                  `Silent renew temporary network failure. Retrying in ${delayMs}ms (${retriesLeft} retries left)...`,
+                  err,
+                );
+                await new Promise((resolve) => setTimeout(resolve, delayMs));
+                return executeWithRetry(retriesLeft - 1, delayMs * 2);
+              }
+              throw err;
+            }
+          };
+
           try {
-            const result = await originalSigninSilent(...args);
+            const result = await executeWithRetry();
 
             broadcastAuthMessage({
               type: "RENEW_COMPLETED",
@@ -178,10 +296,25 @@ export function getUserManager(): UserManager {
 
             return result;
           } catch (error) {
+            if (typeof window !== "undefined") {
+              try {
+                window.sessionStorage.setItem("manta_session_expired", "true");
+              } catch {
+                // ignore
+              }
+            }
+
             broadcastAuthMessage({
               type: "RENEW_FAILED",
               tabId: getTabId(),
             });
+
+            broadcastAuthMessage({
+              type: "SESSION_EXPIRED",
+              tabId: getTabId(),
+            });
+
+            await purgeAllAuthTokens();
 
             throw error;
           }
@@ -191,6 +324,12 @@ export function getUserManager(): UserManager {
       }
 
       return silentRenewPromise;
+    };
+  }
+
+  if (typeof window !== "undefined") {
+    (window as unknown as { __manta_auth?: { getUserManager: typeof getUserManager } }).__manta_auth = {
+      getUserManager,
     };
   }
 
@@ -216,8 +355,22 @@ export function generateNonce(): string {
 export async function initiateLogin(args?: SigninRedirectArgs): Promise<void> {
   const manager = getUserManager();
   const nonce = args?.nonce || generateNonce();
+
+  let state = args?.state;
+  if (!state && typeof window !== "undefined") {
+    try {
+      const returnTo = window.sessionStorage.getItem("manta_auth_return_to");
+      if (returnTo) {
+        state = { returnTo };
+      }
+    } catch {
+      // ignore
+    }
+  }
+
   await manager.signinRedirect({
     nonce,
+    state,
     ...args,
   });
 }
@@ -230,6 +383,23 @@ export async function initiateLogin(args?: SigninRedirectArgs): Promise<void> {
 export async function handleSigninCallback(url?: string): Promise<User> {
   const manager = getUserManager();
   const user = await manager.signinRedirectCallback(url);
+
+  // If user state contained returnTo, ensure it's preserved for the destination redirect
+  if (
+    typeof window !== "undefined" &&
+    user?.state &&
+    typeof user.state === "object" &&
+    "returnTo" in (user.state as Record<string, unknown>)
+  ) {
+    const returnTo = (user.state as Record<string, unknown>).returnTo;
+    if (typeof returnTo === "string" && returnTo.startsWith("/") && !returnTo.startsWith("//")) {
+      try {
+        window.sessionStorage.setItem("manta_auth_return_to", returnTo);
+      } catch {
+        // ignore
+      }
+    }
+  }
 
   broadcastAuthMessage({
     type: "LOGIN_COMPLETED",

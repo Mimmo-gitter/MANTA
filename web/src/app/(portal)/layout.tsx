@@ -69,7 +69,18 @@ function PortalAuthGuard({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      router.replace("/login");
+      const isExpired =
+        typeof window !== "undefined" &&
+        window.sessionStorage.getItem("manta_session_expired") === "true";
+      const reasonParam = isExpired ? "reason=session_expired" : "";
+      const redirectParam =
+        pathname && pathname !== "/"
+          ? `redirect=${encodeURIComponent(pathname)}`
+          : "";
+      const query = [reasonParam, redirectParam].filter(Boolean).join("&");
+      const target = query ? `/login?${query}` : "/login";
+
+      router.replace(target);
       return;
     }
 
@@ -81,6 +92,7 @@ function PortalAuthGuard({ children }: { children: React.ReactNode }) {
     isAuthenticated,
     isDemo,
     isUnauthorizedAdminAccess,
+    pathname,
     router,
   ]);
 

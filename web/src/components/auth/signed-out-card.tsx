@@ -10,23 +10,34 @@ export interface SignedOutCardProps {
   workspaceName?: string;
   onSignInAgain?: () => void;
   onDifferentOrganization?: () => void;
+  variant?: "signed-out" | "session-expired";
+  redirectUrl?: string;
 }
 
 export function SignedOutCard({
   workspaceName = "Fintech Alpha",
   onSignInAgain,
   onDifferentOrganization,
+  variant = "signed-out",
+  redirectUrl,
 }: SignedOutCardProps) {
   const router = useRouter();
+  const isExpired = variant === "session-expired";
 
   const handleSignInAgain = () => {
     if (typeof window !== "undefined") {
       window.sessionStorage.removeItem("user_signed_out");
+      if (isExpired && redirectUrl) {
+        window.sessionStorage.setItem("manta_auth_return_to", redirectUrl);
+      }
     }
     if (onSignInAgain) {
       onSignInAgain();
     } else {
-      router.push("/login");
+      const target = redirectUrl
+        ? `/login?redirect=${encodeURIComponent(redirectUrl)}`
+        : "/login";
+      router.push(target);
     }
   };
 
@@ -40,6 +51,10 @@ export function SignedOutCard({
     }
   };
 
+  const loginHref = redirectUrl
+    ? `/login?redirect=${encodeURIComponent(redirectUrl)}`
+    : "/login";
+
   return (
     <section
       aria-labelledby="signed-out-heading"
@@ -51,7 +66,9 @@ export function SignedOutCard({
       {/* Subtle Ambient Glow at top of card matching Figma node 491:768 */}
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute -top-12 left-1/2 -translate-x-1/2 w-[192px] h-[96px] rounded-full bg-[rgba(0,245,160,0.05)] blur-[64px]"
+        className={`pointer-events-none absolute -top-12 left-1/2 -translate-x-1/2 w-[192px] h-[96px] rounded-full blur-[64px] ${
+          isExpired ? "bg-[rgba(245,158,11,0.06)]" : "bg-[rgba(0,245,160,0.05)]"
+        }`}
       />
 
       {/* ModalHeader matching Figma node 491:769 */}
@@ -70,20 +87,37 @@ export function SignedOutCard({
 
         {/* Security Specification Tag matching Figma 491:773 */}
         <div className="mb-2 flex items-center justify-center">
-          <div
-            role="status"
-            aria-label="Session status: Session Terminated"
-            data-testid="session-terminated-badge"
-            className="inline-flex items-center gap-1.5 px-2 py-[2px] rounded bg-[#0A0E18] border border-[rgba(0,245,160,0.35)]"
-          >
-            <span
-              aria-hidden="true"
-              className="w-1.5 h-1.5 rounded-full bg-[#00F5A0] shrink-0"
-            />
-            <span className="font-mono text-[11px] font-medium leading-[16.5px] tracking-[0.55px] text-[#6EE7B7]">
-              SESSION TERMINATED
-            </span>
-          </div>
+          {isExpired ? (
+            <div
+              role="status"
+              aria-label="Session status: Session Expired"
+              data-testid="session-expired-badge"
+              className="inline-flex items-center gap-1.5 px-2 py-[2px] rounded bg-[#0A0E18] border border-[rgba(245,158,11,0.35)]"
+            >
+              <span
+                aria-hidden="true"
+                className="w-1.5 h-1.5 rounded-full bg-[#F59E0B] shrink-0"
+              />
+              <span className="font-mono text-[11px] font-medium leading-[16.5px] tracking-[0.55px] text-[#FCD34D]">
+                SESSION EXPIRED
+              </span>
+            </div>
+          ) : (
+            <div
+              role="status"
+              aria-label="Session status: Session Terminated"
+              data-testid="session-terminated-badge"
+              className="inline-flex items-center gap-1.5 px-2 py-[2px] rounded bg-[#0A0E18] border border-[rgba(0,245,160,0.35)]"
+            >
+              <span
+                aria-hidden="true"
+                className="w-1.5 h-1.5 rounded-full bg-[#00F5A0] shrink-0"
+              />
+              <span className="font-mono text-[11px] font-medium leading-[16.5px] tracking-[0.55px] text-[#6EE7B7]">
+                SESSION TERMINATED
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Title matching Figma 491:778 */}
@@ -91,12 +125,14 @@ export function SignedOutCard({
           id="signed-out-heading"
           className="text-[24px] font-bold tracking-[-0.475px] text-[#DFE2F1] text-center leading-8"
         >
-          You Have Been Signed Out
+          {isExpired ? "Session Expired" : "You Have Been Signed Out"}
         </h1>
 
         {/* Subtitle matching Figma 491:781 */}
         <p className="text-[12px] font-normal text-[#B9CBBD] text-center max-w-[320px] leading-[14px] mt-1.5">
-          Your session was safely closed and local authentication tokens were cleared from this browser.
+          {isExpired
+            ? "Your session could not be renewed. Please sign in again to continue."
+            : "Your session was safely closed and local authentication tokens were cleared from this browser."}
         </p>
       </header>
 
@@ -104,29 +140,47 @@ export function SignedOutCard({
       <div className="relative z-10 flex flex-col gap-4 mt-5">
         {/* Security Architecture Callout Box matching Figma 491:783 */}
         <aside
-          role="note"
-          aria-label="Workspace disconnection notice"
-          className="flex items-start gap-3 p-3.5 rounded bg-[#1C1F2A] border border-[#262A35]"
+          role={isExpired ? "alert" : "note"}
+          aria-label={isExpired ? "Session expiration notice" : "Workspace disconnection notice"}
+          data-testid={isExpired ? "session-expired-alert" : undefined}
+          className={`flex items-start gap-3 p-3.5 rounded bg-[#1C1F2A] border ${
+            isExpired ? "border-[rgba(245,158,11,0.35)]" : "border-[#262A35]"
+          }`}
         >
           <div className="pt-0.5 shrink-0">
-            <SecurityLockMintIcon className="w-4 h-4 text-[#00F5A0]" />
+            <SecurityLockMintIcon
+              className={`w-4 h-4 ${isExpired ? "text-[#F59E0B]" : "text-[#00F5A0]"}`}
+            />
           </div>
           <div className="flex-1">
             <p className="text-[12px] font-normal leading-[16.5px] text-[#B9CBBD] text-left">
-              Disconnected from workspace{" "}
-              <span className="font-medium text-[#DFE2F1]">{workspaceName}</span>. Sign in again
-              to access organization projects and telemetry.
+              {isExpired ? (
+                <>
+                  Authentication for workspace{" "}
+                  <span className="font-medium text-[#DFE2F1]">{workspaceName}</span> has
+                  expired. Sign in again to restore access to your projects and telemetry.
+                </>
+              ) : (
+                <>
+                  Disconnected from workspace{" "}
+                  <span className="font-medium text-[#DFE2F1]">{workspaceName}</span>. Sign in
+                  again to access organization projects and telemetry.
+                </>
+              )}
             </p>
           </div>
         </aside>
 
         {/* Submit Button CTA matching Figma 491:791 */}
         <Link
-          href="/login"
+          href={loginHref}
           data-testid="sign-in-again-button"
           onClick={(e) => {
             if (typeof window !== "undefined") {
               window.sessionStorage.removeItem("user_signed_out");
+              if (isExpired && redirectUrl) {
+                window.sessionStorage.setItem("manta_auth_return_to", redirectUrl);
+              }
             }
             if (onSignInAgain) {
               e.preventDefault();

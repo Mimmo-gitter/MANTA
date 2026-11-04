@@ -20,6 +20,7 @@ import {
   setIsLoggingOut,
   getIsLoggingOut,
   getDemoBackendUser,
+  purgeAllAuthTokens,
   type BackendUserClaims,
 } from "@/lib/auth";
 import { initAuthSync } from "@/lib/auth-tab-sync";
@@ -103,6 +104,43 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [syncUser]);
 
+  const handleSessionExpired = useCallback(async () => {
+    syncRequestId.current += 1;
+    if (typeof window === "undefined") return;
+
+    const currentPath = window.location.pathname;
+    const currentSearch = window.location.search;
+    const fullPath = `${currentPath}${currentSearch}`;
+
+    // Prevent redirect loops on unauthenticated entry points
+    if (
+      currentPath === "/login" ||
+      currentPath.startsWith("/login/") ||
+      currentPath === "/signed-out" ||
+      currentPath.startsWith("/signed-out/") ||
+      currentPath === "/auth/callback" ||
+      currentPath.startsWith("/auth/callback/")
+    ) {
+      return;
+    }
+
+    // Save return path in sessionStorage
+    try {
+      window.sessionStorage.setItem("manta_auth_return_to", fullPath);
+    } catch {
+      // ignore
+    }
+
+    await purgeAllAuthTokens();
+
+    setUser(null);
+    setBackendUser(null);
+    setIsLoading(false);
+
+    const redirectQuery = encodeURIComponent(fullPath);
+    window.location.replace(`/login?reason=session_expired&redirect=${redirectQuery}`);
+  }, []);
+
   useEffect(() => {
     const manager = getUserManager();
 
@@ -116,8 +154,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         });
       }
 
-      if (message.type === "RENEW_FAILED") {
-        console.error("Token renewal failed in another tab.");
+      if (
+        message.type === "SESSION_EXPIRED" ||
+        message.type === "RENEW_FAILED"
+      ) {
+        handleSessionExpired();
       }
 
       if (message.type === "LOGOUT") {
@@ -157,18 +198,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }
     };
 
+    const onSilentRenewError = (error: Error) => {
+      console.warn("Silent renew failed in manager events:", error);
+      handleSessionExpired();
+    };
+
     manager.events.addUserLoaded(onUserLoaded);
     manager.events.addUserUnloaded(onUserUnloaded);
     manager.events.addUserSignedOut(onUserSignedOut);
+    manager.events.addSilentRenewError(onSilentRenewError);
 
     return () => {
       manager.events.removeUserLoaded(onUserLoaded);
       manager.events.removeUserUnloaded(onUserUnloaded);
       manager.events.removeUserSignedOut(onUserSignedOut);
+      manager.events.removeSilentRenewError(onSilentRenewError);
 
       stopSync();
     };
-  }, [syncUser]);
+  }, [syncUser, handleSessionExpired]);
 
   const login = useCallback(async () => {
     await initiateLogin();
