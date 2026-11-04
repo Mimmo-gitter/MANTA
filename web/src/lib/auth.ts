@@ -23,6 +23,7 @@ export interface BackendUserClaims {
   preferred_username?: string | null;
   name?: string | null;
   tenant_id: string;
+  tenant_name?: string | null;
   roles: string[];
 }
 

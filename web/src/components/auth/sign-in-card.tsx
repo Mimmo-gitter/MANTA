@@ -9,10 +9,18 @@ import { SsoShieldIcon, AlertErrorIcon } from "@/components/icons/auth-icons";
 
 interface SignInCardProps {
   initialError?: string | null;
+  defaultEmail?: string;
+  workspace?: string | null;
+  isRegistered?: boolean;
 }
 
-export function SignInCard({ initialError = null }: SignInCardProps) {
-  const [email, setEmail] = useState("");
+export function SignInCard({
+  initialError = null,
+  defaultEmail = "",
+  workspace = null,
+  isRegistered = false,
+}: SignInCardProps) {
+  const [email, setEmail] = useState(defaultEmail);
   const [password, setPassword] = useState("");
   const [isLoadingSso, setIsLoadingSso] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(initialError);
@@ -102,6 +110,28 @@ export function SignInCard({ initialError = null }: SignInCardProps) {
           Engineering Intelligence Platform
         </p>
       </header>
+
+      {/* Registration Success Confirmation */}
+      {isRegistered && (
+        <div
+          role="status"
+          aria-live="polite"
+          data-testid="registered-success-banner"
+          className="mb-3.5 sm:mb-4 flex w-full flex-row items-center gap-[8px] sm:gap-[10px] rounded-[4px] border border-[rgba(0,229,153,0.45)] bg-[rgba(0,229,153,0.09)] p-[10px_10px] sm:p-[11px_12px]"
+          style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
+        >
+          <div className="shrink-0 size-[8px] rounded-full bg-[#00E599]" aria-hidden="true" />
+          <div className="flex flex-col gap-[2px] text-left">
+            <span className="text-[12px] font-semibold text-[#00E599] leading-[16px]">
+              Workspace provisioned successfully
+            </span>
+            <span className="text-[11px] font-normal text-[#B9CBBD] leading-[15px]">
+              Sign in with your administrator credentials to access{" "}
+              {workspace ? `${workspace}` : "your workspace"}.
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Inline Error Alert (Figma Node 475:420 / 475:437) */}
       {errorMessage && (
