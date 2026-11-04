@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import { Loader2 } from "lucide-react";
 import { initiateLogin } from "@/lib/auth";
 import { SsoShieldIcon, AlertErrorIcon } from "@/components/icons/auth-icons";
@@ -298,15 +299,16 @@ export function SignInCard({ initialError = null }: SignInCardProps) {
           </svg>
         </button>
 
-        {/* Sign-Up Link Row */}
-        <div className="flex items-center justify-center gap-[5px] h-[21px] pt-[4px] pb-[2px] text-[12px]">
-          <span className="text-[#94A3B8]">Don&apos;t have an account?</span>
-          <a
-            href="#signup"
-            className="font-semibold text-[#00C2CB] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00C2CB] focus-visible:rounded-[2px] py-1 px-1 -my-1 -mx-1"
+        {/* Sign-Up / Organization Registration Link Row */}
+        <div className="flex flex-col items-center justify-center gap-1 pt-3 pb-1 text-center text-[12px] leading-tight">
+          <span className="text-[#94A3B8]">Need a workspace for your team?</span>
+          <Link
+            href="/register"
+            data-testid="register-organization-link"
+            className="font-semibold text-[#00C2CB] hover:text-[#00E599] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00C2CB] focus-visible:rounded-[4px] py-0.5 px-1 transition-colors"
           >
-            Sign up
-          </a>
+            Register your organization →
+          </Link>
         </div>
       </form>
     </section>
