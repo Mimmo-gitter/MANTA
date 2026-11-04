@@ -13,6 +13,7 @@
 2. **Database Layer:** PostgreSQL 16 (`pgvector/pgvector:pg16`), Row-Level Security (`tenant_isolation_policy`), least-privilege runtime role (`eng_app_user`), and PgBouncer connection pool reset (`DISCARD ALL`).  
 **Automated Pytest Suite:** [`backend/tests/test_tenant_boundary_adversarial.py`](../backend/tests/test_tenant_boundary_adversarial.py)  
 **Supporting Pytest Suites:**  
+- [`backend/tests/security/test_cross_tenant_read_write.py`](../backend/tests/security/test_cross_tenant_read_write.py)  
 - [`backend/tests/test_rls_isolation.py`](../backend/tests/test_rls_isolation.py)  
 - [`backend/tests/test_jwt_claims_validation.py`](../backend/tests/test_jwt_claims_validation.py)  
 - [`backend/tests/test_integration_connect.py`](../backend/tests/test_integration_connect.py)  
