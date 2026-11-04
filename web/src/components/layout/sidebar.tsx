@@ -8,6 +8,7 @@ import { NAVIGATION_SECTIONS } from "@/config/navigation";
 import { useShellState } from "@/components/layout/shell-context";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/providers/auth-provider";
+import { usePermissions } from "@/hooks/use-permissions";
 import {
   FigmaOverviewIcon,
   FigmaProjectsIcon,
@@ -61,14 +62,19 @@ export function Sidebar({
   const pathname = usePathname();
   const { shellState } = useShellState();
   const { backendUser } = useAuth();
+  const { can } = usePermissions();
 
   const visibleNavigationSections = NAVIGATION_SECTIONS.map((section) => ({
     ...section,
-    items: section.items.filter(
-      (item) =>
-        !item.requiredRole ||
-        (backendUser?.roles ?? []).includes(item.requiredRole),
-    ),
+    items: section.items.filter((item) => {
+      if (item.requiredAction) {
+        return can(item.requiredAction);
+      }
+      if (item.requiredRole) {
+        return (backendUser?.roles ?? []).includes(item.requiredRole);
+      }
+      return true;
+    }),
   })).filter((section) => section.items.length > 0);
   const [logoHovered, setLogoHovered] = useState(false);
 

@@ -1,3 +1,5 @@
+import type { ActionId } from "@/lib/permissions";
+
 export type NavSectionId = "WORKSPACE" | "ENGINEERING" | "ADMINISTRATION";
 
 export interface NavItemConfig {
@@ -19,6 +21,7 @@ export interface NavItemConfig {
   badge?: string;
   hasAlertDot?: boolean;
   description: string;
+  requiredAction?: ActionId;
   requiredRole?: string;
 }
 
@@ -224,6 +227,7 @@ export const NAVIGATION_SECTIONS: NavSectionConfig[] = [
         tabletLabel: "Workspace Settings",
         href: "/workspace-settings",
         section: "ADMINISTRATION",
+        requiredAction: "MANAGE_TENANT_USERS_AND_ROLES",
         requiredRole: "TENANT_ADMIN",
         icon: "/icons/shell/e0670.svg",
         activeIcon: "/icons/shell/e0670-active.svg",
@@ -244,6 +248,7 @@ export const NAVIGATION_SECTIONS: NavSectionConfig[] = [
         tabletLabel: "Integrations",
         href: "/integrations",
         section: "ADMINISTRATION",
+        requiredAction: "MANAGE_WEBHOOK_INTEGRATIONS",
         requiredRole: "TENANT_ADMIN",
         icon: "/icons/shell/9a85f.svg",
         activeIcon: "/icons/shell/9a85f-active.svg",
@@ -264,6 +269,7 @@ export const NAVIGATION_SECTIONS: NavSectionConfig[] = [
         tabletLabel: "Access & Roles",
         href: "/access-roles",
         section: "ADMINISTRATION",
+        requiredAction: "MANAGE_TENANT_USERS_AND_ROLES",
         requiredRole: "TENANT_ADMIN",
         icon: "/icons/shell/39c1f.svg",
         activeIcon: "/icons/shell/39c1f-active.svg",
@@ -284,6 +290,7 @@ export const NAVIGATION_SECTIONS: NavSectionConfig[] = [
         tabletLabel: "Privacy & Erasure",
         href: "/privacy-erasure",
         section: "ADMINISTRATION",
+        requiredAction: "MANAGE_TENANT_USERS_AND_ROLES",
         requiredRole: "TENANT_ADMIN",
         icon: "/icons/shell/597b1.svg",
         activeIcon: "/icons/shell/597b1-active.svg",
@@ -304,6 +311,7 @@ export const NAVIGATION_SECTIONS: NavSectionConfig[] = [
         tabletLabel: "ADR Governance",
         href: "/adr-governance",
         section: "ADMINISTRATION",
+        requiredAction: "PUBLISH_GLOBAL_ADR",
         requiredRole: "TENANT_ADMIN",
         icon: "/icons/shell/00a87.svg",
         activeIcon: "/icons/shell/00a87-active.svg",
