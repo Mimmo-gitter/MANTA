@@ -587,25 +587,27 @@ function ErrorState({
   const detailsId = useId();
 
   return (
-    <div className="flex min-h-[420px] items-center justify-center py-12">
+    <div className="flex min-h-[420px] items-center justify-center px-4 py-8">
       <div
+        className="flex w-full max-w-[512px] flex-col items-center rounded-[12px] border border-[#1f2433] bg-[#161b26] px-6 py-8 text-center shadow-lg"
         role="alert"
-        className="flex w-full max-w-[440px] flex-col items-center rounded-[12px] border border-[#1f2433] bg-[#131824] px-6 py-8 text-center"
       >
         <div
           aria-hidden="true"
-          className="mb-4 flex size-[36px] items-center justify-center rounded-full bg-[#ef4444]/10"
+          className="mb-5 flex size-[48px] items-center justify-center rounded-full border border-[#ef4444]/20 bg-[#ef4444]/[0.08]"
         >
-          <AlertTriangle className="size-[18px] text-[#ef4444]" />
+          <AlertTriangle className="size-[20px] text-[#ef4444]" />
         </div>
-        <h2 className="text-[16px] font-semibold leading-[24px] text-[#e2e8f0]">
+
+        <h2 className="text-[18px] font-semibold leading-[26px] text-[#e2e8f0]">
           Unable to load integrations
         </h2>
-        <p className="mt-1 text-[12px] leading-[18px] text-[#7c839b]">
-          We couldn&rsquo;t retrieve your integrations. Please try again.
+
+        <p className="mt-2 text-[13px] leading-[20px] text-[#7c839b]">
+          We couldn’t load your integrations. Please try again.
         </p>
 
-        <div className="mt-5 flex items-center gap-2">
+        <div className="mt-6 flex items-center gap-3">
           <SecondaryButton onClick={onRetry} disabled={retrying}>
             <RefreshCw
               className={cn("size-3", retrying && "animate-spin")}
@@ -613,21 +615,31 @@ function ErrorState({
             />
             Retry
           </SecondaryButton>
-          <SecondaryButton
-            onClick={() => setShowDetails((s) => !s)}
-            aria-expanded={showDetails}
-            aria-controls={detailsId}
-            className="border-transparent bg-transparent text-[#a3acc2]"
-          >
-            <Info className="size-3" aria-hidden="true" />
-            Error details
-          </SecondaryButton>
+
+          <div className="group relative">
+            <SecondaryButton
+              className="border-transparent bg-transparent text-[#a3acc2] hover:border-transparent hover:bg-white/[0.04] hover:text-[#e2e8f0]"
+              aria-describedby={detailsId}
+            >
+              <Info className="size-3" aria-hidden="true" />
+              Error details
+            </SecondaryButton>
+
+            <div
+              id={detailsId}
+              role="tooltip"
+              className="invisible absolute left-1/2 top-[calc(100%+8px)] z-50 w-[288px] -translate-x-1/2 rounded-[8px] border border-[#252b3b] bg-[#0f131d] p-3 text-left text-[12px] leading-[18px] text-[#e2e8f0] opacity-0 shadow-xl transition-opacity group-hover:visible group-hover:opacity-100 group-focus-within:visible group-focus-within:opacity-100"
+            >
+              The integrations could not be loaded. Retry the request. If the
+              problem persists, contact your administrator.
+            </div>
+          </div>
         </div>
 
         {showDetails && (
           <pre
             id={detailsId}
-            className="mt-4 w-full overflow-x-auto rounded-[6px] border border-[#1f2433] bg-[#0a0d14] p-3 text-left font-mono text-[11px] leading-[16px] text-[#a3acc2]"
+            className="mt-3 w-full max-w-[440px] whitespace-pre-wrap break-words rounded-[8px] border border-[#1f2433] bg-[#0f131d] p-3 text-left font-mono text-[11px] leading-[17px] text-[#a3acc2]"
           >
             {message}
           </pre>

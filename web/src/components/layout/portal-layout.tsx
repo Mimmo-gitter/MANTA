@@ -34,7 +34,7 @@ export function PortalLayout({ children }: PortalLayoutProps) {
   }, []);
 
   return (
-    <ShellStateProvider>
+    <ShellStateProvider initialState="empty">
       <div
         className={cn(
           "flex h-screen w-full overflow-hidden",
