@@ -1,4 +1,4 @@
-"""SCRUM-246 / US-10 (SCRUM-305): Negative RLS Safety Net Test Suite.
+"""SCRUM-246 / US-10 (SCRUM-304 & SCRUM-305): Security Pipeline & Negative RLS Safety Net Test Suite.
 
 Proves that the security test safety net actually catches a regression:
 1. When an RLS policy is disabled (ALTER TABLE ... DISABLE ROW LEVEL SECURITY),
@@ -9,7 +9,7 @@ Proves that the security test safety net actually catches a regression:
    the security test stage fails.
 4. When policies and FORCE flags are restored, the security test stage passes.
 5. Verifies the CI workflow definition in .github/workflows/ci.yml enforces the
-   security-negative-test job and requires it in ci-gate.
+   security-negative-test and dedicated security-test jobs and requires them in ci-gate.
 """
 
 from pathlib import Path
@@ -162,4 +162,65 @@ def test_ci_workflow_defines_security_negative_test_job():
     gate_script = "\n".join(s.get("run", "") for s in ci_gate.get("steps", []) if "run" in s)
     assert "needs.security-negative-test.result" in gate_script, (
         "ci-gate evaluation script must inspect needs.security-negative-test.result"
+    )
+
+
+def test_ci_workflow_defines_security_test_job():
+    """Verify .github/workflows/ci.yml defines dedicated security-test stage and gates merging.
+
+    Invariants:
+    1. Job `security-test` exists in CI workflow.
+    2. Runs on `ubuntu-latest` with PostgreSQL service (`pgvector/pgvector:pg16`).
+    3. Initializes database through migrations (`python scripts/verify_migrations.py --step upgrade`).
+    4. Executes `python -m pytest tests/security -v`.
+    5. Required by `ci-gate` in `needs`.
+    6. Evaluated in `ci-gate` step failure logic.
+    7. `backend-test` isolates execution by using `--ignore=tests/security`.
+    """
+    assert CI_WORKFLOW_PATH.exists(), f"CI workflow file not found at {CI_WORKFLOW_PATH}"
+    workflow = yaml.safe_load(CI_WORKFLOW_PATH.read_text(encoding="utf-8"))
+
+    jobs = workflow.get("jobs", {})
+    assert "security-test" in jobs, "Job 'security-test' is missing from .github/workflows/ci.yml"
+
+    sec_job = jobs["security-test"]
+    assert sec_job.get("runs-on") == "ubuntu-latest"
+
+    # Verify PostgreSQL service
+    services = sec_job.get("services", {})
+    assert "postgres" in services, "PostgreSQL service missing from security-test job"
+    assert services["postgres"].get("image") == "pgvector/pgvector:pg16"
+
+    # Verify steps: wait, migrations upgrade, pytest tests/security
+    steps = sec_job.get("steps", [])
+    step_commands = [s.get("run", "") for s in steps if "run" in s]
+
+    assert any("verify_migrations.py --step wait" in cmd for cmd in step_commands), (
+        "PostgreSQL readiness step missing from security-test job"
+    )
+    assert any("verify_migrations.py --step upgrade" in cmd for cmd in step_commands), (
+        "Migration upgrade step missing from security-test job"
+    )
+    assert any("pytest tests/security" in cmd for cmd in step_commands), (
+        "Step executing 'pytest tests/security' missing from security-test job"
+    )
+
+    # Verify backend-test ignores tests/security
+    backend_job = jobs.get("backend-test", {})
+    backend_steps = backend_job.get("steps", [])
+    backend_commands = [s.get("run", "") for s in backend_steps if "run" in s]
+    assert any("--ignore=tests/security" in cmd for cmd in backend_commands), (
+        "backend-test should ignore tests/security to avoid duplicate runs"
+    )
+
+    # Verify ci-gate gating
+    ci_gate = jobs.get("ci-gate", {})
+    gate_needs = ci_gate.get("needs", [])
+    assert "security-test" in gate_needs, (
+        "ci-gate must include 'security-test' in its needs dependencies"
+    )
+
+    gate_script = "\n".join(s.get("run", "") for s in ci_gate.get("steps", []) if "run" in s)
+    assert "needs.security-test.result" in gate_script, (
+        "ci-gate evaluation script must inspect needs.security-test.result"
     )

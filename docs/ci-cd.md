@@ -12,25 +12,24 @@ The MANTA Engineering Intelligence Platform enforces a deterministic, automated 
                          │
          ┌───────────────┼───────────────┬────────────────┬────────────────┐
          ▼               ▼               ▼                ▼                ▼
-   Backend Lint    Backend Tests   PgBouncer Test   Docker Build      Web Checks
-   (Ruff check)      (pytest)      (Pooler Live)    (Buildx gha)   (ESLint & Build)
+   Backend Lint    Backend Tests   Security Tests   Migration Check  PgBouncer Test
+   (Ruff check)     (pytest core)   (tests/security) (Alembic check)  (Pooler Live)
          │               │               │                │                │
-         └───────────────┼───────────────┴────────────────┴────────────────┘
-  ┌──────────────┬───────┴───────┬─────────────────┬────────────────┐
-  ▼              ▼               ▼                 ▼                ▼
-Backend Lint  Backend Tests  Migration Check  Docker Build      Web Checks
-(Ruff check)    (pytest)    (upgrade/downgrade (Buildx gha)   (ESLint & Build)
-                             /upgrade/check)
-  │              │               │                 │                │
-  └──────────────┴───────┬───────┴─────────────────┴────────────────┘
-                         ▼
-                CI Status Check (ci-gate)
-                         │
-          ┌──────────────┴──────────────┐
-          ▼                             ▼
-       [PASS]                        [FAIL]
-  Green status check             Red status check
-  Merge permitted to develop     Merge BLOCKED by protection
+         └───────────────┼───────────────┼────────────────┼────────────────┘
+         ┌───────────────┼───────────────┴────────────────┐
+         ▼               ▼                                ▼
+   RLS Negative    Docker Build                      Web Checks
+    (tamper DB)     (Buildx gha)                  (ESLint & E2E)
+         │               │                                │
+         └───────────────┴───────────────┬────────────────┘
+                                         ▼
+                                CI Status Check (ci-gate)
+                                         │
+                          ┌──────────────┴──────────────┐
+                          ▼                             ▼
+                       [PASS]                        [FAIL]
+                  Green status check             Red status check
+                  Merge permitted to develop     Merge BLOCKED by protection
 ```
 
 ---
@@ -40,10 +39,11 @@ Backend Lint  Backend Tests  Migration Check  Docker Build      Web Checks
 | Stage | Job Name | Primary Tool | Caching Mechanism | Purpose |
 |---|---|---|---|---|
 | **Backend Lint** | `backend-lint` | Ruff (`format --check`, `check`) | GitHub Actions pip cache (`backend/requirements.txt`) | Enforces PEP 8 style, import sorting (`isort`), code cleanliness, and Python 3.12 compatibility. |
-| **Backend Tests** | `backend-test` | `pytest`, `pytest-asyncio` | GitHub Actions pip cache (`backend/requirements.txt`) | Executes the backend test suite (`backend/tests`), verifying API endpoints, identity configuration, and static pooler settings. |
-| **PgBouncer Tests** | `pgbouncer-integration` | `docker compose`, `pytest` | GitHub Actions pip cache (`backend/requirements.txt`) | Spins up live Postgres & PgBouncer containers to verify that `pool_mode=transaction` and `server_reset_query_always=1` purge session state across clients. |
-| **Backend Tests** | `backend-test` | `pytest`, `pytest-asyncio` | GitHub Actions pip cache (`backend/requirements.txt`) | Executes the backend test suite (`backend/tests`), verifying API endpoints, migrations, and identity configuration. |
+| **Backend Tests** | `backend-test` | `pytest`, `pytest-asyncio` | GitHub Actions pip cache (`backend/requirements.txt`) | Executes the backend core test suite (`backend/tests --ignore=tests/security`), verifying API endpoints, identity configuration, and static pooler settings against migrated PostgreSQL. |
+| **Security Tests** | `security-test` | `pytest`, `pytest-asyncio` | GitHub Actions pip cache (`backend/requirements.txt`) | Executes the dedicated tenant boundary security test suite (`backend/tests/security`), verifying cross-tenant isolation, forged tenant claims, and missing tenant contexts against PostgreSQL initialised through migrations. |
 | **Migration Check** | `backend-migrations` | Alembic, PostgreSQL 16 (`pgvector/pgvector:pg16`) | GitHub Actions pip cache (`backend/requirements.txt`) | Starts a PostgreSQL + pgvector service and runs `upgrade head`, `downgrade base`, `upgrade head`, and `alembic check` (drift detection), printing the failing revision on any error. |
+| **Negative RLS Security** | `security-negative-test` | `verify_rls_negative.py`, PostgreSQL 16 | GitHub Actions pip cache (`backend/requirements.txt`) | Validates the safety net by deliberately tampering with RLS policies/FORCE in throwaway databases to ensure regressions are caught. |
+| **PgBouncer Tests** | `pgbouncer-integration` | `docker compose`, `pytest` | GitHub Actions pip cache (`backend/requirements.txt`) | Spins up live Postgres & PgBouncer containers to verify that `pool_mode=transaction` and `server_reset_query_always=1` purge session state across clients. |
 | **Docker Build** | `backend-docker-build` | Docker Buildx (`docker/build-push-action`) | GitHub Actions cache backend (`type=gha`, `mode=max`) | Validates multi-stage Docker image compilation and dependency resolution without pushing unverified images. |
 | **Web Checks** | `web-checks` | Next.js 15, ESLint | GitHub Actions npm cache (`web/package-lock.json`) | Verifies web portal TypeScript types, ESLint compliance, and production static site builds. |
 | **Web E2E Tests** | `web-e2e` | Playwright, Keycloak 24 (`manta` realm) | GitHub Actions npm cache (`web/package-lock.json`) | Boots Keycloak with `infra/keycloak/realm-export.json` and runs automated browser tests covering sign-in, wrong password, cancelled login, sign-out, and protected route access (`docs/auth-test-scenarios.md`). |
@@ -66,7 +66,7 @@ To ensure no code can be merged into `develop` without passing all CI checks, fo
    - Check **Require status checks to pass before merging**
    - Check **Require branches to be up to date before merging**
    - In the **Status checks that are required** search box, select:
-     - `CI Status Check` (or the underlying jobs: `Backend Lint & Formatting`, `Backend Test Suite`, `Database Migration Check`, `Backend Docker Image Build`, `Web Portal Lint & Build`, `Web Portal Playwright E2E Tests`)
+     - `CI Status Check` (or the underlying jobs: `Backend Lint & Formatting`, `Backend Test Suite`, `Security Test Suite (tests/security)`, `Database Migration Check`, `Negative RLS Security Tests`, `PgBouncer Tenant-Isolation Tests`, `Backend Docker Image Build`, `Web Portal Lint & Build`, `Web Portal Playwright E2E Tests`)
 5. Click **Create** or **Save changes**.
 
 *(Repeat the same rule for the `main` branch to guarantee production release protection).*
