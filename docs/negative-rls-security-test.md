@@ -9,8 +9,9 @@
 - `SCRUM-301` / `SCRUM-302` / `SCRUM-303` (Adversarial tenant boundary test scenarios)  
 **Target Database Engine:** PostgreSQL 16 (`pgvector/pgvector:pg16`)  
 **Automated Verification Script:** [`backend/scripts/verify_rls_negative.py`](../backend/scripts/verify_rls_negative.py)  
-**Automated Pytest Suite:** [`backend/tests/security/test_rls_negative_pipeline.py`](../backend/tests/security/test_rls_negative_pipeline.py)  
-**CI Pipeline Job:** `security-negative-test` in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)  
+**Security Guardrails Test Suite:** [`backend/tests/security/test_00_rls_guardrails_security.py`](../backend/tests/security/test_00_rls_guardrails_security.py)  
+**CI Workflow Test Suite:** [`backend/tests/test_rls_negative_ci.py`](../backend/tests/test_rls_negative_ci.py)  
+**CI Pipeline Jobs:** `security-test` and `security-negative-test` in [`.github/workflows/ci.yml`](../.github/workflows/ci.yml)  
 
 ---
 
@@ -41,7 +42,7 @@ This is accomplished by:
 |                      |                                                                           |
 |                      v                                                                           |
 |   2. Baseline Security Stage                                                                     |
-|      (pytest tests/test_rls_guardrails.py + test_rls_isolation.py)                               |
+|      (pytest tests/security -v)                                                                  |
 |      --> EXPECTED: PASS (Exit Code 0)                                                            |
 |                      |                                                                           |
 |                      v                                                                           |
@@ -76,9 +77,9 @@ The negative verification suite tests three distinct vulnerability vectors:
 
 | Mode | SQL Command Executed | Detection Mechanism | Failure Output / Reason |
 | :--- | :--- | :--- | :--- |
-| **`disable-rls`** | `ALTER TABLE projects DISABLE ROW LEVEL SECURITY;` | • Catalog guardrail ([`test_rls_guardrails.py`](../backend/tests/test_rls_guardrails.py))<br>• Runtime query isolation ([`test_rls_isolation.py`](../backend/tests/test_rls_isolation.py)) | `AssertionError: Found tenant tables without FORCE RLS enabled: projects (rls=False, force_rls=True)`<br>`AssertionError: assert project_b not in [project_a, project_b]` |
-| **`no-force`** | `ALTER TABLE projects NO FORCE ROW LEVEL SECURITY;` | Catalog guardrail ([`test_rls_guardrails.py`](../backend/tests/test_rls_guardrails.py)) | `AssertionError: Found tenant tables without FORCE RLS enabled: projects (rls=True, force_rls=False)` |
-| **`drop-policy`** | `DROP POLICY IF EXISTS tenant_isolation_policy ON projects;` | • Catalog guardrail ([`test_rls_guardrails.py`](../backend/tests/test_rls_guardrails.py))<br>• Runtime query isolation ([`test_rls_isolation.py`](../backend/tests/test_rls_isolation.py)) | `AssertionError: Tenant tables missing tenant_isolation_policy: ['projects']` |
+| **`disable-rls`** | `ALTER TABLE projects DISABLE ROW LEVEL SECURITY;` | • Security guardrail ([`test_00_rls_guardrails_security.py`](../backend/tests/security/test_00_rls_guardrails_security.py))<br>• Session isolation ([`test_forged_tenant_claim_and_session_without_tenant_context.py`](../backend/tests/security/test_forged_tenant_claim_and_session_without_tenant_context.py)) | `AssertionError: Found tenant tables without FORCE RLS enabled: projects (rls=False, force_rls=True)`<br>`AssertionError: Expected 0 projects, got ...` |
+| **`no-force`** | `ALTER TABLE projects NO FORCE ROW LEVEL SECURITY;` | Security guardrail ([`test_00_rls_guardrails_security.py`](../backend/tests/security/test_00_rls_guardrails_security.py)) | `AssertionError: Found tenant tables without FORCE RLS enabled: projects (rls=True, force_rls=False)` |
+| **`drop-policy`** | `DROP POLICY IF EXISTS tenant_isolation_policy ON projects;` | Security guardrail ([`test_00_rls_guardrails_security.py`](../backend/tests/security/test_00_rls_guardrails_security.py)) | `AssertionError: Tenant tables missing tenant_isolation_policy: ['projects']` |
 
 ---
 
@@ -191,19 +192,27 @@ python scripts/verify_rls_negative.py --step drop-db --db-name manta_manual_neg_
 
 ### 3.4 Automated Pytest Suite Execution
 
-The automated pytest test suite [`backend/tests/security/test_rls_negative_pipeline.py`](../backend/tests/security/test_rls_negative_pipeline.py) can be run directly via `pytest`:
+The CI workflow and CLI runner verification suite [`backend/tests/test_rls_negative_ci.py`](../backend/tests/test_rls_negative_ci.py) can be run directly via `pytest`:
 
 ```powershell
 cd backend
-python -m pytest tests/security/test_rls_negative_pipeline.py -v
+python -m pytest tests/test_rls_negative_ci.py -v
 ```
 
 Tests included:
-- `test_negative_rls_pipeline_fails_when_rls_disabled_and_passes_when_restored`: Validates `disable-rls` regression cycle.
-- `test_negative_rls_pipeline_fails_when_no_force_and_passes_when_restored`: Validates `no-force` regression cycle.
-- `test_negative_rls_pipeline_fails_when_policy_dropped_and_passes_when_restored`: Validates `drop-policy` regression cycle.
-- `test_expect_failure_throws_if_security_tests_unexpectedly_pass`: Validates that the runner raises an error if security tests pass unexpectedly.
-- `test_ci_workflow_defines_security_negative_test_job`: Asserts `.github/workflows/ci.yml` job definitions and gating.
+- `test_ci_workflow_defines_security_test_job`: Asserts `.github/workflows/ci.yml` defines the `security-test` stage.
+- `test_ci_workflow_defines_security_negative_test_job`: Asserts `.github/workflows/ci.yml` defines the `security-negative-test` job.
+- `test_backend_test_ignores_security_directory`: Verifies `backend-test` excludes `tests/security`.
+- `test_cli_default_arguments`: Verifies CLI defaults (step `all`, mode `all`, table `projects`, targets `["tests/security"]`).
+- `test_cli_custom_arguments`: Tests custom `--step`, `--mode`, `--table`, `--keep-db`, `--test-target`.
+- `test_get_base_admin_db_url_derivation` and `test_get_app_db_url_derivation`: Validates URL generation.
+- `test_rls_negative_check_error_attributes`: Verifies exception payload.
+
+To execute the security test stage directly against an active database:
+```powershell
+cd backend
+python -m pytest tests/security -v
+```
 
 ---
 
