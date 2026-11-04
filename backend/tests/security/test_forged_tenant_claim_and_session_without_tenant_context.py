@@ -726,7 +726,7 @@ async def test_forged_and_invalid_tokens_binary_indistinguishability(auth_contex
         valid = mint_jwt(auth_context, tenant_id=TENANT_ALPHA_ID)
         h, p, s = valid.split(".")
         # Tampered payload
-        tampered = f"{h}.{jwt.utils.base64url_encode(b'{\"tenant_id\":\"999\"}').decode('ascii')}.{s}"
+        tampered = f"{h}.{jwt.utils.base64url_encode(b'{"tenant_id":"999"}').decode('ascii')}.{s}"
         # Rogue key
         rogue_key, _ = generate_rsa_keypair("rogue-key")
         rogue_token = mint_jwt(
@@ -1061,9 +1061,9 @@ async def test_api_requests_without_authorization_return_401_no_unhandled_error(
 
             for method, path in routes:
                 res = await ac.request(method, path)
-                assert (
-                    res.status_code == 401
-                ), f"Expected 401 for {method} {path}, got {res.status_code}"
+                assert res.status_code == 401, (
+                    f"Expected 401 for {method} {path}, got {res.status_code}"
+                )
                 assert res.json() == {"detail": "Not authenticated"}
                 assert res.headers.get("www-authenticate") == "Bearer"
     finally:
