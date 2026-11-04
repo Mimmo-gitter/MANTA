@@ -570,4 +570,3 @@ async def test_cross_tenant_admin_email_coexistence_and_duplicate_slug_rejection
             assert f"slug '{slug_1}' already exists" in res3.json()["detail"]
     finally:
         await async_engine.dispose()
-
