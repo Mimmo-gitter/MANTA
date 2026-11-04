@@ -15,7 +15,7 @@ export default defineConfig({
     trace: "on-first-retry",
     screenshot: "only-on-failure"
   },
-  projects: process.env.CI
+  projects: process.env.CI || !process.env.ALL_BROWSERS
     ? [
         {
           name: "chromium",

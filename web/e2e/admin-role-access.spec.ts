@@ -32,11 +32,30 @@ test.describe("Role-based Administration Access (SCRUM-269)", () => {
       page.getByTestId("nav-link-integrations"),
     ).not.toBeVisible();
 
-    // 2. Direct navigation to admin routes should redirect to /
-    await page.goto("/integrations");
-    await expect(page).toHaveURL("/");
+    await expect(
+      page.getByTestId("nav-link-access-roles"),
+    ).not.toBeVisible();
 
-    await page.goto("/workspace-settings");
-    await expect(page).toHaveURL("/");
+    await expect(
+      page.getByTestId("nav-link-privacy-erasure"),
+    ).not.toBeVisible();
+
+    await expect(
+      page.getByTestId("nav-link-adr-governance"),
+    ).not.toBeVisible();
+
+    // 2. Direct navigation to admin routes should redirect to /
+    const adminRoutes = [
+      "/integrations",
+      "/workspace-settings",
+      "/access-roles",
+      "/privacy-erasure",
+      "/adr-governance",
+    ];
+
+    for (const route of adminRoutes) {
+      await page.goto(route);
+      await expect(page).toHaveURL("/");
+    }
   });
 });
