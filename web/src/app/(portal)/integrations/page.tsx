@@ -25,6 +25,7 @@ import {
   type ShellState,
 } from "@/components/layout/shell-context";
 import { cn } from "@/lib/utils";
+import { GitHubConnectDialog } from "@/components/integrations/github-connect-dialog";
 
 /* -------------------------------------------------------------------------- */
 /* Types & data                                                               */
@@ -816,6 +817,7 @@ export default function IntegrationsPage() {
   const [checkedAt, setCheckedAt] = useState<number | null>(null);
   const [filter, setFilter] = useState<StatusFilter>("all");
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [githubOpen, setGithubOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoadState("loading");
@@ -874,9 +876,20 @@ export default function IntegrationsPage() {
 
   // TODO: route to provider setup, e.g. router.push(`/integrations/${provider.id}`)
   const handleSelectProvider = (provider: Provider) => {
-    console.info("Configure provider", provider.id);
     setDialogOpen(false);
+
+    if (provider.id === "github") {
+      setGithubOpen(true);
+      return;
+    }
+
+    console.info("Configure provider", provider.id);
   };
+
+  const closeGithub = useCallback(() => {
+    setGithubOpen(false);
+  }, []);
+
   const handleConfigure = (integration: Integration) => {
     console.info("Configure integration", integration.id);
   };
@@ -972,6 +985,11 @@ export default function IntegrationsPage() {
         open={dialogOpen}
         onClose={closeDialog}
         onSelect={handleSelectProvider}
+      />
+      <GitHubConnectDialog
+        open={githubOpen}
+        onClose={closeGithub}
+        onConnected={() => void load()}
       />
     </div>
   );
