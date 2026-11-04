@@ -2,10 +2,10 @@
 
 **Task:** Create test scenarios (Tenant A vs Tenant B, cleared tenant setting) (`SCRUM-294`)  
 **Parent User Story:** `SCRUM-244` (US-8 Database-enforced tenant isolation)  
-**Related Tickets:** `SCRUM-292` (`eng_app_user` least-privilege role), `SCRUM-318` (RLS policies & `FORCE ROW LEVEL SECURITY`), `SCRUM-293` (Automated RLS schema guardrails), `SCRUM-295` (Automated RLS isolation test suite), `SCRUM-297` (`get_tenant_db_context` session dependency)  
+**Related Tickets:** `SCRUM-292` (`eng_app_user` least-privilege role), `SCRUM-318` (RLS policies & `FORCE ROW LEVEL SECURITY`), `SCRUM-293` (Automated RLS schema guardrails), `SCRUM-295` (Automated RLS isolation test suite), `SCRUM-297` (`get_tenant_db_context` session dependency), `SCRUM-305` (Negative RLS safety net verification: pipeline fails when RLS policy is disabled, see [`docs/negative-rls-security-test.md`](negative-rls-security-test.md))  
 **Target Database Engine:** PostgreSQL 16 (`pgvector/pgvector:pg16`)  
 **RLS Migration:** [`backend/migrations/versions/5b1a7d8e2093_tenant_rls_and_eng_app_user.py`](../backend/migrations/versions/5b1a7d8e2093_tenant_rls_and_eng_app_user.py)  
-**Automated Pytest Suites:** [`backend/tests/test_rls_isolation.py`](../backend/tests/test_rls_isolation.py), [`backend/tests/test_rls_guardrails.py`](../backend/tests/test_rls_guardrails.py)
+**Automated Pytest Suites:** [`backend/tests/test_rls_isolation.py`](../backend/tests/test_rls_isolation.py), [`backend/tests/test_rls_guardrails.py`](../backend/tests/test_rls_guardrails.py), [`backend/tests/security/test_rls_negative_pipeline.py`](../backend/tests/security/test_rls_negative_pipeline.py)
 
 ---
 
