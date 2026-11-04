@@ -224,4 +224,3 @@ def test_ci_workflow_defines_security_test_job():
     assert "needs.security-test.result" in gate_script, (
         "ci-gate evaluation script must inspect needs.security-test.result"
     )
-
