@@ -26,6 +26,8 @@ import {
 } from "@/components/layout/shell-context";
 import { cn } from "@/lib/utils";
 import { GitHubConnectDialog } from "@/components/integrations/github-connect-dialog";
+import { JiraConnectDialog } from "@/components/integrations/jira-connect-dialog";
+import { SlackConnectDialog } from "@/components/integrations/slack-connect-dialog";
 
 /* -------------------------------------------------------------------------- */
 /* Types & data                                                               */
@@ -818,6 +820,8 @@ export default function IntegrationsPage() {
   const [filter, setFilter] = useState<StatusFilter>("all");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [githubOpen, setGithubOpen] = useState(false);
+  const [jiraOpen, setJiraOpen] = useState(false);
+  const [slackOpen, setSlackOpen] = useState(false);
 
   const load = useCallback(async () => {
     setLoadState("loading");
@@ -883,11 +887,25 @@ export default function IntegrationsPage() {
       return;
     }
 
+    if (provider.id === "jira") {
+      setJiraOpen(true);
+      return;
+    }
+
+    if (provider.id === "slack") {
+      setSlackOpen(true);
+      return;
+    }
+
     console.info("Configure provider", provider.id);
   };
 
   const closeGithub = useCallback(() => {
     setGithubOpen(false);
+  }, []);
+
+  const closeJira = useCallback(() => {
+    setJiraOpen(false);
   }, []);
 
   const handleConfigure = (integration: Integration) => {
@@ -989,6 +1007,16 @@ export default function IntegrationsPage() {
       <GitHubConnectDialog
         open={githubOpen}
         onClose={closeGithub}
+        onConnected={() => void load()}
+      />
+      <JiraConnectDialog
+        open={jiraOpen}
+        onClose={closeJira}
+        onConnected={() => void load()}
+      />
+      <SlackConnectDialog
+        open={slackOpen}
+        onClose={() => setSlackOpen(false)}
         onConnected={() => void load()}
       />
     </div>
