@@ -9,6 +9,7 @@
 - `SCRUM-269`: Role-based Administration Access ([`web/e2e/admin-role-access.spec.ts`](../web/e2e/admin-role-access.spec.ts))  
 - `SCRUM-240`: Sign in via organization Identity Provider ([`docs/auth-test-scenarios.md`](auth-test-scenarios.md))  
 - `SCRUM-244`: Database-enforced tenant isolation ([`docs/rls-test-scenarios.md`](rls-test-scenarios.md))  
+- `SCRUM-324`: Integration failure & permission test scenarios ([`docs/integration-test-scenarios.md`](integration-test-scenarios.md))  
 
 **Authoritative Machine-Readable Matrix:** [`docs/roles-permissions.json`](roles-permissions.json)  
 **Authoritative Matrix Specification:** [`docs/roles-permissions.md`](roles-permissions.md)  
