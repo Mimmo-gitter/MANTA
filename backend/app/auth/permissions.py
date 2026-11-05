@@ -12,7 +12,7 @@ from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy import or_, select
 
 from app.auth.dependencies import get_current_user
-from app.auth.schemas import TokenClaims
+from app.auth.schemas import StubEndpointResponse, TokenClaims
 from app.db.models.models import User, UserRole
 from app.db.session import get_tenant_db_context
 
@@ -260,6 +260,47 @@ class PermissionChecker:
 def require_permission(*permissions: Permission | str) -> PermissionChecker:
     """Factory creating a PermissionChecker dependency/decorator."""
     return PermissionChecker(*permissions)
+
+
+def build_stub_response(permission: Permission | str) -> StubEndpointResponse:
+    """Build standardized payload for unimplemented action stubs."""
+    perm_val = (
+        permission.value if isinstance(permission, Permission) else str(permission).strip().upper()
+    )
+    return StubEndpointResponse(
+        status="not_implemented",
+        action=perm_val,
+        detail=f"Action '{perm_val}' is a placeholder stub for functionality delivered in a later iteration.",
+    )
+
+
+def stub_route_kwargs(
+    permission: Permission | str,
+    summary: str,
+    description: str,
+) -> dict[str, Any]:
+    """Build standard FastAPI route kwargs for stub endpoints."""
+    perm_val = (
+        permission.value if isinstance(permission, Permission) else str(permission).strip().upper()
+    )
+    return {
+        "status_code": status.HTTP_501_NOT_IMPLEMENTED,
+        "response_model": StubEndpointResponse,
+        "summary": f"[STUB] {summary}",
+        "description": description,
+        "openapi_extra": {
+            "x-stub": True,
+            "x-required-permission": perm_val,
+        },
+        "responses": {
+            status.HTTP_401_UNAUTHORIZED: {"description": "Not authenticated"},
+            status.HTTP_403_FORBIDDEN: {"description": "Forbidden: insufficient permissions"},
+            status.HTTP_501_NOT_IMPLEMENTED: {
+                "model": StubEndpointResponse,
+                "description": "Placeholder stub endpoint for future iteration action",
+            },
+        },
+    }
 
 
 def find_matched_route(app: Any, scope: dict[str, Any]) -> tuple[Any, Any, Any]:

@@ -275,7 +275,11 @@ class TestRolePermissionsMatrix(unittest.TestCase):
         (used when running inside the standalone Docker container without /docs mounted)
         is identical to docs/roles-permissions.json.
         """
-        bundled_file = REPO_ROOT / "backend" / "app" / "auth" / "roles-permissions.json"
+        bundled_candidates = [
+            REPO_ROOT / "backend" / "app" / "auth" / "roles-permissions.json",
+            Path(__file__).resolve().parent.parent / "app" / "auth" / "roles-permissions.json",
+        ]
+        bundled_file = next((p for p in bundled_candidates if p.is_file()), bundled_candidates[0])
         self.assertTrue(
             bundled_file.is_file(),
             f"Bundled fallback matrix missing at {bundled_file}",

@@ -369,3 +369,204 @@ async def test_security_definer_atomicity_on_failure():
             assert check_res.scalar() == 0
     finally:
         await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_first_registration_and_second_tenant_isolation_post_registration():
+    """
+    SCRUM-290: Verify bootstrap and tenant isolation scenarios:
+    1. First tenant registers on system.
+    2. Second tenant registers on system.
+    3. Tenant A cannot see Tenant B's data (tenants and users tables) via RLS.
+    4. Tenant B cannot see Tenant A's data via RLS.
+    5. Cleared / unset tenant context returns zero rows (fail-safe closed).
+    6. Cross-tenant mutation (UPDATE/DELETE) affects zero rows.
+    """
+    suffix_a = uuid.uuid4().hex[:8]
+    slug_a = f"tenant-a-{suffix_a}"
+    email_a = f"admin@{suffix_a}.alpha.test"
+
+    suffix_b = uuid.uuid4().hex[:8]
+    slug_b = f"tenant-b-{suffix_b}"
+    email_b = f"admin@{suffix_b}.beta.test"
+
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            # 1. First tenant registers (bootstrapping on system)
+            res_a = await ac.post(
+                "/tenants/register",
+                json={
+                    "name": f"Tenant Alpha {suffix_a}",
+                    "slug": slug_a,
+                    "admin_email": email_a,
+                    "admin_name": "Admin Alpha",
+                    "allowed_domain": f"{suffix_a}.alpha.test",
+                },
+            )
+            assert res_a.status_code == 201, res_a.text
+            data_a = res_a.json()
+            tenant_a_id = uuid.UUID(data_a["tenant_id"])
+            admin_a_id = uuid.UUID(data_a["admin_id"])
+
+            # 2. Second tenant registers independently
+            res_b = await ac.post(
+                "/tenants/register",
+                json={
+                    "name": f"Tenant Beta {suffix_b}",
+                    "slug": slug_b,
+                    "admin_email": email_b,
+                    "admin_name": "Admin Beta",
+                    "allowed_domain": f"{suffix_b}.beta.test",
+                },
+            )
+            assert res_b.status_code == 201, res_b.text
+            data_b = res_b.json()
+            tenant_b_id = uuid.UUID(data_b["tenant_id"])
+            admin_b_id = uuid.UUID(data_b["admin_id"])
+
+            assert tenant_a_id != tenant_b_id
+            assert admin_a_id != admin_b_id
+
+        # 3. Tenant A DB context: Tenant A cannot see Tenant B's data
+        async with get_tenant_db_context(tenant_a_id) as session_a:
+            # Under Tenant A context, querying tenants only returns Tenant A
+            tenants_res = await session_a.execute(text("SELECT id, slug FROM tenants"))
+            visible_tenants = tenants_res.mappings().all()
+            assert len(visible_tenants) == 1
+            assert visible_tenants[0]["id"] == tenant_a_id
+            assert visible_tenants[0]["slug"] == slug_a
+
+            # Querying Tenant B's ID directly under Tenant A context returns zero rows
+            tenant_b_lookup = await session_a.execute(
+                text("SELECT id FROM tenants WHERE id = :tid"),
+                {"tid": tenant_b_id},
+            )
+            assert tenant_b_lookup.first() is None
+
+            # Users table under Tenant A context only shows Tenant A's admin, not Tenant B's admin
+            users_res = await session_a.execute(text("SELECT id, tenant_id FROM users"))
+            visible_users = users_res.mappings().all()
+            assert len(visible_users) == 1
+            assert visible_users[0]["id"] == admin_a_id
+            assert visible_users[0]["tenant_id"] == tenant_a_id
+
+            # Cross-tenant UPDATE: Tenant A attempting to update Tenant B's record affects 0 rows
+            update_res = await session_a.execute(
+                text("UPDATE tenants SET name = 'Hacked by Alpha' WHERE id = :tid"),
+                {"tid": tenant_b_id},
+            )
+            assert update_res.rowcount == 0
+
+            # Cross-tenant DELETE: Tenant A attempting to delete Tenant B's record affects 0 rows
+            delete_res = await session_a.execute(
+                text("DELETE FROM tenants WHERE id = :tid"),
+                {"tid": tenant_b_id},
+            )
+            assert delete_res.rowcount == 0
+
+        # 4. Tenant B DB context: Tenant B cannot see Tenant A's data
+        async with get_tenant_db_context(tenant_b_id) as session_b:
+            tenants_res = await session_b.execute(text("SELECT id, slug FROM tenants"))
+            visible_tenants = tenants_res.mappings().all()
+            assert len(visible_tenants) == 1
+            assert visible_tenants[0]["id"] == tenant_b_id
+            assert visible_tenants[0]["slug"] == slug_b
+
+            tenant_a_lookup = await session_b.execute(
+                text("SELECT id FROM tenants WHERE id = :tid"),
+                {"tid": tenant_a_id},
+            )
+            assert tenant_a_lookup.first() is None
+
+            users_res = await session_b.execute(text("SELECT id, tenant_id FROM users"))
+            visible_users = users_res.mappings().all()
+            assert len(visible_users) == 1
+            assert visible_users[0]["id"] == admin_b_id
+            assert visible_users[0]["tenant_id"] == tenant_b_id
+
+        # 5. Cleared / Unset context returns zero rows (fail-safe closed default)
+        async with AsyncSessionLocal() as session_none:
+            # Without setting app.current_tenant_id
+            tenants_res = await session_none.execute(text("SELECT id FROM tenants"))
+            assert len(tenants_res.all()) == 0
+
+            users_res = await session_none.execute(text("SELECT id FROM users"))
+            assert len(users_res.all()) == 0
+
+    finally:
+        await async_engine.dispose()
+
+
+@pytest.mark.asyncio
+async def test_register_tenant_extra_fields_forbidden_422():
+    """
+    SCRUM-290: Pydantic extra='forbid' rejects unexpected payload attributes with 422.
+    """
+    unique_suffix = uuid.uuid4().hex[:6]
+    payload = {
+        "name": f"Strict Schema Corp {unique_suffix}",
+        "slug": f"strict-schema-{unique_suffix}",
+        "admin_email": f"admin@{unique_suffix}.strict.test",
+        "admin_name": "Strict Admin",
+        "is_superadmin": True,
+        "role": "SUPERUSER",
+    }
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        response = await ac.post("/tenants/register", json=payload)
+        assert response.status_code == 422
+        errors = response.json().get("detail", [])
+        field_names = [e.get("loc", [])[-1] for e in errors]
+        assert "is_superadmin" in field_names or "role" in field_names
+
+
+@pytest.mark.asyncio
+async def test_cross_tenant_admin_email_coexistence_and_duplicate_slug_rejection():
+    """
+    SCRUM-290:
+    1. Cross-tenant email coexistence: Different tenants can register with the same admin email.
+    2. Duplicate slug rejection: Same slug is rejected with 409 regardless of email.
+    """
+    shared_email = f"shared_lead_{uuid.uuid4().hex[:6]}@domain.org"
+    slug_1 = f"shared-email-t1-{uuid.uuid4().hex[:6]}"
+    slug_2 = f"shared-email-t2-{uuid.uuid4().hex[:6]}"
+
+    try:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            # Tenant 1 with shared email
+            res1 = await ac.post(
+                "/tenants/register",
+                json={
+                    "name": "Shared Email Tenant 1",
+                    "slug": slug_1,
+                    "admin_email": shared_email,
+                    "admin_name": "Shared Admin",
+                },
+            )
+            assert res1.status_code == 201
+
+            # Tenant 2 with same admin email but different slug -> Succeeds
+            res2 = await ac.post(
+                "/tenants/register",
+                json={
+                    "name": "Shared Email Tenant 2",
+                    "slug": slug_2,
+                    "admin_email": shared_email,
+                    "admin_name": "Shared Admin",
+                },
+            )
+            assert res2.status_code == 201
+
+            # Re-registering slug_1 with same email -> Fails with 409
+            res3 = await ac.post(
+                "/tenants/register",
+                json={
+                    "name": "Duplicate Slug Tenant",
+                    "slug": slug_1,
+                    "admin_email": shared_email,
+                    "admin_name": "Shared Admin",
+                },
+            )
+            assert res3.status_code == 409
+            assert f"slug '{slug_1}' already exists" in res3.json()["detail"]
+    finally:
+        await async_engine.dispose()

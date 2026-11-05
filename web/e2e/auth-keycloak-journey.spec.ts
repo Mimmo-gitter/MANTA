@@ -417,7 +417,6 @@ test.describe("Authentication Journey E2E against Keycloak Test Realm (SCRUM-240
     // 4. Assert displayed user name and tenant after login (Acceptance Criterion #2)
     const profileName = page.getByTestId("user-profile-name");
     const tenantBadge = page.getByTestId("user-tenant-badge");
-    const signOutBtn = page.getByTestId("header-signout-button");
 
     await expect(profileName).toBeVisible();
     await expect(profileName).toContainText("Alpha Developer");
@@ -425,7 +424,7 @@ test.describe("Authentication Journey E2E against Keycloak Test Realm (SCRUM-240
     await expect(tenantBadge).toBeVisible();
     await expect(tenantBadge).toContainText("Tenant Alpha");
 
-    await expect(signOutBtn).toBeVisible();
+    await expect(page.getByTestId("header-signout-button")).not.toBeVisible();
   });
 
   test("Scenario 1B: Successful sign-in via Keycloak test realm (Tenant Beta) asserts displayed user name and tenant", async ({
@@ -477,15 +476,16 @@ test.describe("Authentication Journey E2E against Keycloak Test Realm (SCRUM-240
     await expect(kcError.first()).toContainText(/Invalid username or password/i);
     expect(page.url()).toContain("/realms/manta/");
 
-    // 4. Navigate back to portal and verify no user session was created
+    // 4. Navigate back to portal and verify unauthenticated user is redirected to /login
     await page.goto("/");
-    await expect(page.getByTestId("header-signin-button")).toBeVisible();
+    await expect(page).toHaveURL(/\/login/, { timeout: 10000 });
+    await expect(page.getByTestId("company-sso-button")).toBeVisible();
     await expect(page.getByTestId("user-profile-name")).not.toBeVisible();
     await expect(page.getByTestId("user-tenant-badge")).not.toBeVisible();
 
     const hasUserToken = await page.evaluate(() => {
-      for (let i = 0; i < window.sessionStorage.length; i++) {
-        const k = window.sessionStorage.key(i);
+      for (let i = 0; i < window.localStorage.length; i++) {
+        const k = window.localStorage.key(i);
         if (k && k.startsWith("oidc.user:")) return true;
       }
       return false;
@@ -525,8 +525,8 @@ test.describe("Authentication Journey E2E against Keycloak Test Realm (SCRUM-240
 
     // 5. Verify user remains unauthenticated
     const hasUserToken = await page.evaluate(() => {
-      for (let i = 0; i < window.sessionStorage.length; i++) {
-        const k = window.sessionStorage.key(i);
+      for (let i = 0; i < window.localStorage.length; i++) {
+        const k = window.localStorage.key(i);
         if (k && k.startsWith("oidc.user:")) return true;
       }
       return false;
@@ -552,8 +552,9 @@ test.describe("Authentication Journey E2E against Keycloak Test Realm (SCRUM-240
     await expect(page.getByTestId("user-profile-name")).toContainText("Alpha Developer");
     await expect(page.getByTestId("user-tenant-badge")).toContainText("Tenant Alpha");
 
-    // 2. Click Sign Out button in dashboard header
-    const signOutBtn = page.getByTestId("header-signout-button");
+    // 2. Click Sign Out button in profile menu
+    await page.getByTestId("user-profile-menu-trigger").click();
+    const signOutBtn = page.getByTestId("dropdown-signout-button");
     await expect(signOutBtn).toBeVisible();
     await signOutBtn.click();
 
@@ -567,11 +568,11 @@ test.describe("Authentication Journey E2E against Keycloak Test Realm (SCRUM-240
       "Disconnected from workspace Tenant Alpha."
     );
 
-    // 4. Verify sessionStorage tokens are completely purged
+    // 4. Verify localStorage tokens are completely purged
     const remainingKeys = await page.evaluate(() => {
       const keys: string[] = [];
-      for (let i = 0; i < window.sessionStorage.length; i++) {
-        const k = window.sessionStorage.key(i);
+      for (let i = 0; i < window.localStorage.length; i++) {
+        const k = window.localStorage.key(i);
         if (k && (k.startsWith("oidc.") || k.startsWith("manta."))) keys.push(k);
       }
       return keys;

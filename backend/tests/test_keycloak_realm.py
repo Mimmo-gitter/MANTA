@@ -197,6 +197,70 @@ class TestKeycloakRealmExport(unittest.TestCase):
             f"Keycloak realm roles and docs/roles-permissions.json roles must match. Diff: {realm_roles ^ matrix_roles}",
         )
 
+    def test_short_token_and_sso_session_lifetimes(self):
+        """Verify short token and SSO session lifetimes are set in the test realm (SCRUM-284)."""
+        data = self._load_realm()
+
+        # Access token lifespan: 60 seconds (1 minute) for testing renewal in seconds instead of minutes
+        access_token_lifespan = data.get("accessTokenLifespan")
+        self.assertIsNotNone(access_token_lifespan, "accessTokenLifespan must be declared")
+        self.assertEqual(
+            access_token_lifespan,
+            60,
+            f"Expected accessTokenLifespan to be 60 seconds, got {access_token_lifespan}",
+        )
+        self.assertEqual(data.get("accessTokenLifespanForImplicitFlow"), 60)
+
+        # SSO session idle timeout: 120 seconds (2 minutes)
+        sso_idle = data.get("ssoSessionIdleTimeout")
+        self.assertIsNotNone(sso_idle, "ssoSessionIdleTimeout must be declared")
+        self.assertEqual(
+            sso_idle,
+            120,
+            f"Expected ssoSessionIdleTimeout to be 120 seconds, got {sso_idle}",
+        )
+        self.assertEqual(data.get("ssoSessionIdleTimeoutRememberMe"), 120)
+
+        # SSO session max lifespan: 600 seconds (10 minutes)
+        sso_max = data.get("ssoSessionMaxLifespan")
+        self.assertIsNotNone(sso_max, "ssoSessionMaxLifespan must be declared")
+        self.assertEqual(
+            sso_max,
+            600,
+            f"Expected ssoSessionMaxLifespan to be 600 seconds, got {sso_max}",
+        )
+        self.assertEqual(data.get("ssoSessionMaxLifespanRememberMe"), 600)
+
+        # Client session lifetimes
+        self.assertEqual(data.get("clientSessionIdleTimeout"), 120)
+        self.assertEqual(data.get("clientSessionMaxLifespan"), 600)
+
+    def test_token_and_sso_lifetimes_ordering_invariants(self):
+        """Verify lifecycle invariants: accessTokenLifespan < ssoSessionIdleTimeout <= ssoSessionMaxLifespan."""
+        data = self._load_realm()
+        access_token_lifespan = data.get("accessTokenLifespan", 0)
+        sso_idle = data.get("ssoSessionIdleTimeout", 0)
+        sso_max = data.get("ssoSessionMaxLifespan", 0)
+
+        # Access tokens must expire before the SSO session idle timeout
+        self.assertLess(
+            access_token_lifespan,
+            sso_idle,
+            "Access token lifespan must be shorter than SSO session idle timeout to enable silent renewal",
+        )
+        # SSO idle timeout must not exceed SSO max lifespan
+        self.assertLessEqual(
+            sso_idle,
+            sso_max,
+            "SSO session idle timeout must be less than or equal to SSO session max lifespan",
+        )
+        # Access token lifespan must be strictly less than 300s (confirming test realm uses seconds, not minutes)
+        self.assertLessEqual(
+            access_token_lifespan,
+            60,
+            "Test realm access token lifespan must be <= 60 seconds for fast automated renewal testing",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

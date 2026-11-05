@@ -2,16 +2,27 @@
 
 import React, { useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 import { Loader2 } from "lucide-react";
 import { initiateLogin } from "@/lib/auth";
 import { SsoShieldIcon, AlertErrorIcon } from "@/components/icons/auth-icons";
 
 interface SignInCardProps {
   initialError?: string | null;
+  defaultEmail?: string;
+  workspace?: string | null;
+  isRegistered?: boolean;
+  sessionExpired?: boolean;
 }
 
-export function SignInCard({ initialError = null }: SignInCardProps) {
-  const [email, setEmail] = useState("");
+export function SignInCard({
+  initialError = null,
+  defaultEmail = "",
+  workspace = null,
+  isRegistered = false,
+  sessionExpired = false,
+}: SignInCardProps) {
+  const [email, setEmail] = useState(defaultEmail);
   const [password, setPassword] = useState("");
   const [isLoadingSso, setIsLoadingSso] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(initialError);
@@ -101,6 +112,48 @@ export function SignInCard({ initialError = null }: SignInCardProps) {
           Engineering Intelligence Platform
         </p>
       </header>
+
+      {/* Session Expired Alert */}
+      {sessionExpired && (
+        <div
+          role="alert"
+          data-testid="session-expired-alert"
+          className="mb-3.5 sm:mb-4 flex w-full flex-row items-center gap-[8px] sm:gap-[10px] rounded-[6px] border border-[rgba(245,158,11,0.45)] bg-[rgba(245,158,11,0.1)] p-[10px_12px]"
+          style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
+        >
+          <div className="shrink-0 size-[8px] rounded-full bg-[#F59E0B]" aria-hidden="true" />
+          <div className="flex flex-col gap-[2px] text-left">
+            <span className="text-[12px] font-semibold text-[#FCD34D] leading-[16px]">
+              Session Expired
+            </span>
+            <span className="text-[11px] text-[#B9CBBD] leading-[14px]">
+              Your session could not be renewed. Please sign in again.
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Registration Success Confirmation */}
+      {isRegistered && (
+        <div
+          role="status"
+          aria-live="polite"
+          data-testid="registered-success-banner"
+          className="mb-3.5 sm:mb-4 flex w-full flex-row items-center gap-[8px] sm:gap-[10px] rounded-[4px] border border-[rgba(0,229,153,0.45)] bg-[rgba(0,229,153,0.09)] p-[10px_10px] sm:p-[11px_12px]"
+          style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
+        >
+          <div className="shrink-0 size-[8px] rounded-full bg-[#00E599]" aria-hidden="true" />
+          <div className="flex flex-col gap-[2px] text-left">
+            <span className="text-[12px] font-semibold text-[#00E599] leading-[16px]">
+              Workspace provisioned successfully
+            </span>
+            <span className="text-[11px] font-normal text-[#B9CBBD] leading-[15px]">
+              Sign in with your administrator credentials to access{" "}
+              {workspace ? `${workspace}` : "your workspace"}.
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Inline Error Alert (Figma Node 475:420 / 475:437) */}
       {errorMessage && (
@@ -298,15 +351,16 @@ export function SignInCard({ initialError = null }: SignInCardProps) {
           </svg>
         </button>
 
-        {/* Sign-Up Link Row */}
-        <div className="flex items-center justify-center gap-[5px] h-[21px] pt-[4px] pb-[2px] text-[12px]">
-          <span className="text-[#94A3B8]">Don&apos;t have an account?</span>
-          <a
-            href="#signup"
-            className="font-semibold text-[#00C2CB] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00C2CB] focus-visible:rounded-[2px] py-1 px-1 -my-1 -mx-1"
+        {/* Sign-Up / Organization Registration Link Row */}
+        <div className="flex flex-col items-center justify-center gap-1 pt-3 pb-1 text-center text-[12px] leading-tight">
+          <span className="text-[#94A3B8]">Need a workspace for your team?</span>
+          <Link
+            href="/register"
+            data-testid="register-organization-link"
+            className="font-semibold text-[#00C2CB] hover:text-[#00E599] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00C2CB] focus-visible:rounded-[4px] py-0.5 px-1 transition-colors"
           >
-            Sign up
-          </a>
+            Register your organization →
+          </Link>
         </div>
       </form>
     </section>

@@ -13,14 +13,16 @@ from app.auth.permissions import (
     PermissionChecker,
     PermissionMatrix,
     Role,
+    build_stub_response,
     find_matched_route,
     get_permission_matrix,
     get_route_declared_permissions,
     require_permission,
     resolve_caller_roles,
+    stub_route_kwargs,
 )
 from app.auth.router import router as auth_router
-from app.auth.schemas import TokenClaims
+from app.auth.schemas import StubEndpointResponse, TokenClaims
 
 __all__ = [
     "AuthError",
@@ -28,6 +30,7 @@ __all__ = [
     "SigningKeyNotFound",
     "JWKSClient",
     "JWTAuthMiddleware",
+    "StubEndpointResponse",
     "TokenClaims",
     "Role",
     "Permission",
@@ -37,6 +40,8 @@ __all__ = [
     "get_permission_matrix",
     "resolve_caller_roles",
     "require_permission",
+    "build_stub_response",
+    "stub_route_kwargs",
     "get_route_declared_permissions",
     "FORBIDDEN_DETAIL",
     "FORBIDDEN_RESPONSE",
