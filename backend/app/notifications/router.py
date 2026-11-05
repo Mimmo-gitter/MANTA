@@ -65,9 +65,7 @@ async def find_platform_user_id(session: AsyncSession, claims: TokenClaims) -> U
     if claims.email:
         conditions.append(User.email == claims.email)
     result = await session.execute(
-        select(User.id)
-        .where(User.tenant_id == claims.tenant_uuid, or_(*conditions))
-        .limit(1)
+        select(User.id).where(User.tenant_id == claims.tenant_uuid, or_(*conditions)).limit(1)
     )
     return result.scalar_one_or_none()
 
@@ -112,9 +110,7 @@ async def accept_invitation(body: AcceptRequest, session: AsyncSession = Depends
         )
 
         # 1. Спочатку Keycloak (зовнішню систему транзакцією БД не відкотити)
-        keycloak_user_id = await provision_user(
-            invitation["email"], str(invitation["tenant_id"])
-        )
+        keycloak_user_id = await provision_user(invitation["email"], str(invitation["tenant_id"]))
 
         # 2. Потім наша БД, в одній транзакції разом із used_at
         session.add(

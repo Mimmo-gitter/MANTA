@@ -41,8 +41,14 @@ async def create_invitation(session, tenant_id, invited_by, email, role) -> str:
     await session.execute(
         text("""INSERT INTO invitations (tenant_id, email, role, token_hash, invited_by, expires_at)
                 VALUES (:tenant_id, :email, :role, :token_hash, :invited_by, :expires_at)"""),
-        {"tenant_id": tenant_id, "email": email, "role": role,
-         "token_hash": hash_token(raw_token), "invited_by": invited_by, "expires_at": expires_at},
+        {
+            "tenant_id": tenant_id,
+            "email": email,
+            "role": role,
+            "token_hash": hash_token(raw_token),
+            "invited_by": invited_by,
+            "expires_at": expires_at,
+        },
     )
     return raw_token
 

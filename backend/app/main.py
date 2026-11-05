@@ -54,6 +54,7 @@ app.include_router(invitations_router)
 # Member role management (SCRUM-317)
 app.include_router(members_router)
 
+
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}

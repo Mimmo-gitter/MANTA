@@ -80,7 +80,9 @@ async def create_user(email: str, tenant_id: str) -> str:
                         existing_id = await find_user_id_by_email(client, token, email)
                         if existing_id:
                             return existing_id
-                    raise UserAlreadyExistsError("Користувач із таким email уже існує в системі входу")
+                    raise UserAlreadyExistsError(
+                        "Користувач із таким email уже існує в системі входу"
+                    )
 
                 if response.status_code < 500:
                     raise KeycloakError(f"Keycloak відхилив запит ({response.status_code})")
@@ -90,7 +92,7 @@ async def create_user(email: str, tenant_id: str) -> str:
             except (httpx.TransportError, httpx.TimeoutException):
                 last_error_message = "Keycloak недоступний, спробуйте пізніше"
 
-            await asyncio.sleep(2 ** attempt)  # 1с, 2с, 4с
+            await asyncio.sleep(2**attempt)  # 1с, 2с, 4с
 
     raise KeycloakError(last_error_message)
 
