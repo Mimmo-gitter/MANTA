@@ -7,10 +7,13 @@ import {
   ExternalLink,
   Info,
   Link2,
+  Eye,
+  EyeOff,
   Lock,
   ShieldCheck,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { connectJira as connectJiraApi } from "@/lib/integrations-api";
 import {
   Badge,
   ConnectingStep,
@@ -98,31 +101,31 @@ function validateSiteUrl(
   return { ok: true, url: `https://${host}` };
 }
 
-/**
- * TODO: replace with the real flow.
- * 1. "Connect Jira" should start the Atlassian authorization for `siteUrl`.
- * 2. Your backend verifies the connection, registers the webhook and starts the
- *    initial project sync.
- *
- * This mock resolves after a delay. Add `?jiraError=1` to the page URL to see
- * the failure state.
- */
 async function connectJira(
   siteUrl: string,
+  email: string,
+  apiToken: string,
+  webhookSecret: string,
   signal: AbortSignal,
 ): Promise<JiraConnection> {
-  await new Promise<void>((resolve, reject) => {
-    const timer = window.setTimeout(resolve, 2800);
-    signal.addEventListener("abort", () => {
-      window.clearTimeout(timer);
-      reject(new DOMException("Aborted", "AbortError"));
-    });
+  if (signal.aborted) {
+    throw new DOMException("Aborted", "AbortError");
+  }
+
+  await connectJiraApi({
+    base_url: siteUrl,
+    email: email.trim(),
+    api_token: apiToken,
+    ...(webhookSecret.trim() ? { webhook_secret: webhookSecret.trim() } : {}),
   });
 
-  if (window.location.search.includes("jiraError=1")) {
-    throw new Error("Jira connection could not be verified");
+  if (signal.aborted) {
+    throw new DOMException("Aborted", "AbortError");
   }
-  return { siteUrl };
+
+  return {
+    siteUrl,
+  };
 }
 
 /* -------------------------------------------------------------------------- */
@@ -151,11 +154,27 @@ const SUBTITLE =
 function IntroStep({
   siteUrl,
   onSiteUrlChange,
+  email,
+  onEmailChange,
+  apiToken,
+  onApiTokenChange,
+  webhookSecret,
+  onWebhookSecretChange,
+  showWebhookSecret,
+  onToggleWebhookSecret,
   onClose,
   onConnect,
 }: {
   siteUrl: string;
   onSiteUrlChange: (value: string) => void;
+  email: string;
+  onEmailChange: (value: string) => void;
+  apiToken: string;
+  onApiTokenChange: (value: string) => void;
+  webhookSecret: string;
+  onWebhookSecretChange: (value: string) => void;
+  showWebhookSecret: boolean;
+  onToggleWebhookSecret: () => void;
   onClose: () => void;
   onConnect: (validatedUrl: string) => void;
 }) {
@@ -165,8 +184,15 @@ function IntroStep({
   const errorId = useId();
   const inputRef = useRef<HTMLInputElement>(null);
   const [error, setError] = useState<string | null>(null);
+  const [credentialsError, setCredentialsError] = useState<string | null>(null);
 
   const submit = () => {
+    if (!email.trim() || !apiToken.trim()) {
+      setCredentialsError("Enter your Atlassian account email and API token.");
+      return;
+    }
+
+    setCredentialsError(null);
     const result = validateSiteUrl(siteUrl);
     if (!result.ok) {
       setError(result.message);
@@ -278,6 +304,90 @@ function IntroStep({
         </div>
 
         {/* Permissions */}
+
+        {/* Jira Email */}
+        <div>
+          <label className="text-[11px] font-medium text-[#e2e8f0]">
+            Atlassian Account Email
+            <span className="text-[#ef4444]"> *</span>
+          </label>
+
+          <input
+            type="email"
+            autoComplete="email"
+            value={email}
+            onChange={(e) => onEmailChange(e.target.value)}
+            placeholder="admin@company.com"
+            className="mt-1.5 h-[36px] w-full rounded-[6px] border border-[#252b3b] bg-[#0a0d14] px-2.5 font-mono text-[11px] text-[#e2e8f0] outline-none focus:border-[#00e599] focus:ring-1 focus:ring-[#00e599]"
+          />
+        </div>
+
+        {/* Jira API Token */}
+        <div>
+          <label className="text-[11px] font-medium text-[#e2e8f0]">
+            API Token
+            <span className="text-[#ef4444]"> *</span>
+          </label>
+
+          <input
+            type="password"
+            autoComplete="off"
+            value={apiToken}
+            onChange={(e) => onApiTokenChange(e.target.value)}
+            placeholder="Enter your Atlassian API token"
+            className="mt-1.5 h-[36px] w-full rounded-[6px] border border-[#252b3b] bg-[#0a0d14] px-2.5 font-mono text-[11px] text-[#e2e8f0] outline-none focus:border-[#00e599] focus:ring-1 focus:ring-[#00e599]"
+          />
+
+          <p className="mt-1.5 text-[10px] text-[#7c839b]">
+            Generate an API token in your Atlassian account security settings.
+          </p>
+
+          {credentialsError && (
+            <p
+              role="alert"
+              className="mt-1.5 text-[10px] leading-[14px] text-[#ef4444]"
+            >
+              {credentialsError}
+            </p>
+          )}
+        </div>
+
+        {/* Optional Webhook Secret */}
+        <div>
+          <label className="text-[11px] font-medium text-[#e2e8f0]">
+            Webhook Secret
+            <span className="ml-1 text-[#7c839b]">(Optional)</span>
+          </label>
+
+          <div className="relative mt-1.5">
+            <input
+              type={showWebhookSecret ? "text" : "password"}
+              autoComplete="off"
+              value={webhookSecret}
+              onChange={(e) => onWebhookSecretChange(e.target.value)}
+              placeholder="Enter webhook secret"
+              className="h-[36px] w-full rounded-[6px] border border-[#252b3b] bg-[#0a0d14] py-2 pl-2.5 pr-9 font-mono text-[11px] text-[#e2e8f0] outline-none focus:border-[#00e599] focus:ring-1 focus:ring-[#00e599]"
+            />
+
+            <button
+              type="button"
+              onClick={onToggleWebhookSecret}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#7c839b] transition-colors hover:text-[#00e599]"
+              aria-label={
+                showWebhookSecret
+                  ? "Hide webhook secret"
+                  : "Show webhook secret"
+              }
+            >
+              {showWebhookSecret ? (
+                <EyeOff className="size-4" />
+              ) : (
+                <Eye className="size-4" />
+              )}
+            </button>
+          </div>
+        </div>
+
         <section
           aria-labelledby="jira-perm-heading"
           className="rounded-[8px] border border-[#1f2433] bg-[#0f131d] p-3.5"
@@ -449,6 +559,10 @@ export function JiraConnectDialog({
 }: JiraConnectDialogProps) {
   const [step, setStep] = useState<Step>("intro");
   const [siteUrl, setSiteUrl] = useState("");
+  const [email, setEmail] = useState("");
+  const [apiToken, setApiToken] = useState("");
+  const [webhookSecret, setWebhookSecret] = useState("");
+  const [showWebhookSecret, setShowWebhookSecret] = useState(false);
   const [progress, setProgress] = useState(0);
   const [connection, setConnection] = useState<JiraConnection | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -459,6 +573,9 @@ export function JiraConnectDialog({
     if (open) {
       setStep("intro");
       setSiteUrl("");
+      setEmail("");
+      setApiToken("");
+      setWebhookSecret("");
       setProgress(0);
       setConnection(null);
     }
@@ -473,26 +590,35 @@ export function JiraConnectDialog({
     return () => window.clearInterval(id);
   }, [step]);
 
-  const start = useCallback(async (url: string) => {
-    validatedUrlRef.current = url;
-    abortRef.current?.abort();
-    const controller = new AbortController();
-    abortRef.current = controller;
+  const start = useCallback(
+    async (url: string) => {
+      validatedUrlRef.current = url;
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
 
-    setProgress(8);
-    setStep("connecting");
+      setProgress(8);
+      setStep("connecting");
 
-    try {
-      const result = await connectJira(url, controller.signal);
-      if (controller.signal.aborted) return;
-      setConnection(result);
-      setProgress(100);
-      setStep("connected");
-    } catch {
-      if (controller.signal.aborted) return;
-      setStep("failed");
-    }
-  }, []);
+      try {
+        const result = await connectJira(
+          url,
+          email,
+          apiToken,
+          webhookSecret,
+          controller.signal,
+        );
+        if (controller.signal.aborted) return;
+        setConnection(result);
+        setProgress(100);
+        setStep("connected");
+      } catch {
+        if (controller.signal.aborted) return;
+        setStep("failed");
+      }
+    },
+    [email, apiToken, webhookSecret],
+  );
 
   const cancel = useCallback(() => {
     abortRef.current?.abort();
@@ -513,7 +639,15 @@ export function JiraConnectDialog({
         <IntroStep
           siteUrl={siteUrl}
           onSiteUrlChange={setSiteUrl}
+          email={email}
+          onEmailChange={setEmail}
+          apiToken={apiToken}
+          onApiTokenChange={setApiToken}
+          webhookSecret={webhookSecret}
+          onWebhookSecretChange={setWebhookSecret}
           onClose={close}
+          showWebhookSecret={showWebhookSecret}
+          onToggleWebhookSecret={() => setShowWebhookSecret((prev) => !prev)}
           onConnect={start}
         />
       );
