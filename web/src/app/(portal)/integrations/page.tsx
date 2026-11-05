@@ -28,6 +28,8 @@ import { cn } from "@/lib/utils";
 import { GitHubConnectDialog } from "@/components/integrations/github-connect-dialog";
 import { JiraConnectDialog } from "@/components/integrations/jira-connect-dialog";
 import { SlackConnectDialog } from "@/components/integrations/slack-connect-dialog";
+import { getIntegrations } from "@/lib/integrations-api";
+import type { Integration as ApiIntegration } from "@/types/integration";
 
 /* -------------------------------------------------------------------------- */
 /* Types & data                                                               */
@@ -78,37 +80,40 @@ const STATUS_FILTERS: { value: StatusFilter; label: string }[] = [
 ];
 
 /**
- * TODO: replace with the real API call (e.g. GET /api/integrations).
- * Resolve with the tenant's integrations, reject on network/server errors.
  */
 async function fetchIntegrations(): Promise<Integration[]> {
-  await new Promise((resolve) => setTimeout(resolve, 600));
-  return [
-    {
-      id: "gh-1",
-      provider: "github",
-      name: "GitHub Enterprise",
-      description: "Pull requests, code reviews, and commit sync",
-      status: "connected",
-      initials: "GH",
-    },
-    {
-      id: "jr-1",
-      provider: "jira",
-      name: "Jira Cloud",
-      description: "Sprint tracking, backlog items, and issue telemetry",
-      status: "connected",
-      initials: "JR",
-    },
-    {
-      id: "sl-1",
-      provider: "slack",
-      name: "Slack",
-      description: "Notification delivery degraded",
-      status: "needs_reconnect",
-      initials: "SL",
-    },
-  ];
+  const data: ApiIntegration[] = await getIntegrations();
+
+  return data.map((item) => {
+    const providerInfo = {
+      github: {
+        name: "GitHub",
+        description: "Repositories, pull requests, and commit sync",
+        initials: "GH",
+      },
+      jira: {
+        name: "Jira",
+        description: "Sprint tracking, backlog items, and issue telemetry",
+        initials: "JR",
+      },
+      slack: {
+        name: "Slack",
+        description: "Team communication and notifications",
+        initials: "SL",
+      },
+    }[item.provider];
+
+    return {
+      id: item.id,
+      provider: item.provider,
+      name: item.external_account_id
+        ? `${providerInfo.name} (${item.external_account_id})`
+        : providerInfo.name,
+      description: providerInfo.description,
+      status: item.is_active ? "connected" : "needs_reconnect",
+      initials: providerInfo.initials,
+    };
+  });
 }
 
 /* -------------------------------------------------------------------------- */
