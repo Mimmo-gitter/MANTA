@@ -1,7 +1,9 @@
 # Silent Session Renewal & Expiration Test Scenarios
 
 **Parent User Story:** `SCRUM-242` (US-6: Silent session renewal)  
-**Task:** `SCRUM-284` (Shorten token lifetime in the test realm and create test scenarios)  
+**Tasks:**  
+- `SCRUM-284`: Shorten token lifetime in the test realm and create test scenarios  
+- `SCRUM-285`: Write Playwright tests for silent renewal and revoked refresh token  
 **Related Tickets:**  
 - `SCRUM-283`: Handle failed renewal and prompt user to sign in again  
 - `SCRUM-240` / `SCRUM-277`: US-4 Sign in via the organization's identity provider  
@@ -241,10 +243,10 @@ sequenceDiagram
 
 | Scenario ID | Test Scenario | Automated Verification Suite | Test Implementation Method |
 | :--- | :--- | :--- | :--- |
-| **`TC-RENEW-001`** | Renewal While Active | `backend/tests/test_keycloak_realm.py`<br>`web/e2e/auth-session-renewal.spec.ts` | `test_short_token_and_sso_session_lifetimes`<br>`AC 3: Temporary network errors are retried before prompting` |
-| **`TC-RENEW-002`** | Renewal After Idle | `backend/tests/test_keycloak_realm.py`<br>`web/e2e/auth-session-renewal.spec.ts` | `test_token_and_sso_lifetimes_ordering_invariants`<br>Expired token evaluation with active session context |
-| **`TC-RENEW-003`** | Revoked Refresh Token | `web/e2e/auth-session-renewal.spec.ts` | `AC 1 & 2: Revoked refresh token leads to session expired prompt, no stale tokens remain, no endless loop` |
-| **`TC-RENEW-004`** | Expired SSO Session | `backend/tests/test_keycloak_realm.py`<br>`web/e2e/auth-session-renewal.spec.ts` | `test_short_token_and_sso_session_lifetimes`<br>`Multi-tab sync: SESSION_EXPIRED message purges tokens and prompts login` |
+| **`TC-RENEW-001`** | Renewal While Active | `backend/tests/test_keycloak_realm.py`<br>`web/e2e/auth-session-renewal.spec.ts` | `test_short_token_and_sso_session_lifetimes`<br>`AC 3: Temporary network errors are retried before prompting`<br>`SCRUM-285 Test 1: Session stays alive past the short token lifetime with silent renewal` |
+| **`TC-RENEW-002`** | Renewal After Idle | `backend/tests/test_keycloak_realm.py`<br>`web/e2e/auth-session-renewal.spec.ts` | `test_token_and_sso_lifetimes_ordering_invariants`<br>`SCRUM-285 Test 1: Session stays alive past the short token lifetime with silent renewal` |
+| **`TC-RENEW-003`** | Revoked Refresh Token | `web/e2e/auth-session-renewal.spec.ts` | `SCRUM-283 AC 1 & 2: Revoked refresh token leads to session expired prompt, no stale tokens remain, no endless loop`<br>`SCRUM-285 Test 2: Revoke session through Keycloak admin API and assert re-authentication prompt appears` |
+| **`TC-RENEW-004`** | Expired SSO Session | `backend/tests/test_keycloak_realm.py`<br>`web/e2e/auth-session-renewal.spec.ts` | `test_short_token_and_sso_session_lifetimes`<br>`Multi-tab sync: SESSION_EXPIRED message purges tokens and prompts login`<br>`SCRUM-285 Test 2: Revoke session through Keycloak admin API and assert re-authentication prompt appears` |
 
 ---
 
