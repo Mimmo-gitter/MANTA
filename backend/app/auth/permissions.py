@@ -129,43 +129,40 @@ def get_permission_matrix() -> PermissionMatrix:
 
 async def resolve_caller_roles(user: TokenClaims) -> set[str]:
     """
-    Resolve caller's canonical roles from validated token claims first.
-    If the token contains no canonical roles, fall back to querying the
-    tenant database under Row-Level Security for users.role and user_roles.
+    Роль читається з БД на кожному запиті, тому зміна ролі діє одразу.
+    Токен використовується лише якщо користувача в БД немає (або БД недоступна).
+    Деактивований користувач у БД = порожній набір ролей (403).
     """
     matrix = get_permission_matrix()
-    token_roles = matrix.normalize_roles(user.roles)
-    if token_roles:
-        return token_roles
 
-    # Database fallback
-    db_roles: set[str] = set()
+    conditions = [User.google_sub == user.sub]
+    if user.email:
+        conditions.append(User.email == user.email)
+
     try:
         async with get_tenant_db_context(user.tenant_uuid) as session:
             stmt = (
-                select(User.role, UserRole.role_id)
+                select(User.role, User.is_active, UserRole.role_id)
                 .outerjoin(UserRole, UserRole.user_id == User.id)
-                .where(
-                    User.tenant_id == user.tenant_uuid,
-                    User.is_active.is_(True),
-                    or_(
-                        User.google_sub == user.sub,
-                        User.email == user.email,
-                    ),
-                )
+                .where(User.tenant_id == user.tenant_uuid, or_(*conditions))
             )
             result = await session.execute(stmt)
-            for role_val, user_role_val in result.all():
-                if role_val:
-                    db_roles.add(role_val)
-                if user_role_val:
-                    db_roles.add(user_role_val)
+            rows = result.all()
     except Exception as exc:
-        logger.debug(
-            "Database role resolution fallback failed for sub '%s': %s",
-            user.sub,
-            exc,
-        )
+        logger.warning("Role lookup in DB failed for sub '%s': %s", user.sub, exc)
+        return matrix.normalize_roles(user.roles)
+
+    if not rows:
+        return matrix.normalize_roles(user.roles)
+
+    db_roles: set[str] = set()
+    for role_value, is_active, user_role_value in rows:
+        if not is_active:
+            continue
+        if role_value:
+            db_roles.add(role_value)
+        if user_role_value:
+            db_roles.add(user_role_value)
 
     return matrix.normalize_roles(db_roles)
 

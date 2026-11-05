@@ -1,5 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from app.auth.members_router import router as members_router
+from app.notifications.router import router as invitations_router
 
 from app.adr import adr_router
 from app.auth import JWKSClient, JWTAuthMiddleware, auth_router
@@ -55,6 +57,11 @@ app.include_router(webhooks_router)
 # Include integration connection and management endpoints (SCRUM-322, SCRUM-323)
 app.include_router(integrations_router)
 
+# Member invitations (SCRUM-314, SCRUM-315)
+app.include_router(invitations_router)
+
+# Member role management (SCRUM-317)
+app.include_router(members_router)
 # Include stub endpoints for future iteration actions (SCRUM-308)
 app.include_router(dora_router)
 app.include_router(projects_router)
