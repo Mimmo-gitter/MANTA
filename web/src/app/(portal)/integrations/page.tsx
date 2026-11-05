@@ -151,11 +151,27 @@ function ProviderLogo({
     );
   }
   return (
-    <svg viewBox="0 0 24 24" aria-hidden="true" className={className}>
-      <rect x="9" y="2" width="3" height="8" rx="1.5" fill="#36c5f0" />
-      <rect x="14" y="9" width="8" height="3" rx="1.5" fill="#2eb67d" />
-      <rect x="12" y="14" width="3" height="8" rx="1.5" fill="#ecb22e" />
-      <rect x="2" y="12" width="8" height="3" rx="1.5" fill="#e01e5a" />
+    <svg
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      className={className}
+      fill="none"
+    >
+      {/* Cyan */}
+      <rect x="8" y="2" width="4" height="9" rx="2" fill="#36C5F0" />
+      <rect x="2" y="8" width="9" height="4" rx="2" fill="#36C5F0" />
+
+      {/* Green */}
+      <rect x="12" y="2" width="4" height="9" rx="2" fill="#2EB67D" />
+      <rect x="13" y="8" width="9" height="4" rx="2" fill="#2EB67D" />
+
+      {/* Yellow */}
+      <rect x="12" y="13" width="4" height="9" rx="2" fill="#ECB22E" />
+      <rect x="13" y="12" width="9" height="4" rx="2" fill="#ECB22E" />
+
+      {/* Red / Pink */}
+      <rect x="8" y="13" width="4" height="9" rx="2" fill="#E01E5A" />
+      <rect x="2" y="12" width="9" height="4" rx="2" fill="#E01E5A" />
     </svg>
   );
 }

@@ -88,7 +88,7 @@ export function ModalShell({
   footer,
   children,
 }: {
-  size: "sm" | "md" | "lg";
+  size: "sm" | "md" | "xl" | "lg";
   /** "inline": boxed icon beside title/subtitle, divider below.
    *  "stacked": bare icon + title on one row, subtitle full-width beneath, no divider. */
   headerLayout?: "inline" | "stacked";
@@ -166,9 +166,11 @@ export function ModalShell({
           "flex max-h-[calc(100vh-2rem)] w-full flex-col overflow-hidden rounded-[12px] border border-[#252b3b] bg-[#171b26] shadow-[0px_25px_50px_-12px_rgba(0,0,0,0.7)] outline-none",
           size === "lg"
             ? "h-[580px] max-w-[610px]"
-            : size === "md"
-              ? "h-auto max-w-[440px]"
-              : "h-auto max-w-[400px]",
+            : size === "xl"
+              ? "h-auto max-w-[540px]"
+              : size === "md"
+                ? "h-auto max-w-[440px]"
+                : "h-auto max-w-[400px]",
         )}
       >
         {headerLayout === "stacked" ? (
