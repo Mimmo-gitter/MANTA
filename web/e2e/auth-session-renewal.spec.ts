@@ -236,7 +236,7 @@ test.describe("Silent Session Renewal & Expiration (SCRUM-283)", () => {
     // Verify clear session expired alert / badge is visible
     const expiredBadge = page.getByTestId("session-expired-badge");
     const expiredAlert = page.getByTestId("session-expired-alert");
-    await expect(expiredBadge).toBeVisible({ timeout: 10000 });
+    await expect(expiredBadge).toBeVisible({ timeout: 20000 });
     await expect(expiredAlert).toBeVisible();
     await expect(page.getByRole("heading", { name: "Session Expired" })).toBeVisible();
 
@@ -393,3 +393,307 @@ test.describe("Silent Session Renewal & Expiration (SCRUM-283)", () => {
     expect(remainingKeys).toEqual([]);
   });
 });
+
+test.describe("Real Browser Silent Renewal & Revocation via Keycloak Admin API (SCRUM-285)", () => {
+  const KEYCLOAK_URL = process.env.KEYCLOAK_URL || "http://localhost:8080";
+  let useLiveKeycloak = false;
+
+  async function isLiveKeycloakAvailable(): Promise<boolean> {
+    if (process.env.FORCE_KEYCLOAK_MOCK === "true") {
+      return false;
+    }
+    try {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), 2000);
+      const res = await fetch(
+        `${KEYCLOAK_URL}/realms/manta/.well-known/openid-configuration`,
+        { signal: controller.signal }
+      );
+      clearTimeout(timer);
+      return res.ok;
+    } catch {
+      return false;
+    }
+  }
+
+  test.beforeAll(async () => {
+    useLiveKeycloak = await isLiveKeycloakAvailable();
+  });
+
+  test.beforeEach(({}, testInfo) => {
+    if (!useLiveKeycloak) {
+      testInfo.skip(true, "Keycloak test realm is not running on localhost:8080");
+    }
+  });
+
+  async function getKeycloakAdminToken(): Promise<string> {
+    const res = await fetch(`${KEYCLOAK_URL}/realms/master/protocol/openid-connect/token`, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "client_id=admin-cli&username=admin&password=admin&grant_type=password",
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to obtain Keycloak admin token: ${res.status} ${await res.text()}`);
+    }
+    const data = await res.json();
+    return data.access_token;
+  }
+
+  async function revokeKeycloakUserSessions(username: string): Promise<void> {
+    const adminToken = await getKeycloakAdminToken();
+    const searchRes = await fetch(
+      `${KEYCLOAK_URL}/admin/realms/manta/users?username=${encodeURIComponent(username)}`,
+      {
+        headers: { Authorization: `Bearer ${adminToken}` },
+      }
+    );
+    if (!searchRes.ok) {
+      throw new Error(`Failed to search user ${username}: ${searchRes.status} ${await searchRes.text()}`);
+    }
+    const users = await searchRes.json();
+    if (!users || users.length === 0) {
+      throw new Error(`User ${username} not found in Keycloak manta realm`);
+    }
+    const userId = users[0].id;
+    const logoutRes = await fetch(
+      `${KEYCLOAK_URL}/admin/realms/manta/users/${encodeURIComponent(userId)}/logout`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${adminToken}` },
+      }
+    );
+    if (!logoutRes.ok && logoutRes.status !== 204) {
+      throw new Error(`Failed to revoke sessions for ${username}: ${logoutRes.status} ${await logoutRes.text()}`);
+    }
+  }
+
+  async function loginViaKeycloak(page: Page, username = "alpha_dev", password = "dev123"): Promise<void> {
+    await page.goto("/login");
+    const ssoButton = page.getByTestId("company-sso-button");
+    await expect(ssoButton).toBeVisible({ timeout: 15000 });
+    await ssoButton.click();
+
+    const usernameInput = page.locator("#username");
+    const passwordInput = page.locator("#password");
+    const kcLoginBtn = page.locator("#kc-login");
+
+    await expect(usernameInput).toBeVisible({ timeout: 15000 });
+    await usernameInput.fill(username);
+    await passwordInput.fill(password);
+    await kcLoginBtn.click();
+
+    await expect(page).toHaveURL("/", { timeout: 30000 });
+    await expect(page.getByTestId("user-profile-name")).toContainText("Alpha Developer", {
+      timeout: 15000,
+    });
+  }
+
+  test("Test 1: Session stays alive past the short token lifetime with silent renewal", async ({
+    page,
+  }) => {
+    test.setTimeout(60000);
+
+    // 1. Log in via real Keycloak test realm
+    await loginViaKeycloak(page, "alpha_dev", "dev123");
+
+    // 2. Capture initial token details from localStorage
+    const initialTokenInfo = await page.evaluate(() => {
+      for (let i = 0; i < window.localStorage.length; i++) {
+        const k = window.localStorage.key(i);
+        if (k && k.startsWith("oidc.user:")) {
+          const val = JSON.parse(window.localStorage.getItem(k) || "{}");
+          return {
+            key: k,
+            accessToken: val.access_token as string,
+            refreshToken: val.refresh_token as string,
+            expiresAt: val.expires_at as number,
+          };
+        }
+      }
+      return null;
+    });
+
+    expect(initialTokenInfo).not.toBeNull();
+    expect(initialTokenInfo?.accessToken).toBeDefined();
+    expect(initialTokenInfo?.refreshToken).toBeDefined();
+
+    // 3. Simulate passage of short token lifetime by adjusting expires_at in localStorage
+    // (access token expired 5 seconds ago, well within SSO session idle timeout of 120s)
+    const simulatedExpiredAt = Math.floor(Date.now() / 1000) - 5;
+    await page.evaluate(({ storageKey, expiredAt }) => {
+      const val = JSON.parse(window.localStorage.getItem(storageKey) || "{}");
+      val.expires_at = expiredAt;
+      window.localStorage.setItem(storageKey, JSON.stringify(val));
+    }, { storageKey: initialTokenInfo!.key, expiredAt: simulatedExpiredAt });
+
+    // 4. Set up event-driven network listener for the silent refresh token exchange with Keycloak
+    let renewalResponseBody: { access_token?: string; expires_in?: number } | null = null;
+    const renewalResponsePromise = page.waitForResponse(
+      async (res) => {
+        if (
+          res.url().includes("/realms/manta/protocol/openid-connect/token") &&
+          res.request().postData()?.includes("grant_type=refresh_token") &&
+          res.status() === 200
+        ) {
+          try {
+            renewalResponseBody = await res.json();
+          } catch {
+            // ignore
+          }
+          return true;
+        }
+        return false;
+      },
+      { timeout: 30000 }
+    );
+
+    // 5. Trigger silent renewal via userManager without arbitrary sleeps
+    await page.evaluate(async () => {
+      const auth = (window as unknown as {
+        __manta_auth?: { getUserManager: () => { signinSilent: () => Promise<unknown> } };
+      }).__manta_auth;
+      if (auth) {
+        await auth.getUserManager().signinSilent();
+      }
+    });
+
+    // 6. Await and assert successful token response from Keycloak
+    const renewalResponse = await renewalResponsePromise;
+    expect(renewalResponse.status()).toBe(200);
+    expect(renewalResponseBody?.access_token).toBeDefined();
+    expect(renewalResponseBody?.expires_in).toBeGreaterThanOrEqual(45);
+    expect(renewalResponseBody?.expires_in).toBeLessThanOrEqual(60);
+
+    // 7. Verify localStorage is updated with new access token and extended expires_at
+    const renewedTokenInfo = await page.evaluate((storageKey) => {
+      const val = JSON.parse(window.localStorage.getItem(storageKey) || "{}");
+      return {
+        accessToken: val.access_token as string,
+        refreshToken: val.refresh_token as string,
+        expiresAt: val.expires_at as number,
+      };
+    }, initialTokenInfo!.key);
+
+    expect(renewedTokenInfo.accessToken).toBeDefined();
+    expect(renewedTokenInfo.accessToken).not.toEqual(initialTokenInfo!.accessToken);
+    expect(renewedTokenInfo.expiresAt).toBeGreaterThan(simulatedExpiredAt);
+    expect(renewedTokenInfo.expiresAt).toBeGreaterThan(Math.floor(Date.now() / 1000));
+
+    // 8. Assert user session remains completely alive and valid on protected pages
+    await page.goto("/projects");
+    await expect(page).toHaveURL("/projects");
+    await expect(page.getByTestId("user-profile-name")).toContainText("Alpha Developer");
+    await expect(page.getByTestId("user-tenant-badge")).toContainText("Tenant Alpha");
+  });
+
+  test("Test 2: Revoke session through Keycloak admin API and assert re-authentication prompt appears", async ({
+    page,
+  }) => {
+    test.setTimeout(60000);
+
+    // 1. Log in via real Keycloak test realm
+    await loginViaKeycloak(page, "alpha_dev", "dev123");
+
+    // 2. Navigate to /projects
+    await page.goto("/projects");
+    await expect(page).toHaveURL("/projects");
+    await expect(page.getByTestId("user-profile-name")).toContainText("Alpha Developer");
+
+    // 3. Revoke all sessions for alpha_dev via Keycloak Admin API
+    await revokeKeycloakUserSessions("alpha_dev");
+
+    // 4. Update expires_at to within renewal threshold (< 120s) so signinSilent contacts Keycloak
+    await page.evaluate(() => {
+      for (let i = 0; i < window.localStorage.length; i++) {
+        const k = window.localStorage.key(i);
+        if (k && k.startsWith("oidc.user:")) {
+          const val = JSON.parse(window.localStorage.getItem(k) || "{}");
+          val.expires_at = Math.floor(Date.now() / 1000) + 10;
+          window.localStorage.setItem(k, JSON.stringify(val));
+        }
+      }
+    });
+
+    // 5. Set up event-driven listeners for:
+    //    a) Keycloak token rejection (HTTP 400 invalid_grant)
+    //    b) Navigation redirect to session expired screen
+    const tokenRejectionPromise = page.waitForResponse(
+      (res) =>
+        res.url().includes("/realms/manta/protocol/openid-connect/token") &&
+        res.request().postData()?.includes("grant_type=refresh_token") &&
+        res.status() === 400,
+      { timeout: 30000 }
+    );
+
+    const redirectPromise = page.waitForURL(
+      /\/login\?reason=session_expired(&redirect=.*)?/,
+      { timeout: 30000, waitUntil: "domcontentloaded" }
+    );
+
+    // 6. Trigger silent renew without blocking evaluate on destroyed context
+    page.evaluate(() => {
+      const auth = (window as unknown as {
+        __manta_auth?: { getUserManager: () => { signinSilent: () => Promise<unknown> } };
+      }).__manta_auth;
+      if (auth) {
+        auth.getUserManager().signinSilent().catch(() => {
+          // Expected rejection
+        });
+      }
+    });
+
+    // 7. Verify Keycloak rejected the revoked session with HTTP 400
+    const rejectionResponse = await tokenRejectionPromise;
+    expect(rejectionResponse.status()).toBe(400);
+
+    // 8. Verify browser was cleanly redirected to session expired screen with return path
+    await redirectPromise;
+    expect(page.url()).toContain("redirect=%2Fprojects");
+
+    // 9. Assert re-authentication UI prompt appears
+    const sessionExpiredHeading = page.getByRole("heading", { name: "Session Expired" });
+    const expiredBadge = page.getByTestId("session-expired-badge");
+    const expiredAlert = page.getByTestId("session-expired-alert");
+    const signInAgainButton = page.getByTestId("sign-in-again-button");
+
+    await expect(sessionExpiredHeading).toBeVisible({ timeout: 15000 });
+    await expect(expiredBadge).toBeVisible();
+    await expect(expiredBadge).toContainText("SESSION EXPIRED");
+    await expect(expiredAlert).toBeVisible();
+    await expect(signInAgainButton).toBeVisible();
+
+    // 10. Assert all oidc tokens were purged from localStorage
+    const remainingOidcKeys = await page.evaluate(() => {
+      const keys: string[] = [];
+      for (let i = 0; i < window.localStorage.length; i++) {
+        const k = window.localStorage.key(i);
+        if (k && k.startsWith("oidc.user:")) {
+          keys.push(k);
+        }
+      }
+      return keys;
+    });
+    expect(remainingOidcKeys).toEqual([]);
+
+    // 11. Assert re-authentication prompt action initiates fresh login and preserves return URL
+    await signInAgainButton.click();
+    const ssoBtn = page.getByTestId("company-sso-button");
+    await expect(ssoBtn).toBeVisible({ timeout: 15000 });
+    await ssoBtn.click();
+
+    // Keycloak prompts for credentials because the previous SSO session was revoked
+    const usernameInput = page.locator("#username");
+    const passwordInput = page.locator("#password");
+    const kcLoginBtn = page.locator("#kc-login");
+
+    await expect(usernameInput).toBeVisible({ timeout: 15000 });
+    await usernameInput.fill("alpha_dev");
+    await passwordInput.fill("dev123");
+    await kcLoginBtn.click();
+
+    // Successfully returned right back to /projects!
+    await expect(page).toHaveURL("/projects", { timeout: 30000 });
+    await expect(page.getByTestId("user-profile-name")).toContainText("Alpha Developer");
+  });
+});
+

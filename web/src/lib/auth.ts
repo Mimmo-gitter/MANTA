@@ -79,6 +79,9 @@ export function getDemoBackendUser(): BackendUserClaims | null {
   };
 }
 
+export const ACCESS_TOKEN_EXPIRING_NOTIFICATION_TIME_SECONDS = 15;
+export const RENEW_SKIP_THRESHOLD_SECONDS = 120;
+
 export function getOidcSettings(): UserManagerSettings {
   const redirectUri =
     process.env.NEXT_PUBLIC_REDIRECT_URI ||
@@ -100,6 +103,7 @@ export function getOidcSettings(): UserManagerSettings {
     response_type: "code",
     scope: "openid profile email",
     automaticSilentRenew: true,
+    accessTokenExpiringNotificationTimeInSeconds: ACCESS_TOKEN_EXPIRING_NOTIFICATION_TIME_SECONDS,
     // Explicit endpoints so redirection works even before Keycloak network discovery
     metadata: {
       issuer: AUTHORITY,
@@ -220,8 +224,6 @@ export async function purgeAllAuthTokens(): Promise<void> {
 }
 
 let userManagerInstance: UserManager | null = null;
-// Must be greater than oidc-client-ts accessTokenExpiringNotificationTimeInSeconds (default 60).
-const RENEW_SKIP_THRESHOLD_SECONDS = 120;
 let silentRenewPromise: ReturnType<UserManager["signinSilent"]> | null = null;
 
 let isLoggingOutInProgress = false;
@@ -315,6 +317,14 @@ export function getUserManager(): UserManager {
             });
 
             await purgeAllAuthTokens();
+
+            try {
+              if (userManagerInstance) {
+                await (userManagerInstance.events as any)?._raiseSilentRenewError(error);
+              }
+            } catch {
+              // ignore
+            }
 
             throw error;
           }
