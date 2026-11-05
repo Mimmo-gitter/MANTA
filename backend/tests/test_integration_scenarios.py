@@ -35,7 +35,6 @@ from app.auth.permissions import FORBIDDEN_RESPONSE
 from app.config import settings
 from app.db.models.models import Integration
 from app.db.session import async_engine, get_tenant_db_context
-from app.integrations.crypto import encryption_service
 from app.integrations.validators import InvalidCredentialsError
 from app.main import app
 
@@ -180,7 +179,9 @@ async def test_scrum_324_invalid_provider_token_jira(auth_context):
 
     with mock.patch(
         "app.integrations.router.validate_jira_credentials",
-        side_effect=InvalidCredentialsError("Jira credential validation failed: invalid email or API token"),
+        side_effect=InvalidCredentialsError(
+            "Jira credential validation failed: invalid email or API token"
+        ),
     ):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             res = await ac.post(
@@ -255,7 +256,9 @@ async def test_scrum_324_expired_provider_token_github(auth_context):
 
     with mock.patch(
         "app.integrations.router.validate_github_credentials",
-        side_effect=InvalidCredentialsError("GitHub credential validation failed: The token has expired"),
+        side_effect=InvalidCredentialsError(
+            "GitHub credential validation failed: The token has expired"
+        ),
     ):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             res = await ac.post(
@@ -319,7 +322,9 @@ async def test_scrum_324_expired_provider_token_jira(auth_context):
 
     with mock.patch(
         "app.integrations.router.validate_jira_credentials",
-        side_effect=InvalidCredentialsError("Jira credential validation failed: token expired or credentials revoked"),
+        side_effect=InvalidCredentialsError(
+            "Jira credential validation failed: token expired or credentials revoked"
+        ),
     ):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             res = await ac.post(
@@ -357,7 +362,10 @@ async def test_scrum_324_expired_user_jwt_returns_401(auth_context):
             headers={"Authorization": f"Bearer {expired_token}"},
         )
         assert res.status_code == 401
-        assert "expired" in res.json()["detail"].lower() or "not authenticated" in res.json()["detail"].lower()
+        assert (
+            "expired" in res.json()["detail"].lower()
+            or "not authenticated" in res.json()["detail"].lower()
+        )
 
 
 # ==============================================================================
@@ -684,7 +692,9 @@ async def test_scrum_324_two_tenants_cannot_see_each_others_integrations(auth_co
 
     # 3. Tenant Alpha list: sees only Tenant Alpha's record
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        list_a = await ac.get("/api/v1/integrations", headers={"Authorization": f"Bearer {token_a}"})
+        list_a = await ac.get(
+            "/api/v1/integrations", headers={"Authorization": f"Bearer {token_a}"}
+        )
     assert list_a.status_code == 200
     records_a = list_a.json()
     assert len(records_a) == 1
@@ -693,7 +703,9 @@ async def test_scrum_324_two_tenants_cannot_see_each_others_integrations(auth_co
 
     # 4. Tenant Beta list: sees only Tenant Beta's record
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        list_b = await ac.get("/api/v1/integrations", headers={"Authorization": f"Bearer {token_b}"})
+        list_b = await ac.get(
+            "/api/v1/integrations", headers={"Authorization": f"Bearer {token_b}"}
+        )
     assert list_b.status_code == 200
     records_b = list_b.json()
     assert len(records_b) == 1
