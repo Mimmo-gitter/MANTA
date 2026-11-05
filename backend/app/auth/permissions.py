@@ -129,43 +129,40 @@ def get_permission_matrix() -> PermissionMatrix:
 
 async def resolve_caller_roles(user: TokenClaims) -> set[str]:
     """
-    Resolve caller's canonical roles from validated token claims first.
-    If the token contains no canonical roles, fall back to querying the
-    tenant database under Row-Level Security for users.role and user_roles.
+    Роль читається з БД на кожному запиті, тому зміна ролі діє одразу.
+    Токен використовується лише якщо користувача в БД немає (або БД недоступна).
+    Деактивований користувач у БД = порожній набір ролей (403).
     """
     matrix = get_permission_matrix()
-    token_roles = matrix.normalize_roles(user.roles)
-    if token_roles:
-        return token_roles
 
-    # Database fallback
-    db_roles: set[str] = set()
+    conditions = [User.google_sub == user.sub]
+    if user.email:
+        conditions.append(User.email == user.email)
+
     try:
         async with get_tenant_db_context(user.tenant_uuid) as session:
             stmt = (
-                select(User.role, UserRole.role_id)
+                select(User.role, User.is_active, UserRole.role_id)
                 .outerjoin(UserRole, UserRole.user_id == User.id)
-                .where(
-                    User.tenant_id == user.tenant_uuid,
-                    User.is_active.is_(True),
-                    or_(
-                        User.google_sub == user.sub,
-                        User.email == user.email,
-                    ),
-                )
+                .where(User.tenant_id == user.tenant_uuid, or_(*conditions))
             )
             result = await session.execute(stmt)
-            for role_val, user_role_val in result.all():
-                if role_val:
-                    db_roles.add(role_val)
-                if user_role_val:
-                    db_roles.add(user_role_val)
+            rows = result.all()
     except Exception as exc:
-        logger.debug(
-            "Database role resolution fallback failed for sub '%s': %s",
-            user.sub,
-            exc,
-        )
+        logger.warning("Role lookup in DB failed for sub '%s': %s", user.sub, exc)
+        return matrix.normalize_roles(user.roles)
+
+    if not rows:
+        return matrix.normalize_roles(user.roles)
+
+    db_roles: set[str] = set()
+    for role_value, is_active, user_role_value in rows:
+        if not is_active:
+            continue
+        if role_value:
+            db_roles.add(role_value)
+        if user_role_value:
+            db_roles.add(user_role_value)
 
     return matrix.normalize_roles(db_roles)
 
@@ -374,3 +371,179 @@ def _extract_permissions_from_dependant(dependant: Any) -> set[str]:
                 perms.update(p)
         perms.update(_extract_permissions_from_dependant(dep))
     return perms
+
+
+def extract_all_app_routes(app: Any) -> list[tuple[str, Any]]:
+    """
+    Recursively extract all (path, route) pairs from a FastAPI/Starlette application
+    or router, handling _IncludedRouter, nested routers, and Mounts.
+    """
+    results: list[tuple[str, Any]] = []
+
+    def _collect(routes: Iterable[Any], prefix: str = "") -> None:
+        for r in routes:
+            r_type = type(r).__name__
+            if r_type == "_IncludedRouter":
+                original = getattr(r, "original_router", None)
+                if original:
+                    _collect(getattr(original, "routes", []), prefix)
+            elif hasattr(r, "routes"):
+                sub_prefix = prefix + (getattr(r, "path", "") or "")
+                _collect(getattr(r, "routes", []), sub_prefix)
+            else:
+                path = getattr(r, "path", "")
+                if prefix and not path.startswith(prefix):
+                    path = prefix + path
+                results.append((path, r))
+
+    _collect(getattr(app, "routes", []))
+    return results
+
+
+def validate_permission_matrix_completeness(
+    matrix_data: dict[str, Any] | None = None,
+) -> list[str]:
+    """
+    Validate that every role x action cell in the matrix has an explicit ALLOW/DENY decision (SCRUM-310).
+
+    Returns a list of violation descriptions. If empty, the matrix is complete.
+    """
+    if matrix_data is None:
+        pm = get_permission_matrix()
+        with open(pm.matrix_path, "r", encoding="utf-8") as f:
+            matrix_data = json.load(f)
+
+    errors: list[str] = []
+
+    roles = matrix_data.get("roles")
+    if not isinstance(roles, list) or not roles:
+        errors.append("Matrix data missing non-empty 'roles' list")
+        declared_roles: list[str] = []
+    else:
+        declared_roles = [
+            r["id"] for r in roles if isinstance(r, dict) and isinstance(r.get("id"), str)
+        ]
+        if not declared_roles:
+            errors.append("No valid role definitions with 'id' found in 'roles'")
+
+    actions = matrix_data.get("actions")
+    if not isinstance(actions, list) or not actions:
+        errors.append("Matrix data missing non-empty 'actions' list")
+        declared_actions: list[str] = []
+    else:
+        declared_actions = [
+            a["id"] for a in actions if isinstance(a, dict) and isinstance(a.get("id"), str)
+        ]
+        if not declared_actions:
+            errors.append("No valid action definitions with 'id' found in 'actions'")
+
+    matrix = matrix_data.get("matrix")
+    if not isinstance(matrix, dict):
+        errors.append("Matrix data missing 'matrix' mapping")
+        return errors
+
+    # Check for missing roles in matrix
+    for role_id in declared_roles:
+        if role_id not in matrix:
+            errors.append(f"Role '{role_id}' is defined in 'roles' but missing from 'matrix'")
+            continue
+
+        role_row = matrix[role_id]
+        if not isinstance(role_row, dict):
+            errors.append(f"Matrix row for role '{role_id}' is not a mapping")
+            continue
+
+        for action_id in declared_actions:
+            if action_id not in role_row:
+                errors.append(
+                    f"Missing decision cell for role '{role_id}' and action '{action_id}' in matrix"
+                )
+                continue
+
+            cell = role_row[action_id]
+            if not isinstance(cell, dict):
+                errors.append(
+                    f"Cell [{role_id}][{action_id}] is not an object (got {type(cell).__name__})"
+                )
+                continue
+
+            decision = cell.get("decision")
+            if decision not in ("ALLOW", "DENY"):
+                errors.append(
+                    f"Cell [{role_id}][{action_id}] has invalid or missing decision '{decision}' (must be 'ALLOW' or 'DENY')"
+                )
+
+    # Check for undeclared roles in matrix keys
+    for role_key in matrix:
+        if declared_roles and role_key not in declared_roles:
+            errors.append(f"Matrix contains undeclared role key '{role_key}'")
+
+    return errors
+
+
+def assert_permission_matrix_complete(
+    matrix_data: dict[str, Any] | None = None,
+) -> None:
+    """Assert that the role-permission matrix is complete. Raises AssertionError on violations."""
+    errors = validate_permission_matrix_completeness(matrix_data)
+    if errors:
+        msg = f"Permission matrix completeness check failed with {len(errors)} violation(s):\n"
+        msg += "\n".join(f"  - {err}" for err in errors)
+        raise AssertionError(msg)
+
+
+def validate_registered_routes_completeness(
+    app: Any,
+    matrix: PermissionMatrix | None = None,
+    is_public_fn: Any = None,
+) -> list[str]:
+    """
+    Validate that every registered API route has a declared valid permission (SCRUM-310).
+
+    Excludes public routes identified by `is_public_fn`.
+    Returns a list of violation descriptions. If empty, all routes are protected with valid permissions.
+    """
+    if is_public_fn is None:
+        from app.auth.middleware import JWTAuthMiddleware
+
+        is_public_fn = JWTAuthMiddleware.is_public
+
+    if matrix is None:
+        matrix = get_permission_matrix()
+
+    valid_actions = set(matrix.actions_data.keys())
+    routes = extract_all_app_routes(app)
+    errors: list[str] = []
+
+    for path, route in routes:
+        if is_public_fn(path):
+            continue
+
+        methods = getattr(route, "methods", None)
+        method_str = ",".join(sorted(methods)) if methods else "UNKNOWN"
+        route_desc = f"{method_str} {path}"
+
+        perms = get_route_declared_permissions(route)
+        if not perms:
+            errors.append(f"Protected route '{route_desc}' has no declared permission")
+        else:
+            invalid_perms = perms - valid_actions
+            if invalid_perms:
+                errors.append(
+                    f"Route '{route_desc}' declares unknown permission(s): {sorted(invalid_perms)}"
+                )
+
+    return errors
+
+
+def assert_registered_routes_complete(
+    app: Any,
+    matrix: PermissionMatrix | None = None,
+    is_public_fn: Any = None,
+) -> None:
+    """Assert that all registered API routes declare valid permissions. Raises AssertionError on violations."""
+    errors = validate_registered_routes_completeness(app, matrix=matrix, is_public_fn=is_public_fn)
+    if errors:
+        msg = f"Route permission completeness check failed with {len(errors)} violation(s):\n"
+        msg += "\n".join(f"  - {err}" for err in errors)
+        raise AssertionError(msg)

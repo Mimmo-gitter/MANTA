@@ -27,6 +27,7 @@ PUBLIC_PATHS = frozenset(
         "/redoc",
         "/openapi.json",
         "/tenants/register",
+        "/api/v1/invitations/accept",
     }
 )
 PUBLIC_PATH_PREFIXES: tuple[str, ...] = ("/api/v1/webhooks",)

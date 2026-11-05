@@ -430,7 +430,7 @@ async def test_database_role_fallback_when_token_lacks_roles():
 
     # 1. Mock DB session returning User.role = "DEVELOPER"
     mock_result = mock.MagicMock()
-    mock_result.all.return_value = [("DEVELOPER", None)]
+    mock_result.all.return_value = [("DEVELOPER", True, None)]
 
     mock_session = mock.AsyncMock()
     mock_session.execute = mock.AsyncMock(return_value=mock_result)
