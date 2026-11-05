@@ -162,6 +162,8 @@ function IntroStep({
   onWebhookSecretChange,
   showWebhookSecret,
   onToggleWebhookSecret,
+  showApiToken,
+  onToggleApiToken,
   onClose,
   onConnect,
 }: {
@@ -175,6 +177,8 @@ function IntroStep({
   onWebhookSecretChange: (value: string) => void;
   showWebhookSecret: boolean;
   onToggleWebhookSecret: () => void;
+  showApiToken: boolean;
+  onToggleApiToken: () => void;
   onClose: () => void;
   onConnect: (validatedUrl: string) => void;
 }) {
@@ -329,14 +333,29 @@ function IntroStep({
             <span className="text-[#ef4444]"> *</span>
           </label>
 
-          <input
-            type="password"
-            autoComplete="off"
-            value={apiToken}
-            onChange={(e) => onApiTokenChange(e.target.value)}
-            placeholder="Enter your Atlassian API token"
-            className="mt-1.5 h-[36px] w-full rounded-[6px] border border-[#252b3b] bg-[#0a0d14] px-2.5 font-mono text-[11px] text-[#e2e8f0] outline-none focus:border-[#00e599] focus:ring-1 focus:ring-[#00e599]"
-          />
+          <div className="relative mt-1.5">
+            <input
+              type={showApiToken ? "text" : "password"}
+              autoComplete="off"
+              value={apiToken}
+              onChange={(e) => onApiTokenChange(e.target.value)}
+              placeholder="Enter your Atlassian API token"
+              className="h-[36px] w-full rounded-[6px] border border-[#252b3b] bg-[#0a0d14] py-2 pl-2.5 pr-9 font-mono text-[11px] text-[#e2e8f0] outline-none focus:border-[#00e599] focus:ring-1 focus:ring-[#00e599]"
+            />
+
+            <button
+              type="button"
+              onClick={onToggleApiToken}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-[#7c839b] transition-colors hover:text-[#00e599]"
+              aria-label={showApiToken ? "Hide API token" : "Show API token"}
+            >
+              {showApiToken ? (
+                <EyeOff className="size-4" />
+              ) : (
+                <Eye className="size-4" />
+              )}
+            </button>
+          </div>
 
           <p className="mt-1.5 text-[10px] text-[#7c839b]">
             Generate an API token in your Atlassian account security settings.
@@ -562,6 +581,7 @@ export function JiraConnectDialog({
   const [email, setEmail] = useState("");
   const [apiToken, setApiToken] = useState("");
   const [webhookSecret, setWebhookSecret] = useState("");
+  const [showApiToken, setShowApiToken] = useState(false);
   const [showWebhookSecret, setShowWebhookSecret] = useState(false);
   const [progress, setProgress] = useState(0);
   const [connection, setConnection] = useState<JiraConnection | null>(null);
@@ -575,6 +595,7 @@ export function JiraConnectDialog({
       setSiteUrl("");
       setEmail("");
       setApiToken("");
+      setShowApiToken(false);
       setWebhookSecret("");
       setProgress(0);
       setConnection(null);
@@ -647,6 +668,8 @@ export function JiraConnectDialog({
           onWebhookSecretChange={setWebhookSecret}
           onClose={close}
           showWebhookSecret={showWebhookSecret}
+          showApiToken={showApiToken}
+          onToggleApiToken={() => setShowApiToken((prev) => !prev)}
           onToggleWebhookSecret={() => setShowWebhookSecret((prev) => !prev)}
           onConnect={start}
         />
