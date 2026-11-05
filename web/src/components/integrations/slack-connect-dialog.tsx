@@ -18,6 +18,7 @@ import {
   PrimaryButton,
   SectionLabel,
 } from "@/components/integrations/connect-dialog-shell";
+import { connectSlack as connectSlackApi } from "@/lib/integrations-api";
 
 /* -------------------------------------------------------------------------- */
 /* Types & data                                                               */
@@ -25,10 +26,7 @@ import {
 
 type Step = "intro" | "connecting" | "connected" | "failed";
 
-export interface SlackConnection {
-  /** Reserved for the real response (workspace name, channels, etc.). */
-  workspace?: string;
-}
+export type SlackConnection = Awaited<ReturnType<typeof connectSlackApi>>;
 
 interface SlackConnectDialogProps {
   open: boolean;
@@ -44,32 +42,25 @@ const PERMISSIONS = [
   "Correlate release incident discussions and team signal threads",
 ];
 
-/**
- * TODO: replace with the real flow.
- * Send the bot token and signing secret to your backend over HTTPS. The backend
- * validates the token with Slack (auth.test), stores both credentials
- * encrypted, configures event access and registers the webhook.
- *
- * This mock resolves after a delay. Add `?slackError=1` to the page URL to see
- * the failure state.
- */
 async function connectSlack(
-  _botToken: string,
-  _signingSecret: string,
+  botToken: string,
+  signingSecret: string,
   signal: AbortSignal,
 ): Promise<SlackConnection> {
-  await new Promise<void>((resolve, reject) => {
-    const timer = window.setTimeout(resolve, 2800);
-    signal.addEventListener("abort", () => {
-      window.clearTimeout(timer);
-      reject(new DOMException("Aborted", "AbortError"));
-    });
+  if (signal.aborted) {
+    throw new DOMException("Aborted", "AbortError");
+  }
+
+  const result = await connectSlackApi({
+    bot_token: botToken,
+    signing_secret: signingSecret,
   });
 
-  if (window.location.search.includes("slackError=1")) {
-    throw new Error("Slack authorization could not be verified");
+  if (signal.aborted) {
+    throw new DOMException("Aborted", "AbortError");
   }
-  return {};
+
+  return result;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -579,7 +570,9 @@ export function SlackConnectDialog({
         <ConnectedStep
           onClose={close}
           onDone={() => {
-            onConnected?.(connection ?? {});
+            if (connection) {
+              onConnected?.(connection);
+            }
             close();
           }}
         />
