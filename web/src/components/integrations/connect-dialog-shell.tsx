@@ -77,6 +77,7 @@ export function PrimaryButton({
 
 export function ModalShell({
   size,
+  headerLayout = "inline",
   icon,
   title,
   subtitle,
@@ -88,6 +89,9 @@ export function ModalShell({
   children,
 }: {
   size: "sm" | "md" | "lg";
+  /** "inline": boxed icon beside title/subtitle, divider below.
+   *  "stacked": bare icon + title on one row, subtitle full-width beneath, no divider. */
+  headerLayout?: "inline" | "stacked";
   icon: React.ReactNode;
   title: string;
   subtitle?: string;
@@ -134,9 +138,20 @@ export function ModalShell({
     return () => document.removeEventListener("keydown", onKey);
   }, [onClose]);
 
+  const closeButton = (
+    <button
+      type="button"
+      onClick={onClose}
+      aria-label={closeLabel}
+      className="flex size-[28px] shrink-0 items-center justify-center rounded-[6px] text-[#7c839b] transition-colors hover:bg-white/[0.05] hover:text-[#e2e8f0] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00e599]"
+    >
+      <X className="size-4" aria-hidden="true" />
+    </button>
+  );
+
   return (
     <div
-      className="fixed inset-0 z-[90] flex items-center justify-center bg-[#05070b]/80 p-4 backdrop-blur-[2px]"
+      className="fixed inset-0 z-[90] flex items-center justify-center overflow-y-auto bg-[#05070b]/80 p-4 backdrop-blur-[2px]"
       onMouseDown={(e) => {
         if (dismissOnBackdrop && e.target === e.currentTarget) onClose();
       }}
@@ -156,42 +171,59 @@ export function ModalShell({
               : "h-auto max-w-[400px]",
         )}
       >
-        <header className="flex shrink-0 items-center justify-between gap-3 border-b border-[#1f2433] bg-[#161b26] px-6 py-4">
-          <div className="flex min-w-0 items-center gap-3">
-            <div
-              aria-hidden="true"
-              className="flex size-[40px] shrink-0 items-center justify-center rounded-[8px] border border-[#252b3b] bg-[#0a0d14]"
-            >
-              {icon}
+        {headerLayout === "stacked" ? (
+          <header className="shrink-0 px-6 pb-2 pt-5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-2.5">
+                <span aria-hidden="true" className="flex shrink-0">
+                  {icon}
+                </span>
+                <h2
+                  id={titleId}
+                  className="truncate text-[18px] font-semibold leading-[24px] text-[#e2e8f0]"
+                >
+                  {title}
+                </h2>
+              </div>
+              {closeButton}
             </div>
-            <div className="min-w-0">
-              <h2
-                id={titleId}
-                className={cn(
-                  "truncate font-semibold text-[#e2e8f0]",
-                  subtitle
-                    ? "text-[16px] leading-[22px]"
-                    : "text-[14px] leading-[20px]",
-                )}
+            {subtitle && (
+              <p className="mt-1 text-[12px] leading-[17px] text-[#7c839b]">
+                {subtitle}
+              </p>
+            )}
+          </header>
+        ) : (
+          <header className="flex shrink-0 items-center justify-between gap-3 border-b border-[#1f2433] bg-[#161b26] px-6 py-4">
+            <div className="flex min-w-0 items-center gap-3">
+              <div
+                aria-hidden="true"
+                className="flex size-[40px] shrink-0 items-center justify-center rounded-[8px] border border-[#252b3b] bg-[#0a0d14]"
               >
-                {title}
-              </h2>
-              {subtitle && (
-                <p className="truncate text-[12px] leading-[17px] text-[#7c839b]">
-                  {subtitle}
-                </p>
-              )}
+                {icon}
+              </div>
+              <div className="min-w-0">
+                <h2
+                  id={titleId}
+                  className={cn(
+                    "truncate font-semibold text-[#e2e8f0]",
+                    subtitle
+                      ? "text-[16px] leading-[22px]"
+                      : "text-[14px] leading-[20px]",
+                  )}
+                >
+                  {title}
+                </h2>
+                {subtitle && (
+                  <p className="truncate text-[12px] leading-[17px] text-[#7c839b]">
+                    {subtitle}
+                  </p>
+                )}
+              </div>
             </div>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label={closeLabel}
-            className="flex size-[28px] shrink-0 items-center justify-center rounded-[6px] text-[#7c839b] transition-colors hover:bg-white/[0.05] hover:text-[#e2e8f0] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00e599]"
-          >
-            <X className="size-4" aria-hidden="true" />
-          </button>
-        </header>
+            {closeButton}
+          </header>
+        )}
 
         <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
           {children}
@@ -256,7 +288,7 @@ export function ConnectingStep({
           aria-hidden="true"
           className="relative mb-5 flex size-[36px] items-center justify-center"
         >
-          <div className="absolute inset-0 rounded-full border-2 border-[#00e599]/15 border-t-[#00e599] motion-safe:animate-spin" />
+          <div className="absolute inset-0 rounded-full border-2 border-[#00e599]/15 border-t-[#00e599] animate-spin" />
           <div className="size-1.5 rounded-full bg-[#00e599]" />
         </div>
         <h2 className="text-[16px] font-semibold leading-[24px] text-[#e2e8f0]">
@@ -304,10 +336,16 @@ export function FailedStep({
       titleId={titleId}
       title="Connection Failed"
       onClose={onClose}
+      footer={
+        <PrimaryButton onClick={onRetry} className="h-[34px] w-full">
+          <RefreshCw className="size-3" aria-hidden="true" />
+          Retry
+        </PrimaryButton>
+      }
     >
       <div
         role="alert"
-        className="flex flex-col items-center px-6 pb-5 pt-8 text-center"
+        className="flex flex-col items-center px-6 pb-8 pt-8 text-center"
       >
         <div
           aria-hidden="true"
@@ -321,10 +359,6 @@ export function FailedStep({
         <p className="mt-1 text-[11px] leading-[16px] text-[#7c839b]">
           Please check your settings and try again.
         </p>
-        <PrimaryButton onClick={onRetry} className="mt-6 h-[34px] w-full">
-          <RefreshCw className="size-3" aria-hidden="true" />
-          Retry
-        </PrimaryButton>
       </div>
     </ModalShell>
   );

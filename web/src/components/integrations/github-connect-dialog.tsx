@@ -2,15 +2,16 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
+import { getCurrentUser } from "@/lib/auth";
 import {
+  ArrowRight,
   Check,
-  ExternalLink,
-  FolderGit2,
-  GitBranch,
-  Info,
+  Copy,
+  Eye,
+  EyeOff,
   Loader2,
-  Lock,
   ShieldCheck,
+  User,
 } from "lucide-react";
 import {
   Badge,
@@ -27,82 +28,81 @@ import {
 
 type Step = "intro" | "connecting" | "connected" | "failed";
 
-export interface GitHubInstallation {
+export interface GitHubConnection {
   account: string;
-  organization: string;
-  installationId: string;
-  repositories: string[];
+  /** Masked token for display only, e.g. "ghp_•••828e". Never the raw token. */
+  tokenMask: string;
+  webhookUrl: string;
+  /** True when a webhook secret was supplied and signatures are verified. */
+  webhookVerified: boolean;
 }
 
 interface GitHubConnectDialogProps {
   open: boolean;
   onClose: () => void;
   /** Called when the user presses "Done" on the success screen. */
-  onConnected?: (installation: GitHubInstallation) => void;
+  onConnected?: (connection: GitHubConnection) => void;
 }
-
-const PERMISSIONS: {
-  title: string;
-  description: string;
-  badge: "Read-only" | "Webhook";
-}[] = [
-  {
-    title: "Read Commit History & Branches",
-    description:
-      "Read-only telemetry for engineering velocity, cycle time, and WIP tracking.",
-    badge: "Read-only",
-  },
-  {
-    title: "Pull Requests & Review Delays",
-    description:
-      "Read-only monitoring for code review cycle times and delivery bottleneck metrics.",
-    badge: "Read-only",
-  },
-  {
-    title: "Webhook Ingestion Events",
-    description:
-      "Authenticated real-time event delivery via HMAC-SHA256 signature verification.",
-    badge: "Webhook",
-  },
-  {
-    title: "Production Deployment Signals",
-    description:
-      "Read-only tracking for deployment frequency and change failure rate analysis.",
-    badge: "Read-only",
-  },
-];
 
 /**
  * TODO: replace with the real flow.
- * 1. "Install GitHub App" should send the user to the GitHub App install URL.
- * 2. When GitHub redirects back with an installation_id, call your backend to
- *    verify the installation and load the repositories it can access.
+ * Send the token (and optional webhook secret) to your backend over HTTPS.
+ * The backend validates the token against the GitHub API, stores it encrypted,
+ * and returns the account, a masked token and the webhook URL.
  *
  * This mock resolves after a delay. Add `?githubError=1` to the URL to see the
  * failure state.
  */
-async function connectGitHub(signal: AbortSignal): Promise<GitHubInstallation> {
-  await new Promise<void>((resolve, reject) => {
-    const timer = window.setTimeout(resolve, 2800);
-    signal.addEventListener("abort", () => {
-      window.clearTimeout(timer);
-      reject(new DOMException("Aborted", "AbortError"));
-    });
-  });
+async function connectGitHub(
+  token: string,
+  webhookSecret: string,
+  signal: AbortSignal,
+): Promise<GitHubConnection> {
+  // Get the current authenticated M.A.N.T.A. user
+  const user = await getCurrentUser();
 
-  if (window.location.search.includes("githubError=1")) {
-    throw new Error("GitHub installation could not be verified");
+  if (!user?.access_token) {
+    throw new Error("Your session has expired. Please sign in again.");
+  }
+
+  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+
+  const response = await fetch(
+    `${API_URL}/api/v1/integrations/github/connect`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${user.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        access_token: token,
+        ...(webhookSecret.trim()
+          ? { webhook_secret: webhookSecret.trim() }
+          : {}),
+      }),
+      signal,
+    },
+  );
+
+  const data = await response.json().catch(() => null);
+
+  if (!response.ok) {
+    const message =
+      typeof data?.detail === "string"
+        ? data.detail
+        : response.status === 400
+          ? "Invalid GitHub access token. Please check your token."
+          : `GitHub connection failed (${response.status}).`;
+
+    throw new Error(message);
   }
 
   return {
-    account: "acme-corp",
-    organization: "Acme Enterprise Inc.",
-    installationId: "#Example",
-    repositories: [
-      "acme/backend-api",
-      "acme/frontend-web",
-      "acme/data-pipeline",
-    ],
+    account: data.external_account_id,
+    tokenMask: `ghp_•••${token.slice(-4)}`,
+    webhookUrl: data.webhook_url,
+    webhookVerified: Boolean(webhookSecret.trim()),
   };
 }
 
@@ -122,119 +122,188 @@ function GitHubMark({ className }: { className?: string }) {
 }
 
 /* -------------------------------------------------------------------------- */
-/* Step 1: intro                                                              */
+/* Step 1: intro (token form)                                                 */
 /* -------------------------------------------------------------------------- */
 
-function IntroStep({
-  onClose,
-  onInstall,
+function SecretField({
+  id,
+  label,
+  optional = false,
+  required = false,
+  placeholder,
+  helper,
+  value,
+  onChange,
+  revealLabel,
 }: {
+  id: string;
+  label: string;
+  optional?: boolean;
+  required?: boolean;
+  placeholder: string;
+  helper: string;
+  value: string;
+  onChange: (value: string) => void;
+  revealLabel: string;
+}) {
+  const [visible, setVisible] = useState(false);
+  const helperId = `${id}-helper`;
+
+  return (
+    <div>
+      <label
+        htmlFor={id}
+        className="mb-2 block text-[11px] font-medium leading-[16px] text-[#e2e8f0]"
+      >
+        {label}
+        {required && (
+          <span className="text-[#ef4444]" aria-hidden="true">
+            {" "}
+            *
+          </span>
+        )}
+        {optional && (
+          <span className="font-normal text-[#7c839b]"> (Optional)</span>
+        )}
+      </label>
+      <div className="relative">
+        <input
+          id={id}
+          type={visible ? "text" : "password"}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          required={required}
+          aria-describedby={helperId}
+          autoComplete="off"
+          autoCapitalize="off"
+          spellCheck={false}
+          className="h-[44px] w-full rounded-[6px] border border-[#252b3b] bg-[#0a0d14] pl-3.5 pr-10 font-mono text-[12px] text-[#e2e8f0] placeholder:text-[#4b5266] focus-visible:border-[#00e599]/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00e599]/40"
+        />
+        <button
+          type="button"
+          onClick={() => setVisible((v) => !v)}
+          aria-label={`${visible ? "Hide" : "Show"} ${revealLabel}`}
+          aria-pressed={visible}
+          className="absolute right-2 top-1/2 flex size-[28px] -translate-y-1/2 items-center justify-center rounded-[6px] text-[#7c839b] transition-colors hover:text-[#e2e8f0] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00e599]"
+        >
+          {visible ? (
+            <EyeOff className="size-3.5" aria-hidden="true" />
+          ) : (
+            <Eye className="size-3.5" aria-hidden="true" />
+          )}
+        </button>
+      </div>
+      <p
+        id={helperId}
+        className="mt-2 text-[10px] leading-[14px] text-[#7c839b]"
+      >
+        {helper}
+      </p>
+    </div>
+  );
+}
+
+function IntroStep({
+  token,
+  webhookSecret,
+  onTokenChange,
+  onWebhookSecretChange,
+  onClose,
+  onConnect,
+}: {
+  token: string;
+  webhookSecret: string;
+  onTokenChange: (value: string) => void;
+  onWebhookSecretChange: (value: string) => void;
   onClose: () => void;
-  onInstall: () => void;
+  onConnect: () => void;
 }) {
   const titleId = useId();
+  const formId = useId();
+  const tokenId = useId();
+  const secretId = useId();
+  const canSubmit = token.trim().length > 0;
 
   return (
     <ModalShell
       size="lg"
+      headerLayout="stacked"
       icon={<GitHubMark className="size-[20px]" />}
       titleId={titleId}
       title="Connect GitHub"
-      subtitle="Telemetry ingestion & automated refactoring workflows"
+      subtitle="Connect via GitHub Personal Access Token to ingest telemetry and refactoring workflows."
       onClose={onClose}
       footer={
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="text-[11px] text-[#7c839b]">
-            Redirects to github.com to select account &amp; repos
-          </p>
-          <PrimaryButton onClick={onInstall}>
-            Install GitHub App
-            <ExternalLink className="size-3" aria-hidden="true" />
-          </PrimaryButton>
-        </div>
+        <PrimaryButton
+          type="submit"
+          form={formId}
+          disabled={!canSubmit}
+          className="h-[40px] w-full text-[12px]"
+        >
+          Connect GitHub
+          <ArrowRight className="size-3.5" aria-hidden="true" />
+        </PrimaryButton>
       }
     >
-      <div className="flex flex-col gap-3 p-4">
-        <section className="rounded-[8px] border border-[#1f2433] bg-[#0f131d] p-3.5">
-          <h3 className="flex items-center gap-2 text-[12px] font-medium text-[#e2e8f0]">
-            <Info className="size-3.5 text-[#00e599]" aria-hidden="true" />
-            Official GitHub App Integration
-          </h3>
-          <p className="mt-2 text-[11px] leading-[17px] text-[#a3acc2]">
-            M.A.N.T.A. integrates directly via the official GitHub App. When you
-            click install, you will be securely redirected to GitHub to
-            authorize the app, select your organization or account, and choose
-            repository access permissions.
-          </p>
-        </section>
+      <form
+        id={formId}
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (canSubmit) onConnect();
+        }}
+        className="flex flex-col gap-5 px-6 pb-6 pt-3"
+      >
+        <SecretField
+          id={tokenId}
+          label="GitHub Personal Access Token"
+          required
+          placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
+          helper="Your token is encrypted and securely stored by M.A.N.T.A."
+          value={token}
+          onChange={onTokenChange}
+          revealLabel="token"
+        />
+        <SecretField
+          id={secretId}
+          label="Webhook Secret"
+          optional
+          placeholder="Enter webhook secret"
+          helper="Used to verify incoming GitHub webhook events."
+          value={webhookSecret}
+          onChange={onWebhookSecretChange}
+          revealLabel="webhook secret"
+        />
 
-        <section
-          aria-labelledby="perm-heading"
-          className="rounded-[8px] border border-[#1f2433] bg-[#0f131d] p-3.5"
-        >
-          <h3 id="perm-heading" className="sr-only">
-            Requested least-privilege permissions
-          </h3>
-          <div aria-hidden="true">
-            <SectionLabel>Requested least-privilege permissions</SectionLabel>
-          </div>
-
-          <ul className="mt-2">
-            {PERMISSIONS.map((p) => (
-              <li
-                key={p.title}
-                className="flex items-start justify-between gap-3 border-t border-[#1f2433] py-2.5 first:border-t-0"
-              >
-                <div className="min-w-0">
-                  <p className="text-[12px] font-medium leading-[16px] text-[#e2e8f0]">
-                    {p.title}
-                  </p>
-                  <p className="mt-0.5 text-[10px] leading-[15px] text-[#7c839b]">
-                    {p.description}
-                  </p>
-                </div>
-                <Badge tone={p.badge === "Webhook" ? "green" : "muted"}>
-                  {p.badge}
-                </Badge>
-              </li>
-            ))}
-          </ul>
-
-          <div className="mt-1 flex items-start gap-2.5 rounded-[6px] bg-[#1a2030] p-3">
-            <Lock
-              className="mt-0.5 size-3 shrink-0 text-[#00e599]"
-              aria-hidden="true"
-            />
-            <div>
-              <p className="text-[12px] font-medium leading-[16px] text-[#e2e8f0]">
-                Create Pull Requests
-              </p>
-              <p className="mt-0.5 text-[10px] leading-[15px] text-[#7c839b]">
-                Strictly gated and enabled only after automated refactoring
-                verification passes. M.A.N.T.A. will never push directly to
-                branches or merge code without human sign-off.
-              </p>
-            </div>
-          </div>
-        </section>
-
-        <section className="flex items-start gap-2.5 rounded-[8px] border border-[#252b3b] bg-[#1a2030]/70 p-3.5">
+        <section className="flex items-start gap-3 rounded-[8px] border border-[#252b3b] bg-[#161b26]/60 p-3.5">
           <ShieldCheck
-            className="mt-0.5 size-3.5 shrink-0 text-[#00e599]"
+            className="mt-0.5 size-3.5 shrink-0 text-[#22d3ee]"
             aria-hidden="true"
           />
-          <div>
-            <h3 className="text-[12px] font-medium leading-[16px] text-[#e2e8f0]">
-              Zero Token Exposure
+          <div className="min-w-0">
+            <h3 className="text-[11px] font-medium leading-[16px] text-[#e2e8f0]">
+              Zero-Trust Security &amp; Verification
             </h3>
-            <p className="mt-1 text-[10px] leading-[15px] text-[#7c839b]">
-              No personal access tokens or SSH keys required. Permissions and
-              short-lived tokens are managed directly and securely via official
-              GitHub App authorization.
-            </p>
+            <ul className="mt-1.5 space-y-1">
+              {[
+                "Credentials and personal access tokens are encrypted at rest with AES-256.",
+                "Incoming webhook requests are verified using HMAC-SHA256 signatures.",
+              ].map((line) => (
+                <li
+                  key={line}
+                  className="flex items-start gap-2 text-[10px] leading-[15px] text-[#a3acc2]"
+                >
+                  <span
+                    aria-hidden="true"
+                    className="mt-[6px] size-[3px] shrink-0 rounded-full bg-[#22d3ee]"
+                  />
+                  {line}
+                </li>
+              ))}
+            </ul>
           </div>
         </section>
-      </div>
+      </form>
     </ModalShell>
   );
 }
@@ -243,33 +312,33 @@ function IntroStep({
 /* Step 3: connected                                                          */
 /* -------------------------------------------------------------------------- */
 
-function StatusCell({
+type MetricStatus = "Validated" | "Active" | "Syncing" | "Pending";
+
+function MetricCell({
   label,
   status,
 }: {
   label: string;
-  status: "Active" | "Verified" | "Syncing" | "Pending";
+  status: MetricStatus;
 }) {
+  const pending = status === "Pending";
   return (
-    <li className="flex items-center justify-between gap-2 rounded-[6px] border border-[#1f2433] bg-[#161b26] px-2.5 py-2">
+    <li className="flex flex-col gap-1.5 rounded-[6px] border border-[#1f2433] bg-[#161b26] px-3 py-2.5">
       <span className="text-[10px] leading-[14px] text-[#a3acc2]">{label}</span>
       <span
         className={cn(
-          "inline-flex shrink-0 items-center gap-1.5 font-mono text-[10px] font-semibold",
-          status === "Pending" ? "text-[#fbbf24]" : "text-[#00e599]",
+          "inline-flex items-center gap-1.5 font-mono text-[11px] font-semibold",
+          pending ? "text-[#fbbf24]" : "text-[#00e599]",
         )}
       >
         {status === "Syncing" ? (
-          <Loader2
-            className="size-2.5 motion-safe:animate-spin"
-            aria-hidden="true"
-          />
+          <Loader2 className="size-2.5 animate-spin" aria-hidden="true" />
         ) : (
           <span
             aria-hidden="true"
             className={cn(
               "size-1.5 rounded-full",
-              status === "Pending" ? "bg-[#fbbf24]" : "bg-[#00e599]",
+              pending ? "bg-[#fbbf24]" : "bg-[#00e599]",
             )}
           />
         )}
@@ -280,16 +349,31 @@ function StatusCell({
 }
 
 function ConnectedStep({
-  installation,
+  connection,
   onDone,
   onClose,
 }: {
-  installation: GitHubInstallation;
+  connection: GitHubConnection;
   onDone: () => void;
   onClose: () => void;
 }) {
   const titleId = useId();
-  const count = installation.repositories.length;
+  const [copied, setCopied] = useState(false);
+  const resetTimer = useRef<number | undefined>(undefined);
+
+  useEffect(() => () => window.clearTimeout(resetTimer.current), []);
+
+  const copyUrl = async () => {
+    try {
+      await navigator.clipboard.writeText(connection.webhookUrl);
+      setCopied(true);
+      window.clearTimeout(resetTimer.current);
+      resetTimer.current = window.setTimeout(() => setCopied(false), 1800);
+    } catch {
+      // Clipboard unavailable (insecure context or permission denied); the URL
+      // stays selectable in the field so the user can copy it manually.
+    }
+  };
 
   return (
     <ModalShell
@@ -297,14 +381,10 @@ function ConnectedStep({
       icon={<GitHubMark className="size-[20px]" />}
       titleId={titleId}
       title="GitHub Connected"
-      subtitle="Repository telemetry and event syncing active with M.A.N.T.A."
+      subtitle="Repository telemetry and webhook event syncing active with M.A.N.T.A."
       onClose={onClose}
       footer={
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <p className="flex items-center gap-1.5 font-mono text-[10px] text-[#7c839b]">
-            <Lock className="size-3 shrink-0" aria-hidden="true" />
-            Integration credentials are stored securely in an encrypted vault.
-          </p>
+        <div className="flex justify-end">
           <PrimaryButton onClick={onDone}>
             <Check className="size-3.5" aria-hidden="true" />
             Done
@@ -312,132 +392,96 @@ function ConnectedStep({
         </div>
       }
     >
-      <div className="flex flex-col gap-3 p-4">
-        {/* Installation */}
+      <div className="flex flex-col gap-5 p-6">
+        {/* Account */}
         <section className="flex items-center justify-between gap-3 rounded-[8px] border border-[#1f2433] bg-[#0f131d] p-3.5">
-          <div className="min-w-0">
-            <p className="truncate text-[13px] font-semibold text-[#e2e8f0]">
-              {installation.account}{" "}
-              <span className="text-[11px] font-normal text-[#7c839b]">
-                ({installation.organization})
-              </span>
-            </p>
-            <p className="mt-0.5 font-mono text-[10px] text-[#7c839b]">
-              Installation ID: {installation.installationId}
-            </p>
-          </div>
-          <Badge tone="green">Active</Badge>
-        </section>
-
-        {/* Repository access */}
-        <section className="rounded-[8px] border border-[#1f2433] bg-[#0f131d] p-3.5">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap items-center gap-2">
-              <h3 className="flex items-center gap-1.5 text-[11px] font-medium text-[#e2e8f0]">
-                <FolderGit2
-                  className="size-3.5 text-[#a3acc2]"
-                  aria-hidden="true"
-                />
-                Repository Access
-              </h3>
-              <Badge tone="green">
-                {count} {count === 1 ? "repository" : "repositories"} accessible
-              </Badge>
-            </div>
-            {/* TODO: link to the installation's repository settings on github.com */}
-            <a
-              href="https://github.com/settings/installations"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 rounded text-[11px] text-[#00e599] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00e599]"
+          <div className="flex min-w-0 items-center gap-3">
+            <div
+              aria-hidden="true"
+              className="flex size-[32px] shrink-0 items-center justify-center rounded-full border border-[#252b3b] bg-[#161b26] text-[#a3acc2]"
             >
-              Manage repositories
-              <ExternalLink className="size-3" aria-hidden="true" />
-              <span className="sr-only">(opens in a new tab)</span>
-            </a>
+              <User className="size-3.5" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="truncate font-mono text-[13px] font-semibold text-[#e2e8f0]">
+                  {connection.account}
+                </p>
+                <span className="rounded-[4px] border border-[#252b3b] bg-[#0a0d14] px-1.5 py-0.5 font-mono text-[9px] leading-[12px] text-[#7c839b]">
+                  PAT: {connection.tokenMask}
+                </span>
+              </div>
+              <p className="mt-0.5 text-[11px] leading-[16px] text-[#7c839b]">
+                Personal Access Token &bull; Read-only telemetry access
+              </p>
+            </div>
           </div>
-          <ul className="mt-3 grid gap-2 sm:grid-cols-3">
-            {installation.repositories.map((repo) => (
-              <li
-                key={repo}
-                className="flex items-center gap-1.5 rounded-[6px] border border-[#1f2433] bg-[#161b26] px-2.5 py-2 font-mono text-[10px] text-[#e2e8f0]"
-              >
-                <GitBranch
-                  className="size-3 shrink-0 text-[#00e599]"
-                  aria-hidden="true"
-                />
-                <span className="truncate">{repo}</span>
-              </li>
-            ))}
-          </ul>
+          <Badge tone="green" dot>
+            Active
+          </Badge>
         </section>
 
-        {/* Integration statuses */}
-        <section className="rounded-[8px] border border-[#1f2433] bg-[#0f131d] p-3.5">
-          <SectionLabel>Integration statuses</SectionLabel>
-          <ul className="mt-3 grid gap-2 sm:grid-cols-2">
-            <StatusCell label="GitHub App installation" status="Active" />
-            <StatusCell label="Repository access" status="Verified" />
-            <StatusCell label="Initial data synchronization" status="Syncing" />
-            <StatusCell label="Webhook verification" status="Pending" />
-          </ul>
-        </section>
-
-        {/* Permissions summary */}
-        <section className="rounded-[8px] border border-[#1f2433] bg-[#0f131d] p-3.5">
+        {/* Webhook payload URL */}
+        <section>
           <div className="flex items-center justify-between gap-2">
-            <SectionLabel>Permissions summary</SectionLabel>
-            <span className="font-mono text-[10px] text-[#7c839b]">
-              Principle of Least Privilege
-            </span>
+            <SectionLabel>Webhook payload URL</SectionLabel>
+            {connection.webhookVerified && (
+              <span className="inline-flex items-center gap-1 font-mono text-[10px] text-[#22d3ee]">
+                HMAC-SHA256 verified
+              </span>
+            )}
           </div>
+          <p className="mt-2 text-[11px] leading-[16px] text-[#7c839b]">
+            Configure this webhook URL in your GitHub repository or organization
+            settings with HMAC-SHA256 verification.
+          </p>
+          <div className="mt-3 flex items-stretch gap-2">
+            <input
+              readOnly
+              aria-label="Webhook payload URL"
+              value={connection.webhookUrl}
+              onFocus={(e) => e.currentTarget.select()}
+              className="h-[36px] min-w-0 flex-1 rounded-[6px] border border-[#252b3b] bg-[#0a0d14] px-3 font-mono text-[11px] text-[#e2e8f0] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00e599]/40"
+            />
+            <button
+              type="button"
+              onClick={copyUrl}
+              className="inline-flex h-[36px] shrink-0 items-center gap-1.5 rounded-[6px] border border-[#252b3b] bg-[#0f131d] px-3 text-[11px] font-medium text-[#e2e8f0] transition-colors hover:border-[#7c839b]/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00e599]"
+            >
+              {copied ? (
+                <Check className="size-3 text-[#00e599]" aria-hidden="true" />
+              ) : (
+                <Copy className="size-3" aria-hidden="true" />
+              )}
+              <span aria-live="polite">{copied ? "Copied" : "Copy URL"}</span>
+            </button>
+          </div>
+        </section>
+
+        {/* Sync status metrics */}
+        <section>
+          <SectionLabel>Sync status metrics</SectionLabel>
           <ul className="mt-3 grid gap-2 sm:grid-cols-3">
-            <PermissionCard
-              title="Commits, Branches, PRs & Reviews"
-              label="Scope"
-              value="Read-only"
-              tone="green"
+            <MetricCell label="PAT Token" status="Validated" />
+            <MetricCell
+              label="Webhook Verification"
+              status={connection.webhookVerified ? "Active" : "Pending"}
             />
-            <PermissionCard
-              title="Deployment signals"
-              label="Status"
-              value="Not configured"
-              tone="muted"
-            />
-            <PermissionCard
-              title="Pull Request creation"
-              label="Action"
-              value="Conditional write"
-              tone="green"
-            />
+            <MetricCell label="Event Ingestion" status="Syncing" />
           </ul>
         </section>
+
+        {/* Zero-trust note */}
+        <p className="flex items-center gap-2 rounded-[6px] border border-[#1f2433] bg-[#0f131d] px-3 py-2.5 text-[10px] leading-[14px] text-[#a3acc2]">
+          <ShieldCheck
+            className="size-3.5 shrink-0 text-[#00e599]"
+            aria-hidden="true"
+          />
+          Zero-Trust architecture: Webhooks cryptographically verified via
+          secret signature.
+        </p>
       </div>
     </ModalShell>
-  );
-}
-
-function PermissionCard({
-  title,
-  label,
-  value,
-  tone,
-}: {
-  title: string;
-  label: string;
-  value: string;
-  tone: "green" | "muted";
-}) {
-  return (
-    <li className="flex min-h-[64px] flex-col justify-between gap-2 rounded-[6px] border border-[#1f2433] bg-[#161b26] p-2.5">
-      <p className="text-[11px] font-medium leading-[15px] text-[#e2e8f0]">
-        {title}
-      </p>
-      <div className="flex items-center justify-between gap-2">
-        <span className="font-mono text-[9px] text-[#7c839b]">{label}</span>
-        <Badge tone={tone}>{value}</Badge>
-      </div>
-    </li>
   );
 }
 
@@ -452,9 +496,9 @@ export function GitHubConnectDialog({
 }: GitHubConnectDialogProps) {
   const [step, setStep] = useState<Step>("intro");
   const [progress, setProgress] = useState(0);
-  const [installation, setInstallation] = useState<GitHubInstallation | null>(
-    null,
-  );
+  const [token, setToken] = useState("");
+  const [webhookSecret, setWebhookSecret] = useState("");
+  const [connection, setConnection] = useState<GitHubConnection | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   // Reset every time the dialog is opened; abort anything in flight on close
@@ -462,7 +506,9 @@ export function GitHubConnectDialog({
     if (open) {
       setStep("intro");
       setProgress(0);
-      setInstallation(null);
+      setToken("");
+      setWebhookSecret("");
+      setConnection(null);
     }
     return () => abortRef.current?.abort();
   }, [open]);
@@ -485,17 +531,25 @@ export function GitHubConnectDialog({
     setStep("connecting");
 
     try {
-      const result = await connectGitHub(controller.signal);
+      const result = await connectGitHub(
+        token.trim(),
+        webhookSecret,
+        controller.signal,
+      );
       if (controller.signal.aborted) return;
-      setInstallation(result);
+      // The raw credentials are no longer needed once the backend has them
+      setToken("");
+      setWebhookSecret("");
+      setConnection(result);
       setProgress(100);
       setStep("connected");
     } catch {
       if (controller.signal.aborted) return;
       setStep("failed");
     }
-  }, []);
+  }, [token, webhookSecret]);
 
+  // Cancel returns to the form with the entered values intact
   const cancel = useCallback(() => {
     abortRef.current?.abort();
     setStep("intro");
@@ -511,7 +565,16 @@ export function GitHubConnectDialog({
 
   switch (step) {
     case "intro":
-      return <IntroStep onClose={close} onInstall={start} />;
+      return (
+        <IntroStep
+          token={token}
+          webhookSecret={webhookSecret}
+          onTokenChange={setToken}
+          onWebhookSecretChange={setWebhookSecret}
+          onClose={close}
+          onConnect={start}
+        />
+      );
     case "connecting":
       return (
         <ConnectingStep
@@ -523,12 +586,12 @@ export function GitHubConnectDialog({
         />
       );
     case "connected":
-      return installation ? (
+      return connection ? (
         <ConnectedStep
-          installation={installation}
+          connection={connection}
           onClose={close}
           onDone={() => {
-            onConnected?.(installation);
+            onConnected?.(connection);
             close();
           }}
         />
