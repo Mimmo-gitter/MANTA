@@ -28,7 +28,7 @@ import { cn } from "@/lib/utils";
 import { GitHubConnectDialog } from "@/components/integrations/github-connect-dialog";
 import { JiraConnectDialog } from "@/components/integrations/jira-connect-dialog";
 import { SlackConnectDialog } from "@/components/integrations/slack-connect-dialog";
-import { getIntegrations } from "@/lib/integrations-api";
+import { getIntegrations, deleteIntegration } from "@/lib/integrations-api";
 import type { Integration as ApiIntegration } from "@/types/integration";
 
 /* -------------------------------------------------------------------------- */
@@ -47,6 +47,7 @@ interface Integration {
   description: string;
   status: IntegrationStatus;
   initials: string;
+  webhookUrl: string;
 }
 
 interface Provider {
@@ -81,6 +82,7 @@ const STATUS_FILTERS: { value: StatusFilter; label: string }[] = [
 
 /**
  */
+
 async function fetchIntegrations(): Promise<Integration[]> {
   const data: ApiIntegration[] = await getIntegrations();
 
@@ -112,6 +114,7 @@ async function fetchIntegrations(): Promise<Integration[]> {
       description: providerInfo.description,
       status: item.is_active ? "connected" : "needs_reconnect",
       initials: providerInfo.initials,
+      webhookUrl: item.webhook_url,
     };
   });
 }
@@ -804,6 +807,165 @@ function ConnectDialog({
 /* Page                                                                       */
 /* -------------------------------------------------------------------------- */
 
+function ConfigureIntegrationDialog({
+  integration,
+  onClose,
+  onDisconnect,
+  disconnecting,
+  error,
+  confirmDisconnect,
+  onConfirmChange,
+}: {
+  integration: Integration | null;
+  onClose: () => void;
+  onDisconnect: () => void;
+  disconnecting: boolean;
+  error: string;
+  confirmDisconnect: boolean;
+  onConfirmChange: (value: boolean) => void;
+}) {
+  if (!integration) return null;
+
+  const providerName =
+    integration.provider === "github"
+      ? "GitHub"
+      : integration.provider === "jira"
+        ? "Jira"
+        : "Slack";
+
+  return (
+    <div
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-[#05070b]/80 p-4 backdrop-blur-[2px]"
+      onMouseDown={(e) => {
+        if (e.target === e.currentTarget && !disconnecting) {
+          onClose();
+        }
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="configure-title"
+        className="w-full max-w-[520px] rounded-[12px] border border-[#252b3b] bg-[#161b26] p-5 shadow-2xl"
+      >
+        <div className="flex items-start justify-between">
+          <div>
+            <h2
+              id="configure-title"
+              className="text-[16px] font-semibold text-[#e2e8f0]"
+            >
+              {providerName} Settings
+            </h2>
+            <p className="mt-1 text-[12px] text-[#7c839b]">
+              Manage your connected integration.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={disconnecting}
+            aria-label="Close dialog"
+            className="rounded p-1 text-[#7c839b] hover:bg-white/[0.05] hover:text-white disabled:opacity-50"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+
+        <div className="mt-5 flex items-center gap-3 rounded-[8px] border border-[#252b3b] bg-[#0f131d] p-3">
+          <ProviderLogo provider={integration.provider} className="size-7" />
+
+          <div className="min-w-0 flex-1">
+            <p className="truncate text-[13px] font-medium text-[#e2e8f0]">
+              {integration.name}
+            </p>
+            <p className="text-[11px] text-[#7c839b]">Connected account</p>
+          </div>
+
+          <span className="rounded-[5px] border border-[#00e599]/30 bg-[#00e599]/10 px-2 py-1 text-[10px] font-medium text-[#00e599]">
+            Active
+          </span>
+        </div>
+
+        <div className="mt-5">
+          <p className="mb-2 font-mono text-[10px] font-semibold uppercase tracking-wider text-[#a3acc2]">
+            Webhook URL
+          </p>
+
+          <div className="flex items-center gap-2">
+            <div className="min-w-0 flex-1 break-all rounded-[7px] border border-[#252b3b] bg-[#0f131d] p-3 font-mono text-[11px] text-[#a3acc2]">
+              {integration.webhookUrl}
+            </div>
+
+            <button
+              type="button"
+              onClick={() =>
+                navigator.clipboard.writeText(integration.webhookUrl)
+              }
+              className="h-[40px] shrink-0 rounded-[6px] border border-[#252b3b] px-3 text-[11px] text-[#e2e8f0] hover:bg-white/[0.05]"
+            >
+              Copy
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-6 rounded-[8px] border border-[#7f1d1d]/60 bg-[#7f1d1d]/[0.08] p-4">
+          <h3 className="text-[13px] font-semibold text-[#fca5a5]">
+            Danger Zone
+          </h3>
+
+          <p className="mt-1 text-[11px] leading-[17px] text-[#a3acc2]">
+            Disconnect this account from M.A.N.T.A. Data already collected may
+            remain in your workspace.
+          </p>
+
+          {!confirmDisconnect ? (
+            <button
+              type="button"
+              onClick={() => onConfirmChange(true)}
+              className="mt-3 inline-flex h-[32px] items-center justify-center rounded-[6px] border border-[#ef4444]/50 bg-[#ef4444]/10 px-3 text-[11px] font-semibold text-[#fca5a5] transition-colors hover:bg-[#ef4444]/20"
+            >
+              Disconnect {providerName}
+            </button>
+          ) : (
+            <div className="mt-4">
+              <p className="text-[12px] font-medium text-[#fca5a5]">
+                Are you sure you want to disconnect {providerName}?
+              </p>
+
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={onDisconnect}
+                  disabled={disconnecting}
+                  className="inline-flex h-[32px] items-center justify-center rounded-[6px] bg-[#dc2626] px-3 text-[11px] font-semibold text-white hover:bg-[#b91c1c] disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {disconnecting ? "Disconnecting..." : "Yes, disconnect"}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => onConfirmChange(false)}
+                  disabled={disconnecting}
+                  className="inline-flex h-[32px] items-center justify-center rounded-[6px] border border-[#252b3b] px-3 text-[11px] text-[#e2e8f0] hover:bg-white/[0.05]"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
+
+          {error && (
+            <p role="alert" className="mt-3 text-[11px] text-[#fca5a5]">
+              {error}
+            </p>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function IntegrationsPage() {
   const { shellState, setShellState } = useShellState();
   const searchParams = useSearchParams();
@@ -827,6 +989,12 @@ export default function IntegrationsPage() {
   const [githubOpen, setGithubOpen] = useState(false);
   const [jiraOpen, setJiraOpen] = useState(false);
   const [slackOpen, setSlackOpen] = useState(false);
+  const [selectedIntegration, setSelectedIntegration] =
+    useState<Integration | null>(null);
+
+  const [disconnecting, setDisconnecting] = useState(false);
+  const [disconnectError, setDisconnectError] = useState("");
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
 
   const load = useCallback(async () => {
     setLoadState("loading");
@@ -914,7 +1082,41 @@ export default function IntegrationsPage() {
   }, []);
 
   const handleConfigure = (integration: Integration) => {
-    console.info("Configure integration", integration.id);
+    setSelectedIntegration(integration);
+    setDisconnectError("");
+    setConfirmDisconnect(false);
+  };
+
+  const closeConfigure = () => {
+    if (disconnecting) return;
+
+    setSelectedIntegration(null);
+    setDisconnectError("");
+    setConfirmDisconnect(false);
+  };
+
+  const handleDisconnect = async () => {
+    if (!selectedIntegration) return;
+
+    setDisconnecting(true);
+    setDisconnectError("");
+
+    try {
+      await deleteIntegration(selectedIntegration.id);
+
+      setSelectedIntegration(null);
+      setConfirmDisconnect(false);
+
+      await load();
+    } catch (error) {
+      setDisconnectError(
+        error instanceof Error
+          ? error.message
+          : "Failed to disconnect integration. Please try again.",
+      );
+    } finally {
+      setDisconnecting(false);
+    }
   };
   // TODO: start the provider's OAuth re-auth flow
   const handleReconnect = (integration: Integration) => {
@@ -1023,6 +1225,15 @@ export default function IntegrationsPage() {
         open={slackOpen}
         onClose={() => setSlackOpen(false)}
         onConnected={() => void load()}
+      />
+      <ConfigureIntegrationDialog
+        integration={selectedIntegration}
+        onClose={closeConfigure}
+        onDisconnect={handleDisconnect}
+        disconnecting={disconnecting}
+        error={disconnectError}
+        confirmDisconnect={confirmDisconnect}
+        onConfirmChange={setConfirmDisconnect}
       />
     </div>
   );
