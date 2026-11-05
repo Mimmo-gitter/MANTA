@@ -77,3 +77,8 @@
     color-scheme: dark;
   }
 }
+
+/* Hide Edge's native password reveal button */
+input[type="password"]::-ms-reveal {
+  display: none;
+}
