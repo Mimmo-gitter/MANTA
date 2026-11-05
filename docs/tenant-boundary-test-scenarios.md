@@ -6,7 +6,7 @@
 - `SCRUM-244` / `SCRUM-294` / `SCRUM-295` (US-8: Database-enforced tenant isolation via PostgreSQL RLS)  
 - `SCRUM-245` / `SCRUM-296` / `SCRUM-299` (US-9: PgBouncer transaction pooling tenant state cleanup)  
 - `SCRUM-240` / `SCRUM-277` / `SCRUM-278` (US-4 & US-5: RS256 JWT validation, JWKS refresh & HTTP 401 on failure)  
-- `SCRUM-248` / `SCRUM-322` / `SCRUM-323` (US-12: Tenant integration connection & ID-isolated management)  
+- `SCRUM-248` / `SCRUM-322` / `SCRUM-323` / `SCRUM-324` (US-12 & US-13: Tenant integration connection, ID-isolated management & test scenarios, see [`docs/integration-test-scenarios.md`](integration-test-scenarios.md))  
 - `SCRUM-292` (`eng_app_user` least-privilege role), `SCRUM-318` (`FORCE ROW LEVEL SECURITY`), `SCRUM-293` (Automated RLS schema guardrails)  
 - `SCRUM-305` (Negative RLS safety net verification: pipeline fails when RLS policy is disabled, see [`docs/negative-rls-security-test.md`](negative-rls-security-test.md))  
 **Target Architecture Layers:**  
