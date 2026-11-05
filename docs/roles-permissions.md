@@ -2,7 +2,9 @@
 **Definitive Role-Permission Matrix for the Seven System Roles**
 
 - **Parent User Story:** `SCRUM-247` (`US-11` Role-based access control)
-- **Task:** `SCRUM-306` (Define role permission matrix for the seven roles)
+- **Tasks:**
+  - `SCRUM-306` (Define role permission matrix for the seven roles)
+  - `SCRUM-311` (Create role-access test scenarios — see [`docs/role-access-test-scenarios.md`](role-access-test-scenarios.md))
 - **Version:** `1.0.0`
 - **Status:** Approved / Baseline Established
 - **Authoritative Machine-Readable Source:** [`docs/roles-permissions.json`](file:///c:/MANTA/MANTA/docs/roles-permissions.json)
