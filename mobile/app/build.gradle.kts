@@ -55,6 +55,18 @@ android {
 
 tasks.getByPath("preBuild").dependsOn("ktlintFormat")
 
+tasks.register("lintDebug") {
+    group = "verification"
+    description = "Runs Android Lint on all debug variants (dev and stage)."
+    dependsOn("lintDevDebug", "lintStageDebug")
+}
+
+tasks.register("testDebugUnitTest") {
+    group = "verification"
+    description = "Runs unit tests on all debug variants (dev and stage)."
+    dependsOn("testDevDebugUnitTest", "testStageDebugUnitTest")
+}
+
 ktlint {
     ignoreFailures.set(false)
     reporters {

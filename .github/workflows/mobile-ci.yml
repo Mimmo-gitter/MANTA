@@ -51,10 +51,10 @@ jobs:
         run: ./gradlew ktlintCheck --no-daemon
 
       - name: Run static analysis (Android Lint)
-        run: ./gradlew lintDebug --no-daemon
+        run: ./gradlew lintDevDebug lintStageDebug --no-daemon
 
       - name: Run unit tests
-        run: ./gradlew testDebugUnitTest --no-daemon
+        run: ./gradlew testDevDebugUnitTest testStageDebugUnitTest --no-daemon
 
       - name: Build debug APK (assembleDebug)
         run: ./gradlew assembleDebug --no-daemon

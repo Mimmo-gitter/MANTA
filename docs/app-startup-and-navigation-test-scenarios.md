@@ -284,7 +284,9 @@ The navigation route model tests run on the host JVM without an emulator or devi
 ```bash
 cd mobile
 
-# Run JVM unit tests
+# Run JVM unit tests (for dev and stage debug variants)
+./gradlew testDevDebugUnitTest testStageDebugUnitTest
+# Or via convenience task:
 ./gradlew testDebugUnitTest
 ```
 
@@ -310,6 +312,8 @@ cd mobile
 # Auto-format Kotlin files
 ./gradlew ktlintFormat
 
-# Run Android Lint static analysis
+# Run Android Lint static analysis (dev and stage debug variants)
+./gradlew lintDevDebug lintStageDebug
+# Or via convenience task:
 ./gradlew lintDebug
 ```

@@ -129,11 +129,11 @@ cd mobile
 # Auto-format Kotlin code
 ./gradlew ktlintFormat
 
-# Static analysis (Android Lint)
-./gradlew lintDebug
+# Static analysis (Android Lint - dev and stage debug variants)
+./gradlew lintDevDebug lintStageDebug
 
-# Run unit tests
-./gradlew testDebugUnitTest
+# Run unit tests (dev and stage debug variants)
+./gradlew testDevDebugUnitTest testStageDebugUnitTest
 
 # Build debug APKs (dev and stage flavors)
 ./gradlew assembleDebug
