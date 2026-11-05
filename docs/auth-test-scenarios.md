@@ -1,6 +1,9 @@
 # Authentication Journey Test Scenarios (Sign-In & Sign-Out)
 
 **Parent User Story:** `SCRUM-240` (US-4: Sign in via the organization's identity provider)  
+**Related User Stories:**  
+- `SCRUM-242` (US-6: Silent session renewal & token expiration, see [`docs/session-renewal-test-scenarios.md`](session-renewal-test-scenarios.md))  
+- `SCRUM-241` (US-5: RS256 token validation, see [`token_validation_test_scenarios.md`](../token_validation_test_scenarios.md))  
 **Identity Provider:** Keycloak 24.0.5 (`manta` test realm — `infra/keycloak/realm-export.json`)  
 **Protocol:** OIDC / OAuth 2.0 Authorization Code Flow with PKCE (`S256`) & RP-Initiated Logout  
 **Automated E2E Suite:** `web/e2e/auth-keycloak-journey.spec.ts`
