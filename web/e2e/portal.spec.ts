@@ -3,17 +3,37 @@ import { test, expect } from "@playwright/test";
 const ALL_SIDEBAR_DESTINATIONS = [
   { id: "overview", url: "/", title: "Engineering Overview" },
   { id: "projects", url: "/projects", title: "Projects" },
-  { id: "delivery-analytics", url: "/delivery-analytics", title: "Delivery Analytics" },
+  {
+    id: "delivery-analytics",
+    url: "/delivery-analytics",
+    title: "Delivery Analytics",
+  },
   { id: "risks-alerts", url: "/risks-alerts", title: "Risks & Alerts" },
   { id: "sprint-wip", url: "/sprint-wip", title: "Sprint & WIP Monitoring" },
   { id: "scope-creep", url: "/scope-creep", title: "Scope Creep" },
-  { id: "adr-knowledge-base", url: "/adr-knowledge-base", title: "ADR Knowledge Base" },
+  {
+    id: "adr-knowledge-base",
+    url: "/adr-knowledge-base",
+    title: "ADR Knowledge Base",
+  },
   { id: "semantic-search", url: "/semantic-search", title: "Semantic Search" },
-  { id: "refactoring-verification", url: "/refactoring-verification", title: "Refactoring & Verification" },
-  { id: "workspace-settings", url: "/workspace-settings", title: "Workspace Settings" },
+  {
+    id: "refactoring-verification",
+    url: "/refactoring-verification",
+    title: "Refactoring & Verification",
+  },
+  {
+    id: "workspace-settings",
+    url: "/workspace-settings",
+    title: "Workspace Settings",
+  },
   { id: "integrations", url: "/integrations", title: "Integrations" },
   { id: "access-roles", url: "/access-roles", title: "Access & Roles" },
-  { id: "privacy-erasure", url: "/privacy-erasure", title: "Privacy & Erasure" },
+  {
+    id: "privacy-erasure",
+    url: "/privacy-erasure",
+    title: "Privacy & Erasure",
+  },
   { id: "adr-governance", url: "/adr-governance", title: "ADR Governance" },
 ];
 
@@ -54,9 +74,15 @@ test.describe("Portal Shell & Navigation (US-3 / SCRUM-270)", () => {
 
       await expect(sidebar.getByText("M.A.N.T.A.")).toBeVisible();
       await expect(sidebar.getByText("v2.4.0")).toBeVisible();
-      await expect(sidebar.getByText("WORKSPACE", { exact: true })).toBeVisible();
-      await expect(sidebar.getByText("ENGINEERING", { exact: true })).toBeVisible();
-      await expect(sidebar.getByText("ADMINISTRATION", { exact: true })).toBeVisible();
+      await expect(
+        sidebar.getByText("WORKSPACE", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        sidebar.getByText("ENGINEERING", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        sidebar.getByText("ADMINISTRATION", { exact: true }),
+      ).toBeVisible();
 
       const header = page.getByTestId("portal-header");
       await expect(header).toBeVisible();
@@ -64,7 +90,9 @@ test.describe("Portal Shell & Navigation (US-3 / SCRUM-270)", () => {
       expect(headerBox).not.toBeNull();
       expect(headerBox?.height).toBeCloseTo(48, 2);
       await expect(header.getByText("Console")).toBeVisible();
-      await expect(page.getByTestId("environment-badge")).toContainText("PROD US-EAST-1");
+      await expect(page.getByTestId("environment-badge")).toContainText(
+        "PROD US-EAST-1",
+      );
     });
 
     test("2. Navigates between all 14 sidebar entries and updates active state", async ({
@@ -85,9 +113,18 @@ test.describe("Portal Shell & Navigation (US-3 / SCRUM-270)", () => {
           await expect(
             page.getByRole("heading", { level: 1, name: dest.title }),
           ).toBeVisible();
-          await expect(page.getByTestId("placeholder-page")).toBeVisible();
+
+          if (dest.id === "integrations") {
+            await expect(
+              page.getByTestId("integrations-state-bar"),
+            ).toBeVisible();
+          } else {
+            await expect(page.getByTestId("placeholder-page")).toBeVisible();
+          }
         } else {
-          await expect(page.getByTestId("overview-default-state")).toBeVisible();
+          await expect(
+            page.getByTestId("overview-default-state"),
+          ).toBeVisible();
         }
 
         await expect(page.getByTestId("portal-sidebar")).toBeVisible();
@@ -101,7 +138,9 @@ test.describe("Portal Shell & Navigation (US-3 / SCRUM-270)", () => {
       await page.setViewportSize({ width: 1280, height: 800 });
       await page.goto("/projects");
       await expect(page).toHaveURL("/projects");
-      await expect(page.getByRole("heading", { level: 1, name: "Projects" })).toBeVisible();
+      await expect(
+        page.getByRole("heading", { level: 1, name: "Projects" }),
+      ).toBeVisible();
 
       // Navigate to an unknown route
       await page.goto("/broken-route-404-simulation");
@@ -110,7 +149,9 @@ test.describe("Portal Shell & Navigation (US-3 / SCRUM-270)", () => {
         page.getByRole("heading", { level: 1, name: "Page Not Found" }),
       ).toBeVisible();
       await expect(
-        page.getByText("The route you navigated to does not exist in this workspace"),
+        page.getByText(
+          "The route you navigated to does not exist in this workspace",
+        ),
       ).toBeVisible();
 
       // Return back to Overview via 404 recovery action
@@ -145,7 +186,10 @@ test.describe("Portal Shell & Navigation (US-3 / SCRUM-270)", () => {
 
       // Verify zero horizontal scrollbar
       const hasHorizontalOverflow = await page.evaluate(() => {
-        return document.documentElement.scrollWidth > document.documentElement.clientWidth;
+        return (
+          document.documentElement.scrollWidth >
+          document.documentElement.clientWidth
+        );
       });
       expect(hasHorizontalOverflow).toBe(false);
     });
@@ -165,13 +209,21 @@ test.describe("Portal Shell & Navigation (US-3 / SCRUM-270)", () => {
       expect(collapsedBox?.width).toBeCloseTo(72, 1);
 
       // Section titles should be hidden in 72px mode
-      await expect(sidebar.getByText("WORKSPACE", { exact: true })).not.toBeVisible();
-      await expect(sidebar.getByText("ENGINEERING", { exact: true })).not.toBeVisible();
-      await expect(sidebar.getByText("ADMINISTRATION", { exact: true })).not.toBeVisible();
+      await expect(
+        sidebar.getByText("WORKSPACE", { exact: true }),
+      ).not.toBeVisible();
+      await expect(
+        sidebar.getByText("ENGINEERING", { exact: true }),
+      ).not.toBeVisible();
+      await expect(
+        sidebar.getByText("ADMINISTRATION", { exact: true }),
+      ).not.toBeVisible();
 
       // Header displays tablet breadcrumb
       const header = page.getByTestId("portal-header");
-      await expect(header.getByText("Workspace", { exact: true })).toBeVisible();
+      await expect(
+        header.getByText("Workspace", { exact: true }),
+      ).toBeVisible();
       await expect(header.getByText("Overview", { exact: true })).toBeVisible();
 
       // Toggle expand via emblem button
@@ -185,10 +237,18 @@ test.describe("Portal Shell & Navigation (US-3 / SCRUM-270)", () => {
       expect(expandedBox?.width).toBeCloseTo(240, 1);
 
       // In expanded tablet mode, section titles and labels are visible
-      await expect(sidebar.getByText("WORKSPACE", { exact: true })).toBeVisible();
-      await expect(sidebar.getByText("ENGINEERING", { exact: true })).toBeVisible();
-      await expect(sidebar.getByText("ADMINISTRATION", { exact: true })).toBeVisible();
-      await expect(sidebar.getByText("Sprint & WIP", { exact: true })).toBeVisible();
+      await expect(
+        sidebar.getByText("WORKSPACE", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        sidebar.getByText("ENGINEERING", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        sidebar.getByText("ADMINISTRATION", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        sidebar.getByText("Sprint & WIP", { exact: true }),
+      ).toBeVisible();
 
       // Toggle back to collapse (72px)
       await toggleBtn.click();
@@ -199,7 +259,9 @@ test.describe("Portal Shell & Navigation (US-3 / SCRUM-270)", () => {
       // Navigation works in tablet view
       await page.getByTestId("nav-link-delivery-analytics").click();
       await expect(page).toHaveURL("/delivery-analytics");
-      await expect(header.getByText("Delivery Analytics", { exact: true })).toBeVisible();
+      await expect(
+        header.getByText("Delivery Analytics", { exact: true }),
+      ).toBeVisible();
     });
   });
 
@@ -225,7 +287,9 @@ test.describe("Portal Shell & Navigation (US-3 / SCRUM-270)", () => {
       await expect(sidebar).toBeVisible();
 
       // Administration section title must be hidden
-      await expect(sidebar.getByText("ADMINISTRATION", { exact: true })).not.toBeVisible();
+      await expect(
+        sidebar.getByText("ADMINISTRATION", { exact: true }),
+      ).not.toBeVisible();
 
       // All 5 admin entries must be completely hidden
       for (const adminId of ADMIN_ROUTE_IDS) {
@@ -233,8 +297,12 @@ test.describe("Portal Shell & Navigation (US-3 / SCRUM-270)", () => {
       }
 
       // Non-admin entries must remain accessible
-      await expect(sidebar.getByText("WORKSPACE", { exact: true })).toBeVisible();
-      await expect(sidebar.getByText("ENGINEERING", { exact: true })).toBeVisible();
+      await expect(
+        sidebar.getByText("WORKSPACE", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        sidebar.getByText("ENGINEERING", { exact: true }),
+      ).toBeVisible();
       await expect(page.getByTestId("nav-link-overview")).toBeVisible();
       await expect(page.getByTestId("nav-link-projects")).toBeVisible();
       await expect(page.getByTestId("nav-link-sprint-wip")).toBeVisible();
@@ -261,7 +329,9 @@ test.describe("Portal Shell & Navigation (US-3 / SCRUM-270)", () => {
       await expect(sidebar).toHaveCSS("width", "240px");
 
       // In expanded tablet, administration section and items are absent
-      await expect(sidebar.getByText("ADMINISTRATION", { exact: true })).not.toBeVisible();
+      await expect(
+        sidebar.getByText("ADMINISTRATION", { exact: true }),
+      ).not.toBeVisible();
       for (const adminId of ADMIN_ROUTE_IDS) {
         await expect(page.getByTestId(`nav-link-${adminId}`)).not.toBeVisible();
       }
