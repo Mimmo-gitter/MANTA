@@ -1,6 +1,7 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-
+from app.auth.members_router import router as members_router
+from app.notifications.router import router as invitations_router
 from app.auth import JWKSClient, JWTAuthMiddleware, auth_router
 from app.config import settings
 from app.integrations import integrations_router
@@ -47,6 +48,11 @@ app.include_router(webhooks_router)
 # Include integration connection and management endpoints (SCRUM-322, SCRUM-323)
 app.include_router(integrations_router)
 
+# Member invitations (SCRUM-314, SCRUM-315)
+app.include_router(invitations_router)
+
+# Member role management (SCRUM-317)
+app.include_router(members_router)
 
 @app.get("/health")
 async def health_check():

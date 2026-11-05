@@ -34,6 +34,18 @@ class Settings(BaseSettings):
     ACTIVE_ENCRYPTION_KEY_ID: str = "primary"
     WEBHOOK_BASE_URL: str | None = None
 
+        # Email / Invitations (SCRUM-314)
+    SMTP_HOST: str = "mailpit"
+    SMTP_PORT: int = 1025
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM: str = "noreply@manta.local"
+    SMTP_START_TLS: bool = False
+    WEB_BASE_URL: str = "http://localhost:3000"
+
+    KC_SERVICE_CLIENT_ID: str = "manta-backend"
+    KC_SERVICE_CLIENT_SECRET: str = ""
+
     @property
     def cors_origins(self) -> list[str]:
         return [orig.strip() for orig in self.CORS_ORIGINS.split(",") if orig.strip()]
@@ -42,7 +54,7 @@ class Settings(BaseSettings):
     def jwks_url(self) -> str:
         return self.OIDC_JWKS_URL or (
             f"{self.KEYCLOAK_URL.rstrip('/')}/realms/{self.KEYCLOAK_REALM}"
-            "/protocol/openid-connect/certs"
+            "/protocol/openid-connect/certs" 
         )
 
     @property
