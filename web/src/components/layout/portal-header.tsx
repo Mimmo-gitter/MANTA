@@ -402,7 +402,7 @@ export function PortalHeader({
               aria-expanded={workspaceMenuOpen}
               aria-haspopup="menu"
               aria-label={`Current Workspace: ${currentWorkspaceName}. Click to switch.`}
-              className="bg-[#121722] border border-[#1e2638] border-solid flex gap-[8px] h-[32px] items-center px-[11px] py-px rounded-[6px]"
+              className="bg-[#121722] border border-[#1e2638] border-solid flex min-w-[150px] max-w-[240px] gap-[8px] h-[32px] items-center px-[11px] py-px rounded-[6px]"
             >
               <img
                 src="/icons/shell/lightning-emerald.svg"
@@ -410,7 +410,7 @@ export function PortalHeader({
                 aria-hidden="true"
                 className="h-[9px] w-[5px] shrink-0"
               />
-              <span className="font-medium text-[#f0f4f8] text-[12px] leading-[16px] whitespace-nowrap">
+              <span className="font-medium text-[#f0f4f8] text-[12px] leading-[16px] whitespace-nowrap truncate min-w-0">
                 {currentWorkspaceName}
               </span>
               <img
@@ -422,7 +422,7 @@ export function PortalHeader({
                 alt=""
                 aria-hidden="true"
                 className={cn(
-                  "size-[12px] shrink-0 transition-transform duration-150",
+                  "ml-auto size-[12px] shrink-0 transition-transform duration-150",
                   workspaceMenuOpen && "rotate-180",
                 )}
               />
@@ -547,7 +547,7 @@ export function PortalHeader({
             aria-haspopup="menu"
             aria-label={`Current Workspace: ${currentWorkspaceName}. Click to switch.`}
             className={cn(
-              "flex w-[150px] h-[32px] shrink-0 gap-[8px] items-center px-[11px] rounded-[6px] border border-solid transition-all focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#00e599]",
+              "flex min-w-[150px] max-w-[240px] h-[32px] shrink-0 gap-[8px] items-center px-[11px] rounded-[6px] border border-solid transition-all focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#00e599]",
               workspaceMenuOpen
                 ? "bg-[#171B26] border-[#00e599] shadow-[0px_0px_10px_0px_rgba(0,229,153,0.1)]"
                 : "bg-[#171B26] border-[#252B3B] hover:border-[#7c839b]/40",
@@ -559,7 +559,7 @@ export function PortalHeader({
               aria-hidden="true"
               className="h-[9px] w-[5px] shrink-0"
             />
-            <span className="font-medium text-[#e2e8f0] text-[12px] leading-[16px] whitespace-nowrap">
+            <span className="font-medium text-[#e2e8f0] text-[12px] leading-[16px] whitespace-nowrap truncate min-w-0">
               {currentWorkspaceName}
             </span>
             <img

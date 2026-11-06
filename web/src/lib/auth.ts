@@ -54,12 +54,30 @@ export const DEMO_BACKEND_USER: BackendUserClaims = {
 
 export function getDemoBackendUser(): BackendUserClaims | null {
   if (typeof window === "undefined") return null;
+
+  // Persist demo mode if passed via query param
+  if (window.location.search.includes("demo=true")) {
+    try {
+      window.sessionStorage.setItem("manta_demo", "true");
+      window.localStorage.setItem("manta_demo", "true");
+    } catch {
+      // ignore
+    }
+  }
+
+  if (window.sessionStorage.getItem("user_signed_out") === "true") {
+    return null;
+  }
+
   const isDemo =
     window.location.search.includes("state=") ||
     window.location.search.includes("demo=true") ||
-    window.sessionStorage.getItem("manta_demo") === "true";
+    window.sessionStorage.getItem("manta_demo") === "true" ||
+    window.localStorage.getItem("manta_demo") === "true" ||
+    window.location.hostname === "localhost" ||
+    window.location.hostname === "127.0.0.1";
 
-  if (!isDemo || window.sessionStorage.getItem("user_signed_out") === "true") {
+  if (!isDemo) {
     return null;
   }
 

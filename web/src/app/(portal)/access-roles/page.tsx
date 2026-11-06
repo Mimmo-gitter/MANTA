@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Plus, Users } from "lucide-react";
+import { Users } from "lucide-react";
 import { MembersTable } from "@/components/members/members-table";
 import { InviteMemberDialog } from "@/components/members/invite-member-dialog";
 import { getMembers } from "@/lib/members-api";
@@ -28,42 +28,41 @@ export default function AccessRolesPage() {
   }, [loadMembers]);
 
   return (
-    <div className="flex w-full flex-col gap-3.5 pb-12 pt-1">
-      {/* Breadcrumb */}
+    <div className="flex w-full flex-col gap-[10px] px-[24px] py-[14px]">
+      {/* Breadcrumb (Figma 512:586) */}
       <nav
         aria-label="Members Breadcrumb"
         data-testid="members-page-breadcrumb"
-        className="flex items-center gap-1.5 font-mono text-[11px] text-[#94a3b8]"
+        className="flex items-center gap-[6px] font-mono text-[11px] leading-normal text-[#94a3b8]"
       >
-        <span>Administration</span>
-        <span className="text-[#64748b]">/</span>
+        <span className="font-normal text-[#94a3b8]">Administration</span>
+        <span className="font-normal text-[#64748b]">/</span>
         <span className="font-medium text-[#00e599]">Access & Roles</span>
       </nav>
 
-      {/* Page Header */}
-      <header className="flex items-center justify-between">
-        <div className="flex flex-col gap-0.5">
+      {/* Page Header (Figma 512:590) */}
+      <header className="flex w-full items-center justify-between">
+        <div className="flex flex-col items-start gap-[2px]">
           <h1
             data-testid="members-page-title"
             aria-label="Access & Roles"
-            className="font-['Plus_Jakarta_Sans:Bold'] text-[20px] font-bold leading-[26px] text-[#f8fafc]"
+            className="font-sans text-[20px] font-bold leading-[26px] text-[#f8fafc]"
           >
             Members & Access
           </h1>
-          <p className="font-['Plus_Jakarta_Sans:Regular'] text-[12px] leading-[16px] text-[#94a3b8]">
+          <p className="font-sans text-[12px] font-normal leading-[16px] text-[#94a3b8]">
             Manage workspace members, role assignments, and pending invitations.
           </p>
         </div>
 
-        {/* Primary Action Button: + Invite Member */}
+        {/* Primary Action Button: + Invite Member (Figma 512:594) */}
         <button
           type="button"
           data-testid="invite-member-btn"
           onClick={() => setIsInviteDialogOpen(true)}
-          className="inline-flex h-[44px] items-center gap-2 rounded-[12px] bg-[#00e599] px-4 font-['Plus_Jakarta_Sans:SemiBold'] text-[14px] font-semibold text-[#05080f] shadow-[0px_4px_14px_rgba(0,229,153,0.3)] transition-all hover:bg-[#2df0b0] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00e599] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0f131d]"
+          className="inline-flex h-[44px] shrink-0 items-center justify-center rounded-[12px] bg-[#00e599] px-[18px] font-sans text-[14px] font-semibold leading-normal text-[#05080f] transition-colors hover:bg-[#2df0b0] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00e599] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0f131d]"
         >
-          <Plus className="size-4 stroke-[2.5]" aria-hidden="true" />
-          <span>Invite Member</span>
+          <span className="whitespace-pre">+  Invite Member</span>
         </button>
       </header>
 

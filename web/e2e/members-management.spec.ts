@@ -58,7 +58,8 @@ test.describe("Members Page & Invitation Flow (SCRUM-248 / US-12)", () => {
     // 6. Assert Success Feedback & List Update
     await expect(page.getByRole("status").filter({ hasText: "Invitation sent to anna.smith@acme.io" })).toBeVisible();
 
-    // Dialog closes automatically
+    // Close confirmation dialog via Done button
+    await page.getByTestId("invite-done-btn").click();
     await expect(dialog).not.toBeVisible();
 
     // New invite appears in list with "Invite Sent"
@@ -192,10 +193,120 @@ test.describe("Members Page & Invitation Flow (SCRUM-248 / US-12)", () => {
     await copyBtn.click();
     await expect(copyBtn).toContainText("Copied");
 
-    // Resend action on expired member (Mykhailo Shevtsov)
+    // Resend action on expired member (Mykhailo Shevtsov - opens ReissueInviteDialog, Figma 513:7655)
     const resendBtn = page.getByTestId("resend-btn-mem-007");
     await expect(resendBtn).toBeVisible();
     await resendBtn.click();
+    const reissueConfirmBtn = page.getByTestId("reissue-confirm-btn");
+    await expect(reissueConfirmBtn).toBeVisible();
+    await reissueConfirmBtn.click();
     await expect(page.getByRole("status").filter({ hasText: "Invitation resent to m.shevtsov@acme.io" })).toBeVisible();
+  });
+
+  test("Strict pagination: exactly 7 members per page and navigating to page 2", async ({ page }) => {
+    await page.goto("/access-roles");
+
+    // Initially 7 members, page 1 of 1
+    await expect(page.getByText("Showing 1–7 of 7 workspace members")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Prev" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Next" })).toBeDisabled();
+
+    // Invite an 8th member
+    await page.getByTestId("invite-member-btn").click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog).toBeVisible();
+    await page.getByTestId("invite-email-input").fill("extra.user@acme.io");
+    await page.getByTestId("invite-submit-btn").click();
+    await page.getByTestId("invite-done-btn").click();
+
+    // Dialog closes
+    await expect(dialog).not.toBeVisible();
+
+    // After adding 8th member, footer shows 1-7 of 8
+    await expect(page.getByText("Showing 1–7 of 8 workspace members")).toBeVisible();
+    const nextBtn = page.getByRole("button", { name: "Next" });
+    await expect(nextBtn).toBeEnabled();
+
+    // The newly invited member is at the top of page 1 table
+    await expect(page.locator("[data-testid^='member-row-']").filter({ hasText: "extra.user@acme.io" })).toBeVisible();
+
+    // Navigate to page 2
+    await nextBtn.click();
+    await expect(page.getByText("Showing 8–8 of 8 workspace members")).toBeVisible();
+    await expect(page.getByRole("button", { name: "Prev" })).toBeEnabled();
+    await expect(page.getByRole("button", { name: "Next" })).toBeDisabled();
+  });
+
+  test("Row context menu & Inline Role Selector: matches Figma 513:3083, 513:3059, 513:3530, 513:3957, 513:3979 and enforces single open popover", async ({
+    page,
+  }) => {
+    await page.goto("/access-roles");
+
+    // 1. Inline SRS Role Selector (Figma 513:3083) on Maksym Bielei
+    const maksymRow = page.getByTestId("member-row-mem-002");
+    await maksymRow.getByRole("button", { name: /Solution Architect/i }).click();
+    const rolePopover = page.getByTestId("inline-role-popover-mem-002");
+    await expect(rolePopover).toBeVisible();
+    await expect(rolePopover).toContainText("ASSIGN — MAKSYM BIELEI");
+    await expect(rolePopover).toContainText("Approve PII-sanitized ADRs, SCIP call-graphs & tech debt");
+
+    // 2. Opening Row 2 Context Menu (Figma 513:3530 - Active member) closes Inline Role Selector
+    const row2MenuBtn = maksymRow.getByLabel("More actions for Maksym Bielei");
+    await row2MenuBtn.click();
+    await expect(rolePopover).not.toBeVisible();
+
+    await expect(page.getByText("MAKSYM BIELEI · ACTIVE")).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Change assigned role..." })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Copy work email" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "View role permissions" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Remove from workspace..." })).toBeVisible();
+
+    // Clicking "Change assigned role..." closes context menu and opens Inline Role Selector (513:3083)
+    await page.getByRole("menuitem", { name: "Change assigned role..." }).click();
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    await expect(rolePopover).toBeVisible();
+
+    // 3. Row 5 (Bohdan Shcherbak - Invite Sent menu, Figma 513:3957) closes Inline Role Selector
+    const row5MenuBtn = page.getByTestId("member-row-mem-005").getByLabel("More actions for Bohdan Shcherbak");
+    await row5MenuBtn.click();
+    await expect(rolePopover).not.toBeVisible();
+    await expect(page.getByRole("menu")).toHaveCount(1);
+    await expect(page.getByText("INVITE SENT · 41H LEFT (BOHDAN)")).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Copy one-time invite link" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Resend invitation email" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Change invited role..." })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Revoke invitation..." })).toBeVisible();
+
+    // Clicking "Resend invitation email" opens the Reissue Workspace Invitation modal (Figma 513:7655)
+    await page.getByRole("menuitem", { name: "Resend invitation email" }).click();
+    const reissueModal = page.getByRole("dialog");
+    await expect(reissueModal).toBeVisible();
+    await expect(reissueModal.getByText("Re-issue Workspace Invitation")).toBeVisible();
+    await expect(reissueModal.getByText("INVITATION ACTIVE · 41H LEFT")).toBeVisible();
+
+    // Confirm reissue
+    await reissueModal.getByRole("button", { name: /Generate & Resend Invite/i }).click();
+    await expect(reissueModal).not.toBeVisible();
+
+    // Verifies top-right Toast (Figma 513:6316)
+    const toast = page.getByTestId("notification-toast");
+    await expect(toast).toBeVisible();
+    await expect(toast).toContainText("Invitation resent to b.shcherbak@acme.io");
+    await expect(toast).toContainText("Expires in 48h");
+    await expect(toast.getByTestId("toast-copy-link-btn")).toBeVisible();
+
+    // 4. Row 7 (Mykhailo Shevtsov - Expired Invite menu, Figma 513:3979)
+    const row7MenuBtn = page.getByTestId("member-row-mem-007").getByLabel("More actions for Mykhailo Shevtsov");
+    await row7MenuBtn.click();
+    await expect(page.getByRole("menu")).toHaveCount(1);
+    await expect(page.getByText("EXPIRED · 2D AGO (MYKHAILO)")).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Re-issue invite (new 48h)..." })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Change invited role..." })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Copy work email" })).toBeVisible();
+    await expect(page.getByRole("menuitem", { name: "Delete expired invite..." })).toBeVisible();
+
+    // Click outside to close
+    await page.getByTestId("members-page-title").click();
+    await expect(page.getByRole("menu")).toHaveCount(0);
   });
 });

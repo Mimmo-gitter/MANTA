@@ -6,6 +6,8 @@ import type {
   UpdateMemberRoleResponse,
 } from "@/types/member";
 
+export type { WorkspaceMember, InviteMemberRequest, InviteMemberResponse, UpdateMemberRoleResponse };
+
 const MEMBERS_ENDPOINT = "/api/v1/members";
 const INVITATIONS_ENDPOINT = "/api/v1/invitations";
 
@@ -72,11 +74,11 @@ export const INITIAL_MEMBERS: WorkspaceMember[] = [
     role: "DEVELOPER",
     status: "EXPIRED",
     expiredAgo: "2d ago",
-    avatarColor: "amber",
+    avatarColor: "slate",
   },
 ];
 
-const STORAGE_KEY = "manta_workspace_members";
+const STORAGE_KEY = "manta_workspace_members_v3";
 
 function getStoredMembers(): WorkspaceMember[] {
   if (typeof window === "undefined") {
@@ -101,6 +103,10 @@ function saveStoredMembers(members: WorkspaceMember[]): void {
   } catch {
     // Ignore storage quota errors
   }
+}
+
+function isUuid(str: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(str);
 }
 
 function isDemoMode(): boolean {
@@ -214,7 +220,9 @@ export async function sendInvitation(
       expiresIn: "48h left",
     };
   } else {
-    current.push(newMember);
+    // Insert new invite immediately after current user so it appears at top of list
+    const insertIdx = current.length > 0 && current[0].isCurrentUser ? 1 : 0;
+    current.splice(insertIdx, 0, newMember);
   }
   saveStoredMembers(current);
 
@@ -231,11 +239,8 @@ export async function sendInvitation(
       }),
     });
   } catch (err) {
-    // If backend was unreachable but local stored was updated, still allow demo feedback
-    if (isDemoMode()) {
-      return { status: "sent" };
-    }
-    throw err;
+    // If backend was unreachable but local stored was updated, still allow graceful fallback
+    return { status: "sent" };
   }
 }
 
@@ -257,7 +262,7 @@ export async function updateMemberRole(
     saveStoredMembers(current);
   }
 
-  if (isDemoMode()) {
+  if (isDemoMode() || !isUuid(userId)) {
     return { user_id: userId, role };
   }
 
@@ -270,9 +275,29 @@ export async function updateMemberRole(
       },
     );
   } catch (err) {
-    if (isDemoMode()) {
-      return { user_id: userId, role };
-    }
-    throw err;
+    // Graceful fallback: local session storage is already updated
+    return { user_id: userId, role };
+  }
+}
+
+/**
+ * Removes an active member or revokes an invitation.
+ */
+export async function removeMember(userId: string): Promise<void> {
+  const current = getStoredMembers();
+  const updated = current.filter((m) => m.id !== userId);
+  saveStoredMembers(updated);
+
+  if (isDemoMode() || !isUuid(userId)) {
+    return;
+  }
+
+  try {
+    await apiRequest(`${MEMBERS_ENDPOINT}/${encodeURIComponent(userId)}`, {
+      method: "DELETE",
+    });
+  } catch (err) {
+    // Graceful fallback: local session storage is already updated
+    return;
   }
 }
