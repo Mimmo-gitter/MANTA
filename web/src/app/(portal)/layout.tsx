@@ -22,10 +22,7 @@ function PortalAuthGuard({ children }: { children: React.ReactNode }) {
     typeof window !== "undefined" &&
     (window.location.search.includes("state=") ||
       window.location.search.includes("demo=true") ||
-      window.sessionStorage.getItem("manta_demo") === "true" ||
-      window.localStorage.getItem("manta_demo") === "true" ||
-      window.location.hostname === "localhost" ||
-      window.location.hostname === "127.0.0.1");
+      window.sessionStorage.getItem("manta_demo") === "true");
 
   const adminRoutes = [
     "/workspace-settings",
