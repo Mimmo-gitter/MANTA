@@ -118,6 +118,10 @@ test.describe("Portal Shell & Navigation (US-3 / SCRUM-270)", () => {
             await expect(
               page.getByTestId("integrations-state-bar"),
             ).toBeVisible();
+          } else if (dest.id === "access-roles") {
+            await expect(
+              page.getByTestId("members-kpi-strip"),
+            ).toBeVisible();
           } else {
             await expect(page.getByTestId("placeholder-page")).toBeVisible();
           }
