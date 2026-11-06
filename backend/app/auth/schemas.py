@@ -4,6 +4,14 @@ import uuid
 from pydantic import BaseModel
 
 
+class StubEndpointResponse(BaseModel):
+    """Standard payload returned by placeholder stub endpoints (HTTP 501)."""
+
+    status: str = "not_implemented"
+    action: str
+    detail: str
+
+
 class TokenClaims(BaseModel):
     """Normalized representation of validated JWT claims."""
 

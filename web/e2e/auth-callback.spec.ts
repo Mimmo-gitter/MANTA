@@ -156,7 +156,6 @@ test.describe("OIDC Callback Handling & Multi-Tenant Dashboard (SCRUM-274)", () 
     // Verify user name and tenant badge in dashboard header
     const profileName = page.getByTestId("user-profile-name");
     const tenantBadge = page.getByTestId("user-tenant-badge");
-    const signOutBtn = page.getByTestId("header-signout-button");
 
     await expect(profileName).toBeVisible();
     await expect(profileName).toContainText("Alpha Developer");
@@ -164,7 +163,7 @@ test.describe("OIDC Callback Handling & Multi-Tenant Dashboard (SCRUM-274)", () 
     await expect(tenantBadge).toBeVisible();
     await expect(tenantBadge).toContainText("Tenant Alpha");
 
-    await expect(signOutBtn).toBeVisible();
+    await expect(page.getByTestId("header-signout-button")).not.toBeVisible();
   });
 
   test("AC 3: Users from Tenant Beta see their own user name and Tenant Beta badge", async ({
@@ -338,6 +337,21 @@ test.describe("OIDC Callback Handling & Multi-Tenant Dashboard (SCRUM-274)", () 
     let capturedState: string | null = null;
     let capturedNonce: string | null = null;
 
+    await page.route("**/realms/manta/.well-known/openid-configuration", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          issuer: "http://localhost:8080/realms/manta",
+          authorization_endpoint: "http://localhost:8080/realms/manta/protocol/openid-connect/auth",
+          token_endpoint: "http://localhost:8080/realms/manta/protocol/openid-connect/token",
+          userinfo_endpoint: "http://localhost:8080/realms/manta/protocol/openid-connect/userinfo",
+          end_session_endpoint: "http://localhost:8080/realms/manta/protocol/openid-connect/logout",
+          jwks_uri: "http://localhost:8080/realms/manta/protocol/openid-connect/certs",
+        }),
+      });
+    });
+
     await page.route("**/protocol/openid-connect/certs", async (route) => {
       await route.fulfill({
         status: 200,
@@ -412,11 +426,16 @@ test.describe("OIDC Callback Handling & Multi-Tenant Dashboard (SCRUM-274)", () 
     await expect.poll(() => capturedState, { timeout: 10000 }).not.toBeNull();
 
     await page.goto(`/auth/callback?code=mock_code&state=${capturedState}`);
-    await expect(page).toHaveURL("/", { timeout: 15000 });
+    await expect(page.getByTestId("user-profile-name")).toContainText("Alpha Developer", { timeout: 15000 });
 
-    const signOutBtn = page.getByTestId("header-signout-button");
-    await expect(signOutBtn).toBeVisible();
-    await signOutBtn.click();
+    // Verify navigating to /login while authenticated redirects back to /
+    await page.goto("/login");
+    await expect(page).toHaveURL("/", { timeout: 10000 });
+
+    await page.getByTestId("user-profile-menu-trigger").click();
+    const dropdownSignOut = page.getByTestId("dropdown-signout-button");
+    await expect(dropdownSignOut).toBeVisible();
+    await dropdownSignOut.click();
 
     // Verify user is redirected to /signed-out, confirmation is shown and profile elements are gone
     await expect(page).toHaveURL(/\/signed-out/, { timeout: 10000 });

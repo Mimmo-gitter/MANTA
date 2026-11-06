@@ -148,4 +148,15 @@ test.describe("Signed-Out Confirmation Screen (Figma 491:762 & Style Guide 209:8
     const actualCenterX = box!.x + box!.width / 2;
     expect(Math.abs(actualCenterX - expectedCenterX)).toBeLessThan(5);
   });
+
+  test("reloading /signed-out (F5) redirects to /login", async ({ page }) => {
+    await page.goto("/signed-out");
+    await expect(
+      page.getByRole("heading", { level: 1, name: "You Have Been Signed Out" })
+    ).toBeVisible();
+
+    await page.reload();
+    await expect(page).toHaveURL(/\/login/, { timeout: 10000 });
+  });
 });
+

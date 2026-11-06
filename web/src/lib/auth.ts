@@ -5,6 +5,11 @@ import {
   SigninRedirectArgs,
   User,
 } from "oidc-client-ts";
+import {
+  withRenewLock,
+  broadcastAuthMessage,
+  getTabId,
+} from "@/lib/auth-tab-sync";
 
 const KEYCLOAK_URL = process.env.NEXT_PUBLIC_KEYCLOAK_URL || "http://localhost:8080";
 const REALM = process.env.NEXT_PUBLIC_KEYCLOAK_REALM || "manta";
@@ -37,6 +42,42 @@ export function getTenantDisplayName(tenantId?: string | null): string {
   return `Tenant: ${tenantId}`;
 }
 
+export const DEMO_BACKEND_USER: BackendUserClaims = {
+  sub: "demo-user-id",
+  name: "Pavlo Zhuk",
+  preferred_username: "pzhuk",
+  email: "director@manta.ai",
+  tenant_id: "",
+  roles: ["TENANT_ADMIN"],
+};
+
+export function getDemoBackendUser(): BackendUserClaims | null {
+  if (typeof window === "undefined") return null;
+  const isDemo =
+    window.location.search.includes("state=") ||
+    window.location.search.includes("demo=true") ||
+    window.sessionStorage.getItem("manta_demo") === "true";
+
+  if (!isDemo || window.sessionStorage.getItem("user_signed_out") === "true") {
+    return null;
+  }
+
+  let roles = ["TENANT_ADMIN"];
+  try {
+    const customRoles = window.sessionStorage.getItem("manta_demo_roles");
+    if (customRoles) {
+      roles = JSON.parse(customRoles);
+    }
+  } catch {
+    // fallback to default
+  }
+
+  return {
+    ...DEMO_BACKEND_USER,
+    roles,
+  };
+}
+
 export function getOidcSettings(): UserManagerSettings {
   const redirectUri =
     process.env.NEXT_PUBLIC_REDIRECT_URI ||
@@ -57,6 +98,7 @@ export function getOidcSettings(): UserManagerSettings {
     post_logout_redirect_uri: postLogoutRedirectUri,
     response_type: "code",
     scope: "openid profile email",
+    automaticSilentRenew: true,
     // Explicit endpoints so redirection works even before Keycloak network discovery
     metadata: {
       issuer: AUTHORITY,
@@ -66,12 +108,31 @@ export function getOidcSettings(): UserManagerSettings {
       end_session_endpoint: `${AUTHORITY}/protocol/openid-connect/logout`,
       jwks_uri: `${AUTHORITY}/protocol/openid-connect/certs`,
     },
-    userStore: typeof window !== "undefined" ? new WebStorageStateStore({ store: window.sessionStorage }) : undefined,
-    stateStore: typeof window !== "undefined" ? new WebStorageStateStore({ store: window.sessionStorage }) : undefined,
+    userStore:
+      typeof window !== "undefined"
+        ? new WebStorageStateStore({ store: window.localStorage })
+        : undefined,
+    stateStore:
+      typeof window !== "undefined"
+        ? new WebStorageStateStore({ store: window.localStorage })
+        : undefined,
   };
 }
 
 let userManagerInstance: UserManager | null = null;
+// Must be greater than oidc-client-ts accessTokenExpiringNotificationTimeInSeconds (default 60).
+const RENEW_SKIP_THRESHOLD_SECONDS = 120;
+let silentRenewPromise: ReturnType<UserManager["signinSilent"]> | null = null;
+
+let isLoggingOutInProgress = false;
+
+export function setIsLoggingOut(inProgress: boolean): void {
+  isLoggingOutInProgress = inProgress;
+}
+
+export function getIsLoggingOut(): boolean {
+  return isLoggingOutInProgress;
+}
 
 export function getUserManager(): UserManager {
   if (typeof window === "undefined") {
@@ -80,7 +141,58 @@ export function getUserManager(): UserManager {
 
   if (!userManagerInstance) {
     userManagerInstance = new UserManager(getOidcSettings());
+
+    const originalSigninSilent =
+      userManagerInstance.signinSilent.bind(userManagerInstance);
+
+    userManagerInstance.signinSilent = (...args) => {
+      if (!silentRenewPromise) {
+        silentRenewPromise = withRenewLock(async () => {
+          // Read the latest user from shared localStorage
+          const currentUser = await userManagerInstance!.getUser();
+
+          // If another tab already renewed the token (i.e. it is no longer
+          // inside the expiring window), reuse it instead of sending another
+          // request. Checking only `expired` would skip the scheduled renewal,
+          // which fires before expiry.
+          if (
+            currentUser &&
+            (currentUser.expires_in ?? 0) > RENEW_SKIP_THRESHOLD_SECONDS
+          ) {
+            return currentUser;
+          }
+
+          broadcastAuthMessage({
+            type: "RENEW_STARTED",
+            tabId: getTabId(),
+          });
+
+          try {
+            const result = await originalSigninSilent(...args);
+
+            broadcastAuthMessage({
+              type: "RENEW_COMPLETED",
+              tabId: getTabId(),
+            });
+
+            return result;
+          } catch (error) {
+            broadcastAuthMessage({
+              type: "RENEW_FAILED",
+              tabId: getTabId(),
+            });
+
+            throw error;
+          }
+        }).finally(() => {
+          silentRenewPromise = null;
+        });
+      }
+
+      return silentRenewPromise;
+    };
   }
+
   return userManagerInstance;
 }
 
@@ -116,7 +228,14 @@ export async function initiateLogin(args?: SigninRedirectArgs): Promise<void> {
  */
 export async function handleSigninCallback(url?: string): Promise<User> {
   const manager = getUserManager();
-  return await manager.signinRedirectCallback(url);
+  const user = await manager.signinRedirectCallback(url);
+
+  broadcastAuthMessage({
+    type: "LOGIN_COMPLETED",
+    tabId: getTabId(),
+  });
+
+  return user;
 }
 
 /**
@@ -133,9 +252,22 @@ export async function getCurrentUser(): Promise<User | null> {
  * Purges tokens and state from sessionStorage, removes user from UserManager store,
  * and redirects the browser to Keycloak end_session_endpoint with id_token_hint and post_logout_redirect_uri.
  */
-export async function logoutUser(postLogoutRedirectUri?: string): Promise<void> {
+export async function logoutUser(
+  postLogoutRedirectUri?: string,
+): Promise<void> {
+  setIsLoggingOut(true);
+  if (typeof window !== "undefined") {
+    window.sessionStorage.setItem("user_signed_out", "true");
+  }
+
   const manager = getUserManager();
   const user = await manager.getUser();
+
+  broadcastAuthMessage({
+    type: "LOGOUT",
+    tabId: getTabId(),
+  });
+
   const tenantId = (user?.profile?.tenant_id as string) || undefined;
   const workspaceQuery =
     tenantId && KNOWN_TENANTS[tenantId]
@@ -149,17 +281,22 @@ export async function logoutUser(postLogoutRedirectUri?: string): Promise<void> 
 
   const targetRedirectUri = postLogoutRedirectUri || defaultRedirectUri;
 
-  // 1. Purge tokens and state from sessionStorage
+  // 1. Purge tokens and state from localStorage
   await manager.removeUser();
+
   if (typeof window !== "undefined") {
     const keysToRemove: string[] = [];
-    for (let i = 0; i < window.sessionStorage.length; i++) {
-      const key = window.sessionStorage.key(i);
+
+    for (let i = 0; i < window.localStorage.length; i++) {
+      const key = window.localStorage.key(i);
+
       if (key && (key.startsWith("oidc.") || key.startsWith("manta."))) {
         keysToRemove.push(key);
       }
     }
-    keysToRemove.forEach((k) => window.sessionStorage.removeItem(k));
+
+    keysToRemove.forEach((key) => window.localStorage.removeItem(key));
+    window.sessionStorage.setItem("user_signed_out", "true");
   }
 
   // 2. Call Keycloak end_session_endpoint for IdP session termination
