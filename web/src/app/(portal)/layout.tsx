@@ -28,6 +28,7 @@ function PortalAuthGuard({ children }: { children: React.ReactNode }) {
     "/workspace-settings",
     "/integrations",
     "/access-roles",
+    "/members",
     "/privacy-erasure",
     "/adr-governance",
   ];
@@ -44,6 +45,8 @@ function PortalAuthGuard({ children }: { children: React.ReactNode }) {
       route.startsWith("/workspace-settings/") ||
       route === "/access-roles" ||
       route.startsWith("/access-roles/") ||
+      route === "/members" ||
+      route.startsWith("/members/") ||
       route === "/privacy-erasure" ||
       route.startsWith("/privacy-erasure/")
     ) {
