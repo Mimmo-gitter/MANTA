@@ -53,9 +53,20 @@ android {
             buildConfigField("String", "API_URL", "\"https://stage-api.yourorg.com/api/v1/\"")
         }
     }
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+        }
+    }
 }
 
 tasks.getByPath("preBuild").dependsOn("ktlintFormat")
+
+tasks.withType<Test>().configureEach {
+    if (System.getProperty("os.name").contains("Windows", ignoreCase = true)) {
+        jvmArgs("-Djavax.net.ssl.trustStoreType=WINDOWS-ROOT")
+    }
+}
 
 ktlint {
     ignoreFailures.set(false)
@@ -102,6 +113,9 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    testImplementation(libs.robolectric)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)
