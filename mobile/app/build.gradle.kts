@@ -6,6 +6,8 @@ plugins {
     alias(libs.plugins.ktlint)
 }
 
+val robolectricAndroidAll: Configuration = configurations.create("robolectricAndroidAll")
+
 android {
     namespace = "com.manta.mobile"
     compileSdk {
@@ -56,6 +58,12 @@ android {
     testOptions {
         unitTests {
             isIncludeAndroidResources = true
+            all { test ->
+                test.systemProperty(
+                    "robolectric.dependency.dir",
+                    robolectricAndroidAll.singleFile.parentFile.absolutePath
+                )
+            }
         }
     }
 }
@@ -116,6 +124,7 @@ dependencies {
     testImplementation(platform(libs.androidx.compose.bom))
     testImplementation(libs.androidx.compose.ui.test.junit4)
     testImplementation(libs.robolectric)
+    robolectricAndroidAll(libs.robolectric.androidall)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)
