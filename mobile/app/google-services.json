@@ -1,13 +1,13 @@
 {
   "project_info": {
-    "project_number": "123456789012",
-    "project_id": "manta-mobile",
-    "storage_bucket": "manta-mobile.appspot.com"
+    "project_number": "474463959894",
+    "project_id": "manta-e2d8e",
+    "storage_bucket": "manta-e2d8e.firebasestorage.app"
   },
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:123456789012:android:abcdef0123456789abcdef",
+        "mobilesdk_app_id": "1:474463959894:android:b96b524849a4960ce874f7",
         "android_client_info": {
           "package_name": "com.manta.mobile"
         }
@@ -15,7 +15,7 @@
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "fake_api_key"
+          "current_key": "AIzaSyAdmParXyLFdPchIp_I_MnAuq_fzerscfE"
         }
       ],
       "services": {
@@ -26,7 +26,7 @@
     },
     {
       "client_info": {
-        "mobilesdk_app_id": "1:123456789012:android:abcdef0123456789abcde0",
+        "mobilesdk_app_id": "1:474463959894:android:24e56b6e9d63f8b4e874f7",
         "android_client_info": {
           "package_name": "com.manta.mobile.dev"
         }
@@ -34,7 +34,7 @@
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "fake_api_key"
+          "current_key": "AIzaSyAdmParXyLFdPchIp_I_MnAuq_fzerscfE"
         }
       ],
       "services": {
@@ -45,7 +45,7 @@
     },
     {
       "client_info": {
-        "mobilesdk_app_id": "1:123456789012:android:abcdef0123456789abcde1",
+        "mobilesdk_app_id": "1:474463959894:android:e9e6528cc1c96eece874f7",
         "android_client_info": {
           "package_name": "com.manta.mobile.stage"
         }
@@ -53,7 +53,7 @@
       "oauth_client": [],
       "api_key": [
         {
-          "current_key": "fake_api_key"
+          "current_key": "AIzaSyAdmParXyLFdPchIp_I_MnAuq_fzerscfE"
         }
       ],
       "services": {
