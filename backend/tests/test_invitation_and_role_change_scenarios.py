@@ -19,10 +19,8 @@ Automated verification of the core invitation and role-change edge cases:
 - TC-INV-EDGE-004: SMTP failure returns HTTP 502 with transactional isolation
 """
 
-import hashlib
 import json
 import time
-from datetime import datetime, timedelta, timezone
 from typing import Any
 import unittest.mock as mock
 import uuid
@@ -40,7 +38,6 @@ from app.auth.keycloak_admin import UserAlreadyExistsError
 from app.auth.permissions import (
     FORBIDDEN_RESPONSE,
     Permission,
-    Role,
     get_permission_matrix,
     resolve_caller_roles,
 )
@@ -52,8 +49,6 @@ from app.notifications.service import (
     INVITATION_TTL_HOURS,
     InvitationError,
     consume_invitation,
-    create_invitation,
-    hash_token,
 )
 
 TENANT_ALPHA = "11111111-1111-1111-1111-111111111111"
@@ -68,7 +63,9 @@ class MockJWKSServer:
         return httpx.Response(200, json={"keys": [self.jwk]})
 
 
-def generate_rsa_keypair(kid: str = "invitation-test-key") -> tuple[rsa.RSAPrivateKey, dict[str, Any]]:
+def generate_rsa_keypair(
+    kid: str = "invitation-test-key",
+) -> tuple[rsa.RSAPrivateKey, dict[str, Any]]:
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     jwk_dict = json.loads(RSAAlgorithm.to_jwk(private_key.public_key()))
     jwk_dict.update({"kid": kid, "kty": "RSA", "alg": "RS256", "use": "sig"})
@@ -153,9 +150,19 @@ async def test_admin_can_create_valid_invitation(auth_fixture):
 
     with (
         mock.patch("app.notifications.router.get_tenant_db_context") as mock_db_ctx,
-        mock.patch("app.notifications.router.find_platform_user_id", new_callable=mock.AsyncMock, return_value=uuid.uuid4()),
-        mock.patch("app.notifications.router.create_invitation", new_callable=mock.AsyncMock, return_value="raw_secret_token_123") as mock_create,
-        mock.patch("app.notifications.router.send_invitation_email", new_callable=mock.AsyncMock) as mock_send_email,
+        mock.patch(
+            "app.notifications.router.find_platform_user_id",
+            new_callable=mock.AsyncMock,
+            return_value=uuid.uuid4(),
+        ),
+        mock.patch(
+            "app.notifications.router.create_invitation",
+            new_callable=mock.AsyncMock,
+            return_value="raw_secret_token_123",
+        ) as mock_create,
+        mock.patch(
+            "app.notifications.router.send_invitation_email", new_callable=mock.AsyncMock
+        ) as mock_send_email,
     ):
         mock_session = mock.AsyncMock()
         mock_db_ctx.return_value.__aenter__.return_value = mock_session
@@ -187,8 +194,16 @@ async def test_valid_invitation_acceptance_provisions_user(mock_db_session):
     }
 
     with (
-        mock.patch("app.notifications.router.consume_invitation", new_callable=mock.AsyncMock, return_value=sample_invite),
-        mock.patch("app.notifications.router.provision_user", new_callable=mock.AsyncMock, return_value="keycloak_sub_9999") as mock_kc_prov,
+        mock.patch(
+            "app.notifications.router.consume_invitation",
+            new_callable=mock.AsyncMock,
+            return_value=sample_invite,
+        ),
+        mock.patch(
+            "app.notifications.router.provision_user",
+            new_callable=mock.AsyncMock,
+            return_value="keycloak_sub_9999",
+        ) as mock_kc_prov,
     ):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             resp = await ac.post(
@@ -220,7 +235,9 @@ async def test_reused_invitation_link_rejected_with_410_gone(mock_db_session):
             new_callable=mock.AsyncMock,
             side_effect=InvitationError(410, "Це запрошення вже використано"),
         ),
-        mock.patch("app.notifications.router.provision_user", new_callable=mock.AsyncMock) as mock_kc_prov,
+        mock.patch(
+            "app.notifications.router.provision_user", new_callable=mock.AsyncMock
+        ) as mock_kc_prov,
     ):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             resp = await ac.post(
@@ -240,7 +257,13 @@ async def test_service_consume_invitation_reused_status_mapping():
     TC-INV-REUSE-002: Service unit test for consume_invitation SQL return status 'used'.
     """
     mock_session = mock.AsyncMock()
-    mock_row = {"r_status": "used", "r_id": None, "r_tenant_id": None, "r_email": None, "r_role": None}
+    mock_row = {
+        "r_status": "used",
+        "r_id": None,
+        "r_tenant_id": None,
+        "r_email": None,
+        "r_role": None,
+    }
     mock_mappings = mock.MagicMock()
     mock_mappings.first.return_value = mock_row
     mock_result = mock.MagicMock()
@@ -271,7 +294,9 @@ async def test_expired_invitation_link_rejected_with_410_gone(mock_db_session):
             new_callable=mock.AsyncMock,
             side_effect=InvitationError(410, "Термін дії запрошення закінчився"),
         ),
-        mock.patch("app.notifications.router.provision_user", new_callable=mock.AsyncMock) as mock_kc_prov,
+        mock.patch(
+            "app.notifications.router.provision_user", new_callable=mock.AsyncMock
+        ) as mock_kc_prov,
     ):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             resp = await ac.post(
@@ -291,7 +316,13 @@ async def test_service_consume_invitation_expired_status_mapping():
     TC-INV-EXP-002: Service unit test for consume_invitation SQL return status 'expired'.
     """
     mock_session = mock.AsyncMock()
-    mock_row = {"r_status": "expired", "r_id": None, "r_tenant_id": None, "r_email": None, "r_role": None}
+    mock_row = {
+        "r_status": "expired",
+        "r_id": None,
+        "r_tenant_id": None,
+        "r_email": None,
+        "r_role": None,
+    }
     mock_mappings = mock.MagicMock()
     mock_mappings.first.return_value = mock_row
     mock_result = mock.MagicMock()
@@ -331,7 +362,11 @@ async def test_invite_acceptance_existing_keycloak_user_rolls_back_with_409(mock
     }
 
     with (
-        mock.patch("app.notifications.router.consume_invitation", new_callable=mock.AsyncMock, return_value=sample_invite),
+        mock.patch(
+            "app.notifications.router.consume_invitation",
+            new_callable=mock.AsyncMock,
+            return_value=sample_invite,
+        ),
         mock.patch(
             "app.notifications.router.provision_user",
             new_callable=mock.AsyncMock,
@@ -368,9 +403,19 @@ async def test_invite_acceptance_duplicate_db_user_rolls_back_with_409(mock_db_s
     )
 
     with (
-        mock.patch("app.notifications.router.consume_invitation", new_callable=mock.AsyncMock, return_value=sample_invite),
-        mock.patch("app.notifications.router.provision_user", new_callable=mock.AsyncMock, return_value="kc_created_user_123"),
-        mock.patch("app.notifications.router.delete_user", new_callable=mock.AsyncMock) as mock_delete_kc,
+        mock.patch(
+            "app.notifications.router.consume_invitation",
+            new_callable=mock.AsyncMock,
+            return_value=sample_invite,
+        ),
+        mock.patch(
+            "app.notifications.router.provision_user",
+            new_callable=mock.AsyncMock,
+            return_value="kc_created_user_123",
+        ),
+        mock.patch(
+            "app.notifications.router.delete_user", new_callable=mock.AsyncMock
+        ) as mock_delete_kc,
     ):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             resp = await ac.post(
@@ -413,7 +458,9 @@ async def test_admin_can_update_member_role(auth_fixture):
         mock_target_res.first.return_value = (target_user_id,)
 
         mock_exec_res = mock.MagicMock()
-        mock_session.execute = mock.AsyncMock(side_effect=[mock_admin_res, mock_target_res, mock_exec_res, mock_exec_res])
+        mock_session.execute = mock.AsyncMock(
+            side_effect=[mock_admin_res, mock_target_res, mock_exec_res, mock_exec_res]
+        )
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             resp = await ac.patch(
@@ -496,7 +543,10 @@ async def test_role_change_demotion_immediately_revokes_permission():
 
         resolved_roles = await resolve_caller_roles(user_claims)
         assert resolved_roles == {"DEVELOPER"}
-        assert get_permission_matrix().is_allowed(resolved_roles, [Permission.PUBLISH_GLOBAL_ADR]) is False
+        assert (
+            get_permission_matrix().is_allowed(resolved_roles, [Permission.PUBLISH_GLOBAL_ADR])
+            is False
+        )
 
 
 @pytest.mark.asyncio
@@ -620,7 +670,11 @@ async def test_invalid_role_rejected_with_422(auth_fixture):
 
     with (
         mock.patch("app.notifications.router.get_tenant_db_context") as mock_db_ctx,
-        mock.patch("app.notifications.router.find_platform_user_id", new_callable=mock.AsyncMock, return_value=uuid.uuid4()),
+        mock.patch(
+            "app.notifications.router.find_platform_user_id",
+            new_callable=mock.AsyncMock,
+            return_value=uuid.uuid4(),
+        ),
     ):
         mock_session = mock.AsyncMock()
         mock_db_ctx.return_value.__aenter__.return_value = mock_session
@@ -647,7 +701,11 @@ async def test_overlong_email_rejected_with_422(auth_fixture):
 
     with (
         mock.patch("app.notifications.router.get_tenant_db_context") as mock_db_ctx,
-        mock.patch("app.notifications.router.find_platform_user_id", new_callable=mock.AsyncMock, return_value=uuid.uuid4()),
+        mock.patch(
+            "app.notifications.router.find_platform_user_id",
+            new_callable=mock.AsyncMock,
+            return_value=uuid.uuid4(),
+        ),
     ):
         mock_session = mock.AsyncMock()
         mock_db_ctx.return_value.__aenter__.return_value = mock_session
@@ -693,9 +751,19 @@ async def test_smtp_relay_outage_returns_502_bad_gateway(auth_fixture):
 
     with (
         mock.patch("app.notifications.router.get_tenant_db_context") as mock_db_ctx,
-        mock.patch("app.notifications.router.find_platform_user_id", new_callable=mock.AsyncMock, return_value=uuid.uuid4()),
-        mock.patch("app.notifications.router.create_invitation", new_callable=mock.AsyncMock, return_value="raw_token_xyz"),
-        mock.patch("app.notifications.router.send_invitation_email", side_effect=Exception("SMTP timeout")),
+        mock.patch(
+            "app.notifications.router.find_platform_user_id",
+            new_callable=mock.AsyncMock,
+            return_value=uuid.uuid4(),
+        ),
+        mock.patch(
+            "app.notifications.router.create_invitation",
+            new_callable=mock.AsyncMock,
+            return_value="raw_token_xyz",
+        ),
+        mock.patch(
+            "app.notifications.router.send_invitation_email", side_effect=Exception("SMTP timeout")
+        ),
     ):
         mock_session = mock.AsyncMock()
         mock_db_ctx.return_value.__aenter__.return_value = mock_session
