@@ -18,7 +18,6 @@ import kotlinx.coroutines.flow.map
 private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(
     name = "manta_encrypted_prefs"
 )
-
 class EncryptedStorage internal constructor(
     private val dataStore: DataStore<Preferences>,
     private val aead: Aead
