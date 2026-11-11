@@ -16,8 +16,8 @@
 - **Blocks / Enables:**
   - `Task 22.2` (Implement Redis Lua lease acquisition, 10-second heartbeat renewal, and 30-second expiration reclamation)
   - `Task 22.3` (Implement PostgreSQL optimistic fencing assertion `WHERE active_fencing_token <= :worker_claimed_token` and `job_leases` synchronization)
-  - `Task 22.4` (Create test scenarios for paused zombie worker `SIGSTOP > 30s`, heartbeat renewal, and split-brain write rejection)
-  - `Task 22.5` (Write automated `pytest` tests verifying monotonic fencing tokens, lease expiration reclamation, and zombie worker write rejection)
+  - `Task 22.5` (`SCRUM-413` [Split-Brain Test Scenarios Using SIGSTOP (>30s Pause) and Concurrent Worker Lease Takeover](./split-brain-test-scenarios-using-sigstop-and-concurrent-worker-lease-takeover.md))
+  - `Task 22.6` (Write automated `pytest` tests verifying monotonic fencing tokens, lease expiration reclamation, and zombie worker write rejection)
 
 ---
 
@@ -777,9 +777,9 @@ async def renew_job_lease(
     return True
 ```
 
-### 9.2 Verification Scenarios Contract for `Task 22.4` & `Task 22.5`
+### 9.2 Verification Scenarios Contract for `Task 22.5` (`SCRUM-413`)
 
-Downstream QA and automated test tickets (`Task 22.4` and `Task 22.5`) MUST validate the following scenarios:
+Downstream QA and automated test tickets (`SCRUM-413` / `Task 22.5`, see [`docs/split-brain-test-scenarios-using-sigstop-and-concurrent-worker-lease-takeover.md`](./split-brain-test-scenarios-using-sigstop-and-concurrent-worker-lease-takeover.md)) MUST validate the following scenarios:
 
 | Scenario ID | Scenario Name | Setup & Fault Injection | Expected Outcome |
 |---|---|---|---|

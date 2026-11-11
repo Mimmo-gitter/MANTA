@@ -374,7 +374,7 @@ jobs:
 
       - name: Install Playwright Chromium browser
         working-directory: web
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
       - name: Run Playwright E2E tests against Keycloak test realm
         working-directory: web
