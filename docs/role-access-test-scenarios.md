@@ -12,6 +12,7 @@
 - `SCRUM-324`: Integration failure & permission test scenarios ([`docs/integration-test-scenarios.md`](integration-test-scenarios.md))  
 - `SCRUM-317`: Member invitation & immediate role-change test scenarios ([`docs/member-invitation-and-role-change-test-scenarios.md`](member-invitation-and-role-change-test-scenarios.md))  
 - `SCRUM-379`: Project creation and repository linking across tenants test scenarios ([`docs/project-creation-and-repository-linking-test-scenarios.md`](project-creation-and-repository-linking-test-scenarios.md))  
+- `SCRUM-384`: Deployment signal selection persistence and DORA response reporting test scenarios ([`docs/deployment-signal-selection-persistence-and-dora-response-reporting-test-scenarios.md`](deployment-signal-selection-persistence-and-dora-response-reporting-test-scenarios.md))  
 
 **Authoritative Machine-Readable Matrix:** [`docs/roles-permissions.json`](roles-permissions.json)  
 **Authoritative Matrix Specification:** [`docs/roles-permissions.md`](roles-permissions.md)  

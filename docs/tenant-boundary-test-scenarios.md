@@ -8,6 +8,7 @@
 - `SCRUM-240` / `SCRUM-277` / `SCRUM-278` (US-4 & US-5: RS256 JWT validation, JWKS refresh & HTTP 401 on failure)  
 - `SCRUM-248` / `SCRUM-322` / `SCRUM-323` / `SCRUM-324` (US-12 & US-13: Tenant integration connection, ID-isolated management & test scenarios, see [`docs/integration-test-scenarios.md`](integration-test-scenarios.md))  
 - `SCRUM-352` / `SCRUM-379` (US-17: Project creation and repository linking across tenants test scenarios, see [`docs/project-creation-and-repository-linking-test-scenarios.md`](project-creation-and-repository-linking-test-scenarios.md))  
+- `SCRUM-354` / `SCRUM-384` (US-18: Deployment signal selection persistence and DORA response reporting test scenarios, see [`docs/deployment-signal-selection-persistence-and-dora-response-reporting-test-scenarios.md`](deployment-signal-selection-persistence-and-dora-response-reporting-test-scenarios.md))  
 - `SCRUM-292` (`eng_app_user` least-privilege role), `SCRUM-318` (`FORCE ROW LEVEL SECURITY`), `SCRUM-293` (Automated RLS schema guardrails)  
 - `SCRUM-305` (Negative RLS safety net verification: pipeline fails when RLS policy is disabled, see [`docs/negative-rls-security-test.md`](negative-rls-security-test.md))  
 **Target Architecture Layers:**  
