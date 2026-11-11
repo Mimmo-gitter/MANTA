@@ -27,9 +27,45 @@ from typing import Any
 from unittest.mock import Mock
 import uuid
 
-from arq.connections import RedisSettings
+try:
+    from arq.connections import RedisSettings
+except ImportError:  # pragma: no cover
 
-from app.config import settings
+    class RedisSettings:  # type: ignore[no-redef]
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            self.args = args
+            self.kwargs = kwargs
+
+        @classmethod
+        def from_dsn(cls, dsn: str) -> "RedisSettings":
+            return cls(dsn=dsn)
+
+
+try:
+    from app.config import settings
+except ImportError:  # pragma: no cover
+    settings = None  # type: ignore[assignment]
+
+from .fencing import (
+    ACQUIRE_LEASE_LUA,
+    FENCING_SEQ_KEY,
+    HEARTBEAT_INTERVAL_SEC,
+    LEASE_KEY_PREFIX,
+    LEASE_TTL_MS,
+    LEASE_TTL_SECONDS,
+    RELEASE_LEASE_LUA,
+    RENEW_LEASE_LUA,
+    LeaseHandle,
+    StaleFencingTokenError,
+    acquire_job_lease,
+    acquire_redis_lease,
+    format_lease_value,
+    get_lease_key,
+    parse_lease_value,
+    release_job_lease,
+    renew_job_lease,
+    upsert_job_lease,
+)
 
 logger = logging.getLogger("workers.worker")
 
@@ -41,9 +77,11 @@ WORKER_HEARTBEAT_SUFFIX = ":heartbeat"
 DEFAULT_POLL_TIMEOUT = 1.0
 HEARTBEAT_TTL_SECONDS = 30
 DEFAULT_HEARTBEAT_INTERVAL = 10.0
+DEFAULT_TENANT_UUID = uuid.UUID("11111111-1111-1111-1111-111111111111")
 VALID_PRIORITIES = frozenset({"default", "high"})
 
 JobFetchResult = tuple[str, str, dict[str, Any]]
+JobClaimResult = tuple[str, str, dict[str, Any], LeaseHandle]
 JobHandler = Callable[..., Awaitable[Any]]
 
 
@@ -548,8 +586,9 @@ async def _invoke_job_handler(
     source_queue: str,
     raw_job: str,
     parsed_payload: dict[str, Any],
+    lease_handle: LeaseHandle | None = None,
 ) -> Any:
-    """Invokes a job handler supporting 3-arg (queue, raw, parsed) or 1-arg (parsed) callables."""
+    """Invokes a job handler supporting 4-arg, 3-arg, 2-arg, or 1-arg callables."""
     sig = inspect.signature(job_handler)
     positional_params = [
         p
@@ -558,6 +597,8 @@ async def _invoke_job_handler(
     ]
     has_varargs = any(p.kind == inspect.Parameter.VAR_POSITIONAL for p in sig.parameters.values())
 
+    if lease_handle is not None and len(positional_params) >= 4:
+        return await job_handler(source_queue, raw_job, parsed_payload, lease_handle)
     if has_varargs or len(positional_params) >= 3:
         return await job_handler(source_queue, raw_job, parsed_payload)
     if len(positional_params) == 2:
@@ -565,6 +606,84 @@ async def _invoke_job_handler(
     if len(positional_params) == 1:
         return await job_handler(parsed_payload)
     return await job_handler()
+
+
+def _extract_job_and_tenant_id(
+    raw_job: str,
+    parsed_payload: Mapping[str, Any],
+    default_tenant_id: uuid.UUID | str = DEFAULT_TENANT_UUID,
+) -> tuple[str, uuid.UUID]:
+    """Extracts job_id and tenant_id from a parsed job envelope with deterministic fallback."""
+    raw_job_id = parsed_payload.get("job_id") or parsed_payload.get("id")
+    if isinstance(raw_job_id, (str, uuid.UUID)) and str(raw_job_id).strip():
+        job_id = str(raw_job_id).strip()
+    else:
+        job_id = str(uuid.uuid5(uuid.NAMESPACE_OID, raw_job))
+
+    raw_tenant_id = parsed_payload.get("tenant_id")
+    if isinstance(raw_tenant_id, uuid.UUID):
+        tenant_id = raw_tenant_id
+    elif isinstance(raw_tenant_id, str) and raw_tenant_id.strip():
+        try:
+            tenant_id = uuid.UUID(raw_tenant_id.strip())
+        except ValueError:
+            tenant_id = (
+                default_tenant_id
+                if isinstance(default_tenant_id, uuid.UUID)
+                else uuid.UUID(str(default_tenant_id))
+            )
+    else:
+        tenant_id = (
+            default_tenant_id
+            if isinstance(default_tenant_id, uuid.UUID)
+            else uuid.UUID(str(default_tenant_id))
+        )
+    return job_id, tenant_id
+
+
+async def claim_next_job(
+    redis: Any,
+    db: Any | None,
+    worker_id: str,
+    *,
+    poll_timeout: float = DEFAULT_POLL_TIMEOUT,
+    lease_ttl_ms: int = LEASE_TTL_MS,
+    min_token_floor: int = 0,
+    default_tenant_id: uuid.UUID | str = DEFAULT_TENANT_UUID,
+) -> JobClaimResult | None:
+    """
+    Atomically fetches the next job from the priority queues into arq:in_flight:{worker_id}
+    and assigns a 30-second worker lease with a monotonically increasing owner_token
+    (INCR arq:fencing_seq + arq:lease:{job_id} PX 30000 + PostgreSQL JobLease upsert).
+
+    Returns:
+        Tuple of (source_queue, raw_payload_str, parsed_payload_dict, lease_handle),
+        or None if no job was available or the job lease could not be acquired.
+    """
+    fetched = await fetch_next_job(redis, worker_id, poll_timeout=poll_timeout)
+    if fetched is None:
+        return None
+
+    source_queue, raw_job, parsed_payload = fetched
+    job_id, tenant_id = _extract_job_and_tenant_id(
+        raw_job, parsed_payload, default_tenant_id=default_tenant_id
+    )
+
+    lease_handle = await acquire_job_lease(
+        redis=redis,
+        db=db,
+        job_id=job_id,
+        tenant_id=tenant_id,
+        worker_id=worker_id,
+        lease_ttl_ms=lease_ttl_ms,
+        min_token_floor=min_token_floor,
+    )
+    if lease_handle is None:
+        # Remove duplicate in-flight entry if another worker already holds an active lease
+        await ack_job(redis, worker_id, raw_job)
+        return None
+
+    return (source_queue, raw_job, parsed_payload, lease_handle)
 
 
 async def run_worker_fetch_loop(
@@ -577,14 +696,19 @@ async def run_worker_fetch_loop(
     max_iterations: int | None = None,
     ack_on_success: bool = True,
     recover_on_start: bool = False,
+    db: Any | None = None,
+    acquire_lease: bool = False,
+    lease_ttl_ms: int = LEASE_TTL_MS,
 ) -> list[JobFetchResult]:
     """
     Executes the worker fetch loop using fetch_next_job and ack_job.
 
     On each iteration:
       1. Calls fetch_next_job(redis, worker_id, poll_timeout=poll_timeout).
-      2. If a job is claimed, invokes job_handler (if provided).
-      3. Only if job_handler completes without raising an exception and ack_on_success is True,
+      2. When acquire_lease is True, acquires a 30s lease and monotonic owner_token
+         via acquire_job_lease before invoking job_handler.
+      3. If a job is claimed, invokes job_handler (if provided).
+      4. Only if job_handler completes without raising an exception and ack_on_success is True,
          calls ack_job(redis, worker_id, raw_job) to remove the job from arq:in_flight:{worker_id}.
     """
     if recover_on_start:
@@ -605,10 +729,36 @@ async def run_worker_fetch_loop(
             continue
 
         source_queue, raw_job, parsed_payload = fetched
+        lease_handle: LeaseHandle | None = None
+
+        if acquire_lease:
+            job_id, tenant_id = _extract_job_and_tenant_id(raw_job, parsed_payload)
+            lease_handle = await acquire_job_lease(
+                redis=redis,
+                db=db,
+                job_id=job_id,
+                tenant_id=tenant_id,
+                worker_id=worker_id,
+                lease_ttl_ms=lease_ttl_ms,
+            )
+            if lease_handle is None:
+                await ack_job(redis, worker_id, raw_job)
+                continue
+            parsed_payload.setdefault("owner_token", lease_handle.owner_token)
+
         if job_handler is not None:
-            await _invoke_job_handler(job_handler, source_queue, raw_job, parsed_payload)
+            await _invoke_job_handler(
+                job_handler, source_queue, raw_job, parsed_payload, lease_handle=lease_handle
+            )
 
         if ack_on_success:
+            if lease_handle is not None:
+                await release_job_lease(
+                    redis,
+                    lease_handle.job_id,
+                    lease_handle.worker_id,
+                    lease_handle.owner_token,
+                )
             await ack_job(redis, worker_id, raw_job)
 
         processed.append(fetched)
@@ -685,3 +835,44 @@ class WorkerSettings:
     on_startup = startup
     on_shutdown = shutdown
     redis_settings = get_default_redis_settings()
+
+
+__all__ = [
+    "ACQUIRE_LEASE_LUA",
+    "DEFAULT_POLL_TIMEOUT",
+    "DEFAULT_TENANT_UUID",
+    "FENCING_SEQ_KEY",
+    "HEARTBEAT_INTERVAL_SEC",
+    "IN_FLIGHT_PREFIX",
+    "LEASE_KEY_PREFIX",
+    "LEASE_TTL_MS",
+    "LEASE_TTL_SECONDS",
+    "QUEUE_DEFAULT",
+    "QUEUE_HIGH",
+    "RELEASE_LEASE_LUA",
+    "RENEW_LEASE_LUA",
+    "VALID_PRIORITIES",
+    "WORKER_HEARTBEAT_PREFIX",
+    "LeaseHandle",
+    "StaleFencingTokenError",
+    "WorkerSettings",
+    "ack_job",
+    "acquire_job_lease",
+    "acquire_redis_lease",
+    "claim_next_job",
+    "enqueue_job",
+    "fetch_next_job",
+    "format_lease_value",
+    "generate_worker_id",
+    "get_default_redis_settings",
+    "get_in_flight_key",
+    "get_lease_key",
+    "parse_lease_value",
+    "release_job_lease",
+    "renew_job_lease",
+    "run_worker_fetch_loop",
+    "serialize_job_payload",
+    "shutdown",
+    "startup",
+    "upsert_job_lease",
+]
