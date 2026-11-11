@@ -13,7 +13,7 @@
 - **Blocks / Enables:**
   - `SCRUM-405` (`Task 21.2` Implement atomic `BLMOVE` worker fetch into per-worker `arq:in_flight:{worker_id}` lists with high-priority precedence)
   - `SCRUM-406` (`Task 21.3` Implement in-flight job recovery on worker restart and tune Valkey/Redis 7 `noeviction` queue settings)
-  - `SCRUM-407` (`Task 21.4` Create test scenarios for 100-job FIFO ordering, high-priority preemption behind 50 default jobs, and `SIGKILL` crash)
+  - `SCRUM-407` (`Task 21.4` [Create test scenarios for 100-job FIFO ordering, high-priority preemption behind 50 default jobs, and `SIGKILL` crash](./fifo-ordering-priority-preemption-and-sigkill-crash-test-scenarios.md))
   - `SCRUM-408` (`Task 21.5` Write automated `pytest` tests verifying 100-job FIFO execution, priority preemption, and `SIGKILL` in-flight recovery)
   - `SCRUM-409` (`Task 22.1` [Design monotonic `owner_token` sequence, 30s lease contract, and PostgreSQL optimistic fencing assertion](./fencing-lease-contract.md))
 
@@ -545,7 +545,7 @@ valkey:
 
 ### 9.3 QA Verification Contract for Tasks 21.4 & 21.5
 
-Downstream testing tickets `SCRUM-407` (`Task 21.4` Test Scenarios) and `SCRUM-408` (`Task 21.5` Automated Pytest) MUST verify:
+Downstream testing tickets `SCRUM-407` (`Task 21.4` [Test Scenarios](./fifo-ordering-priority-preemption-and-sigkill-crash-test-scenarios.md)) and `SCRUM-408` (`Task 21.5` Automated Pytest) MUST verify:
 1. **Scenario 1 (100-Job FIFO Ordering):**
    Enqueue jobs $J_1, \dots, J_{100}$ sequentially into `arq:queue:default`. Single consumer pops all 100 jobs. Assert consumed list is strictly $[J_1, \dots, J_{100}]$.
 2. **Scenario 2 (High-Priority Preemption behind 50 Default Jobs):**
