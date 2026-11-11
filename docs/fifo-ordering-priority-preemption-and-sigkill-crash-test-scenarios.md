@@ -6,11 +6,11 @@
 - `SCRUM-404`: Design FIFO queue topology and high-priority queue preemption rules (`Task 21.1`, see [`docs/fifo-queue-topology.md`](fifo-queue-topology.md))  
 - `SCRUM-405`: Implement atomic `BLMOVE` worker fetch into per-worker `arq:in_flight:{worker_id}` lists (`Task 21.2`, [`backend/workers/worker.py`](../backend/workers/worker.py))  
 - `SCRUM-406`: Implement in-flight job recovery on worker restart and tune Valkey/Redis 7 `noeviction` (`Task 21.3`, [`backend/workers/worker.py`](../backend/workers/worker.py))  
-- `SCRUM-408`: Write automated `pytest` tests verifying 100-job FIFO execution, priority preemption, and `SIGKILL` in-flight recovery (`Task 21.5`, [`backend/tests/test_fifo_queue_and_crash_recovery.py`](../backend/tests/test_fifo_queue_and_crash_recovery.py))  
+- `SCRUM-408`: Write automated `pytest` tests verifying 100-job FIFO execution, priority preemption, and `SIGKILL` in-flight recovery (`Task 21.5`, [`backend/tests/test_reliable_job_queue.py`](../backend/tests/test_reliable_job_queue.py) & [`backend/tests/test_fifo_queue_and_crash_recovery.py`](../backend/tests/test_fifo_queue_and_crash_recovery.py))  
 
 **Target Infrastructure Engine:** Valkey 7 (`valkey/valkey:7-alpine`) / Redis 7+  
 **Target Implementation Module:** [`backend/workers/worker.py`](../backend/workers/worker.py)  
-**Target Automated Pytest Suite:** [`backend/tests/test_fifo_queue_and_crash_recovery.py`](../backend/tests/test_fifo_queue_and_crash_recovery.py)  
+**Target Automated Pytest Suite:** [`backend/tests/test_reliable_job_queue.py`](../backend/tests/test_reliable_job_queue.py) (and [`backend/tests/test_fifo_queue_and_crash_recovery.py`](../backend/tests/test_fifo_queue_and_crash_recovery.py))  
 **Assignee:** Matvii Yeromenko  
 **Category:** Testing - Design  
 **Status:** Approved / Verification Baseline Established  
@@ -588,7 +588,7 @@ valkey-cli LMOVE "arq:in_flight:dead-worker-pid-999" "arq:queue:default" RIGHT L
 
 ## 7. Automated Test Suite Specification & Pytest Mapping
 
-The test cases specified in this document are automated in [`backend/tests/test_fifo_queue_and_crash_recovery.py`](../backend/tests/test_fifo_queue_and_crash_recovery.py) (`Task 21.5` / `SCRUM-408`).
+The test cases specified in this document are automated in [`backend/tests/test_reliable_job_queue.py`](../backend/tests/test_reliable_job_queue.py) and [`backend/tests/test_fifo_queue_and_crash_recovery.py`](../backend/tests/test_fifo_queue_and_crash_recovery.py) (`Task 21.5` / `SCRUM-408`).
 
 ### 7.1 Test Function Mapping Matrix
 
@@ -605,8 +605,10 @@ The test cases specified in this document are automated in [`backend/tests/test_
 
 ### 7.2 Running the Automated Verification Suite
 ```bash
-# Run the complete FIFO ordering, preemption, and crash recovery test suite:
-pytest backend/tests/test_fifo_queue_and_crash_recovery.py -v
+# Run the complete reliable FIFO queue ordering, preemption, and crash recovery test suite:
+pytest backend/tests/test_reliable_job_queue.py -v
+# Or run both suites:
+pytest backend/tests/test_reliable_job_queue.py backend/tests/test_fifo_queue_and_crash_recovery.py -v
 ```
 
 ---
@@ -622,4 +624,4 @@ pytest backend/tests/test_fifo_queue_and_crash_recovery.py -v
 | **US-21 AC-1** | Reliable FIFO Queue Processing | §1.2, §4.1 | `test_fifo_100_jobs_sequential_execution` | **COVERED** |
 | **US-21 AC-2** | High-Priority Queue Preemption | §1.2, §4.2 | `test_high_priority_preemption_behind_50_default_jobs` | **COVERED** |
 | **US-21 AC-3** | In-Flight Recovery on Worker Crash | §1.2, §4.3, §4.4 | `test_worker_sigkill_mid_job_and_self_restart_recovery`, `test_worker_sigkill_and_supervisor_orphan_sweep` | **COVERED** |
-| **Task 21.1 Contract** | §9.3 QA Verification Contract for Tasks 21.4 & 21.5 | §4.1, §4.2, §4.3, §7.1 | `backend/tests/test_fifo_queue_and_crash_recovery.py` | **COVERED** |
+| **Task 21.1 Contract** | §9.3 QA Verification Contract for Tasks 21.4 & 21.5 | §4.1, §4.2, §4.3, §7.1 | `backend/tests/test_reliable_job_queue.py` | **COVERED** |
