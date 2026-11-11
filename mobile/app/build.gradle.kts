@@ -20,7 +20,6 @@ android {
         targetSdk = 37
         versionCode = 1
         versionName = "1.0"
-
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -47,6 +46,7 @@ android {
             applicationIdSuffix = ".dev"
             versionNameSuffix = "-dev"
             buildConfigField("String", "API_URL", "\"http://localhost:8000/api\"")
+            buildConfigField("String", "KEYCLOAK_URL", "\"http://localhost:8080\"")
         }
         create("stage") {
             dimension = "environment"
