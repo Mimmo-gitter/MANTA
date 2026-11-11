@@ -15,7 +15,7 @@
   - `SCRUM-406` (`Task 21.3` Implement in-flight job recovery on worker restart and tune Valkey/Redis 7 `noeviction` queue settings)
   - `SCRUM-407` (`Task 21.4` Create test scenarios for 100-job FIFO ordering, high-priority preemption behind 50 default jobs, and `SIGKILL` crash)
   - `SCRUM-408` (`Task 21.5` Write automated `pytest` tests verifying 100-job FIFO execution, priority preemption, and `SIGKILL` in-flight recovery)
-  - `SCRUM-409` (`Task 22.1` Design monotonic `owner_token` sequence, 30s lease contract, and PostgreSQL optimistic fencing assertion)
+  - `SCRUM-409` (`Task 22.1` [Design monotonic `owner_token` sequence, 30s lease contract, and PostgreSQL optimistic fencing assertion](./fencing-lease-contract.md))
 
 ---
 
