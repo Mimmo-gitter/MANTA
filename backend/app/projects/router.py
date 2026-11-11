@@ -10,6 +10,8 @@ from app.auth.permissions import (
 )
 from app.auth.schemas import StubEndpointResponse, TokenClaims
 from app.projects.schemas import (
+    DeploymentSignalResponse,
+    DeploymentSignalUpdateRequest,
     ProjectCreateRequest,
     ProjectResponse,
     RepositoryLinkRequest,
@@ -17,10 +19,12 @@ from app.projects.schemas import (
 )
 from app.projects.service import (
     create_project as create_project_service,
+    get_deployment_signal as get_deployment_signal_service,
     get_project as get_project_service,
     link_repository as link_repository_service,
     list_projects as list_projects_service,
     unlink_repository as unlink_repository_service,
+    update_deployment_signal as update_deployment_signal_service,
 )
 
 router = APIRouter(
@@ -113,6 +117,40 @@ async def unlink_repository(
     """Unlinks a repository from a project. Returns HTTP 204 No Content on success."""
     await unlink_repository_service(user.tenant_uuid, project_id, repo_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ==============================================================================
+# SCRUM-383: DEPLOYMENT SIGNAL CONFIGURATION ENDPOINTS (US-18)
+# ==============================================================================
+
+
+@router.get(
+    "/{project_id}/deployment-signal",
+    response_model=DeploymentSignalResponse,
+    summary="Get project authoritative deployment signal",
+    description="Retrieves the active deployment signal configuration for the project under tenant RLS.",
+)
+async def get_deployment_signal(
+    project_id: uuid.UUID,
+    user: TokenClaims = Depends(require_project_view),
+) -> DeploymentSignalResponse:
+    """Retrieves authoritative production deployment signal. Requires project view permission."""
+    return await get_deployment_signal_service(user.tenant_uuid, project_id)
+
+
+@router.patch(
+    "/{project_id}/deployment-signal",
+    response_model=DeploymentSignalResponse,
+    summary="Update project authoritative deployment signal",
+    description="Updates the authoritative production deployment signal. Requires TENANT_ADMIN.",
+)
+async def update_deployment_signal(
+    project_id: uuid.UUID,
+    payload: DeploymentSignalUpdateRequest,
+    user: TokenClaims = Depends(require_tenant_admin),
+) -> DeploymentSignalResponse:
+    """Updates authoritative production deployment signal. Requires TENANT_ADMIN."""
+    return await update_deployment_signal_service(user.tenant_uuid, project_id, payload)
 
 
 # ==============================================================================
