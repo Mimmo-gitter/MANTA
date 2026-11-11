@@ -12,6 +12,7 @@ from sqlalchemy import (
     DateTime,
     UniqueConstraint,
     Index,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB, INET
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -253,6 +254,14 @@ class Project(Base):
     deployments: Mapped[List["Deployment"]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
+
+    @property
+    def authoritative_deployment_signal(self) -> str:
+        return self.authoritative_cd_signal
+
+    @authoritative_deployment_signal.setter
+    def authoritative_deployment_signal(self, value: str) -> None:
+        self.authoritative_cd_signal = value
 
 
 class ProjectMember(Base):
@@ -1145,7 +1154,15 @@ class FlakyTest(Base):
 class OutboxEvent(Base):
     __tablename__ = "outbox_events"
 
-    __table_args__ = (Index("idx_outbox_events_tenant_id", "tenant_id"),)
+    __table_args__ = (
+        Index("idx_outbox_events_tenant_id", "tenant_id"),
+        Index(
+            "ix_outbox_events_unpublished",
+            "created_at",
+            postgresql_where=text("published_at IS NULL"),
+        ),
+        Index("ix_outbox_events_tenant_published", "tenant_id", "published_at"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
     tenant_id: Mapped[uuid.UUID] = mapped_column(
