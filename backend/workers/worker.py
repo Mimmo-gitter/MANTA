@@ -43,22 +43,29 @@ except ImportError:  # pragma: no cover
 
 from .fencing import (
     ACQUIRE_LEASE_LUA,
+    DEFAULT_SUPERVISOR_SWEEP_SEC,
     FENCING_SEQ_KEY,
     HEARTBEAT_INTERVAL_SEC,
     LEASE_KEY_PREFIX,
     LEASE_TTL_MS,
     LEASE_TTL_SECONDS,
+    RECLAIM_EXPIRED_LEASE_LUA,
     RELEASE_LEASE_LUA,
     RENEW_LEASE_LUA,
     LeaseHandle,
+    LeaseHeartbeatManager,
+    ReclaimedJobRecord,
     StaleFencingTokenError,
     acquire_job_lease,
     acquire_redis_lease,
     format_lease_value,
     get_lease_key,
     parse_lease_value,
+    reclaim_expired_leases,
     release_job_lease,
     renew_job_lease,
+    run_lease_heartbeat_loop,
+    run_supervisor_reclamation_loop,
     upsert_job_lease,
 )
 
@@ -401,6 +408,8 @@ async def run_worker_fetch_loop(
     db: Any | None = None,
     acquire_lease: bool = False,
     lease_ttl_ms: int = LEASE_TTL_MS,
+    heartbeat_interval: float = HEARTBEAT_INTERVAL_SEC,
+    enable_heartbeat: bool = True,
 ) -> list[JobFetchResult]:
     """
     Executes the worker fetch loop using fetch_next_job and ack_job.
@@ -408,7 +417,8 @@ async def run_worker_fetch_loop(
     On each iteration:
       1. Calls fetch_next_job(redis, worker_id, poll_timeout=poll_timeout).
       2. When acquire_lease is True, acquires a 30s lease and monotonic owner_token
-         via acquire_job_lease before invoking job_handler.
+         via acquire_job_lease before invoking job_handler, and runs the 10s background
+         heartbeat renewal loop (LeaseHeartbeatManager) during job_handler execution.
       3. If a job is claimed, invokes job_handler (if provided).
       4. Only if job_handler completes without raising an exception and ack_on_success is True,
          calls ack_job(redis, worker_id, raw_job) to remove the job from arq:in_flight:{worker_id}.
@@ -446,9 +456,29 @@ async def run_worker_fetch_loop(
             parsed_payload.setdefault("owner_token", lease_handle.owner_token)
 
         if job_handler is not None:
-            await _invoke_job_handler(
-                job_handler, source_queue, raw_job, parsed_payload, lease_handle=lease_handle
-            )
+            if lease_handle is not None and enable_heartbeat:
+                async with LeaseHeartbeatManager(
+                    redis=redis,
+                    db=db,
+                    handle=lease_handle,
+                    interval_seconds=heartbeat_interval,
+                    lease_ttl_ms=lease_ttl_ms,
+                ):
+                    await _invoke_job_handler(
+                        job_handler,
+                        source_queue,
+                        raw_job,
+                        parsed_payload,
+                        lease_handle=lease_handle,
+                    )
+            else:
+                await _invoke_job_handler(
+                    job_handler,
+                    source_queue,
+                    raw_job,
+                    parsed_payload,
+                    lease_handle=lease_handle,
+                )
 
         if ack_on_success:
             if lease_handle is not None:
@@ -457,6 +487,8 @@ async def run_worker_fetch_loop(
                     lease_handle.job_id,
                     lease_handle.worker_id,
                     lease_handle.owner_token,
+                    db=db,
+                    tenant_id=lease_handle.tenant_id,
                 )
             await ack_job(redis, worker_id, raw_job)
 
@@ -500,6 +532,7 @@ class WorkerSettings:
 __all__ = [
     "ACQUIRE_LEASE_LUA",
     "DEFAULT_POLL_TIMEOUT",
+    "DEFAULT_SUPERVISOR_SWEEP_SEC",
     "DEFAULT_TENANT_UUID",
     "FENCING_SEQ_KEY",
     "HEARTBEAT_INTERVAL_SEC",
@@ -509,11 +542,14 @@ __all__ = [
     "LEASE_TTL_SECONDS",
     "QUEUE_DEFAULT",
     "QUEUE_HIGH",
+    "RECLAIM_EXPIRED_LEASE_LUA",
     "RELEASE_LEASE_LUA",
     "RENEW_LEASE_LUA",
     "VALID_PRIORITIES",
     "WORKER_HEARTBEAT_PREFIX",
     "LeaseHandle",
+    "LeaseHeartbeatManager",
+    "ReclaimedJobRecord",
     "StaleFencingTokenError",
     "WorkerSettings",
     "ack_job",
@@ -528,8 +564,11 @@ __all__ = [
     "get_in_flight_key",
     "get_lease_key",
     "parse_lease_value",
+    "reclaim_expired_leases",
     "release_job_lease",
     "renew_job_lease",
+    "run_lease_heartbeat_loop",
+    "run_supervisor_reclamation_loop",
     "run_worker_fetch_loop",
     "serialize_job_payload",
     "shutdown",
