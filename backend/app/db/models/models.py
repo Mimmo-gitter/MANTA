@@ -355,6 +355,11 @@ class WebhookEvent(Base):
 
     __table_args__ = (
         Index("idx_webhook_events_tenant_id", "tenant_id"),
+        Index(
+            "idx_webhook_events_staged_received",
+            "received_at",
+            postgresql_where=text("status = 'staged'"),
+        ),
         UniqueConstraint(
             "tenant_id",
             "provider",
