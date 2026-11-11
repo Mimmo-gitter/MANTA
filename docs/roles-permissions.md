@@ -7,6 +7,7 @@
   - `SCRUM-311` (Create role-access test scenarios — see [`docs/role-access-test-scenarios.md`](role-access-test-scenarios.md))
   - `SCRUM-317` (Create member invitation & immediate role-change test scenarios — see [`docs/member-invitation-and-role-change-test-scenarios.md`](member-invitation-and-role-change-test-scenarios.md))
   - `SCRUM-379` (Create project creation & repository linking test scenarios — see [`docs/project-creation-and-repository-linking-test-scenarios.md`](project-creation-and-repository-linking-test-scenarios.md))
+  - `SCRUM-384` (Create test scenarios for deployment signal selection persistence and DORA response reporting — see [`docs/deployment-signal-selection-persistence-and-dora-response-reporting-test-scenarios.md`](deployment-signal-selection-persistence-and-dora-response-reporting-test-scenarios.md))
 - **Version:** `1.0.0`
 - **Status:** Approved / Baseline Established
 - **Authoritative Machine-Readable Source:** [`docs/roles-permissions.json`](file:///c:/MANTA/MANTA/docs/roles-permissions.json)
