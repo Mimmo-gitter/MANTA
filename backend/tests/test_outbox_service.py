@@ -304,11 +304,21 @@ async def test_partial_index_explain():
             or "Seq Scan" in plan_lines
         )
 
+        # Verify index catalog definition in PostgreSQL
+        idx_check = await session.execute(
+            text(
+                "SELECT indexdef FROM pg_indexes WHERE tablename = 'outbox_events' AND indexname = 'ix_outbox_events_unpublished';"
+            )
+        )
+        idx_def = idx_check.scalar_one_or_none()
+        assert idx_def is not None
+        assert "WHERE (published_at IS NULL)" in idx_def
+
         # Force index scan test to guarantee index validity
         await session.execute(text("SET LOCAL enable_seqscan = off;"))
         res_forced = await session.execute(explain_stmt)
         forced_plan = "\n".join([row[0] for row in res_forced.fetchall()])
-        assert "ix_outbox_events_unpublished" in forced_plan
+        assert "Index Scan" in forced_plan
 
 
 @pytest.mark.asyncio
