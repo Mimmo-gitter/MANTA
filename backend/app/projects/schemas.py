@@ -1,8 +1,54 @@
 from datetime import datetime
+from enum import Enum
 from typing import Optional
 import uuid
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+
+class DeploymentSignalType(str, Enum):
+    """Allowed authoritative production deployment signal sources (US-18 / SCRUM-383)."""
+
+    GITHUB_DEPLOYMENTS_API = "github_deployments_api"
+    ARGOCD_POSTSYNC_WEBHOOK = "argocd_postsync_webhook"
+    DIRECT_DEPLOYMENT_API = "direct_deployment_api"
+
+
+class DeploymentSignalUpdateRequest(BaseModel):
+    """Payload to update a project's authoritative production deployment signal."""
+
+    authoritative_deployment_signal: Optional[DeploymentSignalType] = Field(
+        None,
+        description=(
+            "Authoritative production deployment signal source. Must be one of: "
+            "'github_deployments_api', 'argocd_postsync_webhook', 'direct_deployment_api'."
+        ),
+    )
+    authoritative_cd_signal: Optional[DeploymentSignalType] = Field(
+        None,
+        description="Alias for authoritative_deployment_signal.",
+    )
+
+    @model_validator(mode="after")
+    def validate_signal_present(self) -> "DeploymentSignalUpdateRequest":
+        signal = self.authoritative_deployment_signal or self.authoritative_cd_signal
+        if not signal:
+            raise ValueError(
+                "Field 'authoritative_deployment_signal' (or 'authoritative_cd_signal') is required."
+            )
+        self.authoritative_deployment_signal = signal
+        return self
+
+
+class DeploymentSignalResponse(BaseModel):
+    """Response model for project deployment signal configuration."""
+
+    project_id: uuid.UUID
+    tenant_id: uuid.UUID
+    authoritative_deployment_signal: str
+    updated_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ProjectCreateRequest(BaseModel):
@@ -16,9 +62,12 @@ class ProjectCreateRequest(BaseModel):
         description="URL-friendly unique slug. If omitted, auto-generated from name.",
     )
     tier_sla_hours: int = Field(default=48, ge=1, le=720, description="Target SLA in hours")
-    authoritative_cd_signal: str = Field(
-        default="github_deployments_api",
-        max_length=64,
+    authoritative_cd_signal: Optional[DeploymentSignalType] = Field(
+        None,
+        description="Authoritative deployment signal source",
+    )
+    authoritative_deployment_signal: Optional[DeploymentSignalType] = Field(
+        None,
         description="Authoritative deployment signal source",
     )
     lead_time_first_commit_strategy: str = Field(
@@ -38,6 +87,17 @@ class ProjectCreateRequest(BaseModel):
         le=720,
         description="Threshold hours after which a PR is marked stale",
     )
+
+    @model_validator(mode="after")
+    def resolve_signal(self) -> "ProjectCreateRequest":
+        sig = self.authoritative_deployment_signal or self.authoritative_cd_signal
+        if sig:
+            self.authoritative_cd_signal = sig
+            self.authoritative_deployment_signal = sig
+        else:
+            self.authoritative_cd_signal = DeploymentSignalType.GITHUB_DEPLOYMENTS_API
+            self.authoritative_deployment_signal = DeploymentSignalType.GITHUB_DEPLOYMENTS_API
+        return self
 
 
 class RepositoryLinkRequest(BaseModel):
@@ -94,6 +154,7 @@ class ProjectResponse(BaseModel):
     slug: str
     tier_sla_hours: int
     authoritative_cd_signal: str
+    authoritative_deployment_signal: Optional[str] = None
     lead_time_first_commit_strategy: str
     wip_limit_per_dev: int
     pr_stale_threshold_hours: int
@@ -104,3 +165,9 @@ class ProjectResponse(BaseModel):
     repositories: list[RepositoryResponse] = []
 
     model_config = ConfigDict(from_attributes=True)
+
+    @model_validator(mode="after")
+    def sync_deployment_signal(self) -> "ProjectResponse":
+        if not self.authoritative_deployment_signal:
+            self.authoritative_deployment_signal = self.authoritative_cd_signal
+        return self

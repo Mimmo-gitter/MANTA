@@ -20,6 +20,8 @@ from app.auth.schemas import TokenClaims
 from app.db.models.models import Integration, Project, ProjectLink, Repository, User
 from app.db.session import get_tenant_db_context
 from app.projects.schemas import (
+    DeploymentSignalResponse,
+    DeploymentSignalUpdateRequest,
     ProjectCreateRequest,
     ProjectResponse,
     RepositoryLinkRequest,
@@ -65,6 +67,11 @@ async def create_project(
         user_res = await session.execute(user_stmt)
         creator_id: Optional[uuid.UUID] = user_res.scalars().first()
 
+        signal_val = (
+            data.authoritative_cd_signal.value
+            if hasattr(data.authoritative_cd_signal, "value")
+            else str(data.authoritative_cd_signal)
+        )
         now = datetime.now(timezone.utc)
         project = Project(
             id=uuid.uuid4(),
@@ -73,7 +80,7 @@ async def create_project(
             name=data.name.strip(),
             slug=slug,
             tier_sla_hours=data.tier_sla_hours,
-            authoritative_cd_signal=data.authoritative_cd_signal,
+            authoritative_cd_signal=signal_val,
             lead_time_first_commit_strategy=data.lead_time_first_commit_strategy,
             wip_limit_per_dev=data.wip_limit_per_dev,
             pr_stale_threshold_hours=data.pr_stale_threshold_hours,
@@ -297,3 +304,76 @@ async def unlink_repository(
 
         # 4. Delete repository
         await session.delete(repo)
+
+
+async def get_deployment_signal(
+    tenant_id: uuid.UUID,
+    project_id: uuid.UUID,
+) -> DeploymentSignalResponse:
+    """
+    Retrieves the authoritative production deployment signal for a project under tenant RLS.
+    Returns HTTP 404 if project is missing or belongs to another tenant.
+    """
+    async with get_tenant_db_context(tenant_id) as session:
+        stmt = select(Project).where(
+            Project.id == project_id,
+            Project.tenant_id == tenant_id,
+            Project.deleted_at.is_(None),
+        )
+        res = await session.execute(stmt)
+        project = res.scalars().first()
+        if not project:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Project '{project_id}' not found.",
+            )
+
+        return DeploymentSignalResponse(
+            project_id=project.id,
+            tenant_id=project.tenant_id,
+            authoritative_deployment_signal=project.authoritative_cd_signal,
+            updated_at=project.updated_at,
+        )
+
+
+async def update_deployment_signal(
+    tenant_id: uuid.UUID,
+    project_id: uuid.UUID,
+    data: DeploymentSignalUpdateRequest,
+) -> DeploymentSignalResponse:
+    """
+    Updates the authoritative production deployment signal on a project under tenant RLS.
+    Enforces valid enum values and persists change with updated_at timestamp.
+    """
+    signal_val = (
+        data.authoritative_deployment_signal.value
+        if hasattr(data.authoritative_deployment_signal, "value")
+        else str(data.authoritative_deployment_signal)
+    )
+
+    async with get_tenant_db_context(tenant_id) as session:
+        stmt = select(Project).where(
+            Project.id == project_id,
+            Project.tenant_id == tenant_id,
+            Project.deleted_at.is_(None),
+        )
+        res = await session.execute(stmt)
+        project = res.scalars().first()
+        if not project:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Project '{project_id}' not found.",
+            )
+
+        now = datetime.now(timezone.utc)
+        project.authoritative_cd_signal = signal_val
+        project.updated_at = now
+
+        await session.flush()
+
+        return DeploymentSignalResponse(
+            project_id=project.id,
+            tenant_id=project.tenant_id,
+            authoritative_deployment_signal=project.authoritative_cd_signal,
+            updated_at=project.updated_at,
+        )
