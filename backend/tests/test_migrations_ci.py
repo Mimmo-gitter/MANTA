@@ -38,6 +38,48 @@ class TestMigrationsCICheck(unittest.TestCase):
         downgrade_indexes: list[tuple[str, str]] = []
         dropped_tables_so_far: set[str] = set()
 
+        # Collect columns, foreign keys, and indexes added in subsequent migrations
+        subsequent_cols: set[tuple[str, str]] = set()
+        subsequent_indexes: set[tuple[str, str]] = set()
+        subsequent_fk_cols: set[tuple[str, str]] = set()
+        versions_dir = BACKEND_DIR / "migrations" / "versions"
+        if versions_dir.exists():
+            for vfile in versions_dir.glob("*.py"):
+                if vfile.name == INITIAL_MIGRATION_PATH.name:
+                    continue
+                sub_tree = ast.parse(vfile.read_text(encoding="utf-8"))
+                for sub_node in ast.walk(sub_tree):
+                    if isinstance(sub_node, ast.FunctionDef) and sub_node.name == "upgrade":
+                        for sub_stmt in sub_node.body:
+                            if isinstance(sub_stmt, ast.Expr) and isinstance(
+                                sub_stmt.value, ast.Call
+                            ):
+                                sub_attr = getattr(sub_stmt.value.func, "attr", None)
+                                if sub_attr == "create_index" and len(sub_stmt.value.args) >= 2:
+                                    idx_pair = (
+                                        getattr(sub_stmt.value.args[0], "value", None),
+                                        getattr(sub_stmt.value.args[1], "value", None),
+                                    )
+                                    if idx_pair[0] and idx_pair[1]:
+                                        subsequent_indexes.add(idx_pair)
+                                elif sub_attr == "add_column" and len(sub_stmt.value.args) >= 2:
+                                    tname_arg = getattr(sub_stmt.value.args[0], "value", None)
+                                    col_call = sub_stmt.value.args[1]
+                                    if isinstance(col_call, ast.Call) and len(col_call.args) >= 1:
+                                        cname_arg = getattr(col_call.args[0], "value", None)
+                                        if tname_arg and cname_arg:
+                                            subsequent_cols.add((tname_arg, cname_arg))
+                                elif (
+                                    sub_attr == "create_foreign_key"
+                                    and len(sub_stmt.value.args) >= 5
+                                ):
+                                    src_table = getattr(sub_stmt.value.args[1], "value", None)
+                                    loc_cols_arg = sub_stmt.value.args[3]
+                                    if isinstance(loc_cols_arg, ast.List):
+                                        for elt in loc_cols_arg.elts:
+                                            if hasattr(elt, "value"):
+                                                subsequent_fk_cols.add((src_table, elt.value))
+
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef) and node.name == "upgrade":
                 for stmt in node.body:
@@ -73,7 +115,11 @@ class TestMigrationsCICheck(unittest.TestCase):
                                     refs = tuple(e.value for e in arg.args[1].elts)
                                     mig_fks.append((cols, refs, kw.get("ondelete")))
 
-                            model_cols = {c.name: c.nullable for c in table.columns}
+                            model_cols = {
+                                c.name: c.nullable
+                                for c in table.columns
+                                if (tname, c.name) not in subsequent_cols
+                            }
                             self.assertEqual(mig_cols, model_cols, f"Column mismatch in {tname}")
 
                             model_pks = [c.name for c in table.primary_key.columns]
@@ -94,6 +140,10 @@ class TestMigrationsCICheck(unittest.TestCase):
                                 )
                                 for cstr in table.constraints
                                 if isinstance(cstr, ForeignKeyConstraint)
+                                and not any(
+                                    (tname, fk.parent.name) in subsequent_fk_cols
+                                    for fk in cstr.elements
+                                )
                             ]
                             self.assertEqual(set(mig_fks), set(model_fks), f"FK diff in {tname}")
 
@@ -125,30 +175,6 @@ class TestMigrationsCICheck(unittest.TestCase):
         self.assertEqual(initial_tables, meta_tables)
         self.assertEqual(downgrade_tables, list(reversed(upgrade_tables)))
 
-        # Collect indexes that are defined in subsequent migrations for initial tables,
-        # so they do not cause a false mismatch against the initial migration's index list.
-        subsequent_indexes: set[tuple[str, str]] = set()
-        versions_dir = BACKEND_DIR / "migrations" / "versions"
-        if versions_dir.exists():
-            for vfile in versions_dir.glob("*.py"):
-                if vfile.name == INITIAL_MIGRATION_PATH.name:
-                    continue
-                sub_tree = ast.parse(vfile.read_text(encoding="utf-8"))
-                for sub_node in ast.walk(sub_tree):
-                    if isinstance(sub_node, ast.FunctionDef) and sub_node.name == "upgrade":
-                        for sub_stmt in sub_node.body:
-                            if isinstance(sub_stmt, ast.Expr) and isinstance(
-                                sub_stmt.value, ast.Call
-                            ):
-                                sub_attr = getattr(sub_stmt.value.func, "attr", None)
-                                if sub_attr == "create_index" and len(sub_stmt.value.args) >= 2:
-                                    idx_pair = (
-                                        getattr(sub_stmt.value.args[0], "value", None),
-                                        getattr(sub_stmt.value.args[1], "value", None),
-                                    )
-                                    if idx_pair[0] and idx_pair[1]:
-                                        subsequent_indexes.add(idx_pair)
-
         meta_indexes = {
             (idx.name, tname)
             for tname, table in Base.metadata.tables.items()
@@ -162,6 +188,8 @@ class TestMigrationsCICheck(unittest.TestCase):
         created: set[str] = set()
         for tname in upgrade_tables:
             for fk in Base.metadata.tables[tname].foreign_keys:
+                if (tname, fk.parent.name) in subsequent_fk_cols:
+                    continue
                 target_table = fk.column.table.name
                 if target_table != tname:
                     self.assertIn(
@@ -177,6 +205,8 @@ class TestMigrationsCICheck(unittest.TestCase):
             remaining.remove(tname)
             for other in remaining:
                 for fk in Base.metadata.tables[other].foreign_keys:
+                    if (other, fk.parent.name) in subsequent_fk_cols:
+                        continue
                     self.assertNotEqual(
                         fk.column.table.name,
                         tname,

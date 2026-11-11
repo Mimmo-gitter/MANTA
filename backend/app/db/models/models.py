@@ -12,6 +12,7 @@ from sqlalchemy import (
     DateTime,
     UniqueConstraint,
     Index,
+    CheckConstraint,
     text,
 )
 from sqlalchemy.dialects.postgresql import UUID, JSONB, INET
@@ -434,6 +435,40 @@ class JobLease(Base):
 # ============================================================================
 
 
+class Contributor(Base):
+    __tablename__ = "contributors"
+
+    __table_args__ = (
+        Index("idx_contributors_tenant_id", "tenant_id"),
+        Index("idx_contributors_pseudonym", "pseudonym_id"),
+        UniqueConstraint(
+            "tenant_id",
+            "provider",
+            "external_actor_id",
+            name="uq_contributors_tenant_provider_actor",
+        ),
+    )
+
+    pseudonym_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), primary_key=True
+    )
+    provider: Mapped[str] = mapped_column(String(32), nullable=False)
+    external_actor_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    raw_name: Mapped[Optional[str]] = mapped_column(Text)
+    raw_email: Mapped[Optional[str]] = mapped_column(Text)
+    raw_handle: Mapped[Optional[str]] = mapped_column(String(255))
+    salt_secret: Mapped[str] = mapped_column(Text, nullable=False)
+    is_erased: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    erased_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+
 class Repository(Base):
     __tablename__ = "repositories"
 
@@ -472,7 +507,10 @@ class Repository(Base):
 class Commit(Base):
     __tablename__ = "commits"
 
-    __table_args__ = (Index("idx_commits_tenant_id", "tenant_id"),)
+    __table_args__ = (
+        Index("idx_commits_tenant_id", "tenant_id"),
+        Index("idx_commits_pull_request_id", "tenant_id", "pull_request_id"),
+    )
 
     sha: Mapped[str] = mapped_column(String(40), primary_key=True)
     tenant_id: Mapped[uuid.UUID] = mapped_column(
@@ -482,11 +520,17 @@ class Commit(Base):
         UUID(as_uuid=True), ForeignKey("repositories.id", ondelete="CASCADE"), nullable=False
     )
     author_pseudonym_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    committer_pseudonym_id: Mapped[str] = mapped_column(String(64), default="", nullable=False)
     lines_added: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     lines_deleted: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     authored_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     committed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    parent_shas: Mapped[List[str]] = mapped_column(JSONB, default=list, nullable=False)
     is_root_of_branch: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    pull_request_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("pull_requests.id", ondelete="SET NULL")
+    )
+    active_fencing_token: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow, nullable=False
     )
@@ -499,6 +543,7 @@ class PullRequest(Base):
 
     __table_args__ = (
         Index("idx_pull_requests_tenant_id", "tenant_id"),
+        Index("idx_pull_requests_merge_commit", "tenant_id", "merge_commit_sha"),
         UniqueConstraint("repository_id", "external_pr_number", name="uq_repo_pr_number"),
     )
 
@@ -525,6 +570,7 @@ class PullRequest(Base):
     head_branch: Mapped[str] = mapped_column(String(255), nullable=False)
     base_branch: Mapped[str] = mapped_column(String(255), nullable=False)
     head_sha: Mapped[str] = mapped_column(String(40), nullable=False)
+    merge_commit_sha: Mapped[Optional[str]] = mapped_column(String(40))
     first_commit_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     review_requested_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     first_review_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
@@ -532,6 +578,7 @@ class PullRequest(Base):
     merged_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     closed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     entity_version: Mapped[int] = mapped_column(BigInteger, default=1, nullable=False)
+    active_fencing_token: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     is_stale: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     review_cycles_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
@@ -600,7 +647,9 @@ class Sprint(Base):
     state: Mapped[str] = mapped_column(String(32), default="active", nullable=False)
     start_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     end_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    complete_date: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     goal: Mapped[Optional[str]] = mapped_column(Text)
+    active_fencing_token: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow, nullable=False
     )
@@ -611,6 +660,9 @@ class Issue(Base):
 
     __table_args__ = (
         Index("idx_issues_tenant_id", "tenant_id"),
+        Index("idx_issues_tenant_sprint_status", "tenant_id", "sprint_id", "status"),
+        Index("idx_issues_changelog_precedence", "tenant_id", "external_key", "changelog_id"),
+        Index("idx_issues_resolved_at", "tenant_id", "resolved_at"),
         UniqueConstraint("tenant_id", "external_key", name="uq_tenant_issue_key"),
     )
 
@@ -634,11 +686,18 @@ class Issue(Base):
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
     )
     external_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    external_issue_id: Mapped[Optional[int]] = mapped_column(BigInteger)
     issue_type: Mapped[str] = mapped_column(String(32), default="Story", nullable=False)
     title: Mapped[str] = mapped_column(Text, nullable=False)
     status: Mapped[str] = mapped_column(String(64), nullable=False)
     story_points: Mapped[Optional[float]] = mapped_column(Numeric(5, 2))
     assignee_pseudonym_id: Mapped[Optional[str]] = mapped_column(String(64))
+    issue_links: Mapped[List[Dict[str, Any]]] = mapped_column(JSONB, default=list, nullable=False)
+    changelog_id: Mapped[Optional[int]] = mapped_column(BigInteger)
+    active_fencing_token: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
+    acceptance_criteria: Mapped[Optional[str]] = mapped_column(Text)
+    acceptance_criteria_hash: Mapped[Optional[str]] = mapped_column(String(64))
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     is_blocked: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     blocked_since: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     entity_version: Mapped[int] = mapped_column(BigInteger, default=1, nullable=False)
@@ -647,6 +706,10 @@ class Issue(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False
+    )
+
+    deployment_links: Mapped[List["DeploymentIncident"]] = relationship(
+        back_populates="issue", cascade="all, delete-orphan"
     )
 
 
@@ -874,6 +937,9 @@ class Deployment(Base):
     )
 
     project: Mapped["Project"] = relationship(back_populates="deployments")
+    incident_links: Mapped[List["DeploymentIncident"]] = relationship(
+        back_populates="deployment", cascade="all, delete-orphan"
+    )
 
 
 class DeploymentPullRequest(Base):
@@ -921,6 +987,49 @@ class Incident(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow, nullable=False
     )
+
+
+class DeploymentIncident(Base):
+    __tablename__ = "deployment_incidents"
+
+    __table_args__ = (
+        Index("idx_deployment_incidents_tenant_id", "tenant_id"),
+        Index("idx_deployment_incidents_deployment_id", "deployment_id"),
+        Index("idx_deployment_incidents_issue_id", "issue_id"),
+        Index("idx_deployment_incidents_window", "tenant_id", "detected_at"),
+        UniqueConstraint(
+            "deployment_id", "issue_id", name="uq_deployment_incidents_deployment_issue"
+        ),
+        CheckConstraint(
+            "status IN ('CONFIRMED', 'CANCELLED', 'FALSE_POSITIVE')",
+            name="ck_deployment_incidents_status",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    deployment_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("deployments.id", ondelete="CASCADE"), nullable=False
+    )
+    issue_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("issues.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(32), default="CONFIRMED", nullable=False)
+    correlation_source: Mapped[str] = mapped_column(String(64), nullable=False)
+    detected_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, nullable=False
+    )
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    recovery_time_seconds: Mapped[Optional[int]] = mapped_column(Integer)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    linked_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, nullable=False
+    )
+
+    deployment: Mapped["Deployment"] = relationship(back_populates="incident_links")
+    issue: Mapped["Issue"] = relationship(back_populates="deployment_links")
 
 
 class MetricSnapshot(Base):
