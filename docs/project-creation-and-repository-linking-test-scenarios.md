@@ -11,7 +11,7 @@
 - `SCRUM-324`: Integration credential verification & role restriction test scenarios ([`docs/integration-test-scenarios.md`](integration-test-scenarios.md))  
 - `SCRUM-377`: Implement project CRUD and repository linking endpoints under tenant RLS (`backend/app/projects/router.py`, `backend/app/projects/service.py`)  
 - `Task 17.6`: Automated Pytest test suite for project creation and repository linking (`backend/tests/test_projects_crud.py`)  
-- `Task 18.4`: Project overview and repository linking UI / dashboard  
+- `SCRUM-384` / `Task 18.4`: Deployment signal selection persistence and DORA response reporting test scenarios ([`docs/deployment-signal-selection-persistence-and-dora-response-reporting-test-scenarios.md`](deployment-signal-selection-persistence-and-dora-response-reporting-test-scenarios.md))  
 
 **Target Database Tables:**  
 - `projects` (`id`, `tenant_id`, `created_by`, `name`, `slug`, `tier_sla_hours`, `authoritative_cd_signal`, `lead_time_first_commit_strategy`, `wip_limit_per_dev`, `pr_stale_threshold_hours`, `is_active`, `deleted_at`, `created_at`, `updated_at`, `uq_projects_tenant_slug`)  
