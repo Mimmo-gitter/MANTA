@@ -74,6 +74,14 @@ from .fencing import (
     upsert_job_lease,
 )
 
+from .retry import (
+    MAX_ATTEMPTS,
+    QUEUE_DELAYED,
+    FailureOutcome,
+    handle_job_failure,
+    promote_due_retries,
+)
+
 logger = logging.getLogger("workers.worker")
 
 QUEUE_HIGH = "arq:queue:high"
@@ -708,6 +716,9 @@ async def run_worker_fetch_loop(
     lease_ttl_ms: int = LEASE_TTL_MS,
     heartbeat_interval: float = HEARTBEAT_INTERVAL_SEC,
     enable_heartbeat: bool = True,
+    retry_on_failure: bool = False,
+    max_attempts: int = MAX_ATTEMPTS,
+    failures: list[tuple[JobFetchResult, FailureOutcome]] | None = None,
 ) -> list[JobFetchResult]:
     """
     Executes the worker fetch loop using fetch_next_job and ack_job.
@@ -720,7 +731,14 @@ async def run_worker_fetch_loop(
       3. If a job is claimed, invokes job_handler (if provided).
       4. Only if job_handler completes without raising an exception and ack_on_success is True,
          calls ack_job(redis, worker_id, raw_job) to remove the job from arq:in_flight:{worker_id}.
+      5. When retry_on_failure is True (Task 23.3), handler exceptions are routed via
+         handle_job_failure: attempts 1..4 are parked in 'arq:queue:delayed' with a
+         2^attempt-second backoff, attempt 5 is quarantined into dead_letter_events with
+         webhook_events.status = 'dead_lettered'. The job is then acked so subsequent
+         jobs continue without blockage. Due retries are promoted every iteration.
     """
+    if failures is None:
+        failures = []
     if recover_on_start:
         await recover_in_flight_jobs(redis, worker_id)
 
@@ -734,6 +752,8 @@ async def run_worker_fetch_loop(
             break
 
         iterations += 1
+        if retry_on_failure:
+            await promote_due_retries(redis)
         fetched = await fetch_next_job(redis, worker_id, poll_timeout=poll_timeout)
         if fetched is None:
             continue
@@ -757,14 +777,23 @@ async def run_worker_fetch_loop(
             parsed_payload.setdefault("owner_token", lease_handle.owner_token)
 
         if job_handler is not None:
-            if lease_handle is not None and enable_heartbeat:
-                async with LeaseHeartbeatManager(
-                    redis=redis,
-                    db=db,
-                    handle=lease_handle,
-                    interval_seconds=heartbeat_interval,
-                    lease_ttl_ms=lease_ttl_ms,
-                ):
+            try:
+                if lease_handle is not None and enable_heartbeat:
+                    async with LeaseHeartbeatManager(
+                        redis=redis,
+                        db=db,
+                        handle=lease_handle,
+                        interval_seconds=heartbeat_interval,
+                        lease_ttl_ms=lease_ttl_ms,
+                    ):
+                        await _invoke_job_handler(
+                            job_handler,
+                            source_queue,
+                            raw_job,
+                            parsed_payload,
+                            lease_handle=lease_handle,
+                        )
+                else:
                     await _invoke_job_handler(
                         job_handler,
                         source_queue,
@@ -772,14 +801,26 @@ async def run_worker_fetch_loop(
                         parsed_payload,
                         lease_handle=lease_handle,
                     )
-            else:
-                await _invoke_job_handler(
-                    job_handler,
-                    source_queue,
-                    raw_job,
-                    parsed_payload,
-                    lease_handle=lease_handle,
+            except Exception as exc:
+                if not retry_on_failure or isinstance(exc, StaleFencingTokenError):
+                    raise
+                # Task 23.3: backoff retry (2^attempt s) or quarantine on 5th failure.
+                outcome = await handle_job_failure(
+                    redis, db, parsed_payload, exc, max_attempts=max_attempts
                 )
+                if lease_handle is not None:
+                    await release_job_lease(
+                        redis,
+                        lease_handle.job_id,
+                        lease_handle.worker_id,
+                        lease_handle.owner_token,
+                        db=db,
+                        tenant_id=lease_handle.tenant_id,
+                    )
+                # Ack strictly after the retry/quarantine state is persisted.
+                await ack_job(redis, worker_id, raw_job)
+                failures.append((fetched, outcome))
+                continue
 
         if ack_on_success:
             if lease_handle is not None:
@@ -880,7 +921,9 @@ __all__ = [
     "LEASE_KEY_PREFIX",
     "LEASE_TTL_MS",
     "LEASE_TTL_SECONDS",
+    "MAX_ATTEMPTS",
     "QUEUE_DEFAULT",
+    "QUEUE_DELAYED",
     "QUEUE_HIGH",
     "RECLAIM_EXPIRED_LEASE_LUA",
     "RELEASE_LEASE_LUA",
