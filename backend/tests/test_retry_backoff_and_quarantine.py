@@ -263,7 +263,9 @@ async def test_failure_propagates_when_retry_disabled():
 def test_dead_letter_unresolved_index_declared():
     from app.db.models import DeadLetterEvent
 
-    idx = {i.name: i for i in DeadLetterEvent.__table__.indexes}["idx_dead_letter_events_unresolved"]
+    idx = {i.name: i for i in DeadLetterEvent.__table__.indexes}[
+        "idx_dead_letter_events_unresolved"
+    ]
     rendered = [str(e) for e in idx.expressions]
     assert rendered[:2] == ["dead_letter_events.tenant_id", "dead_letter_events.is_resolved"] or (
         rendered[:2] == ["tenant_id", "is_resolved"]
