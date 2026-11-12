@@ -16,7 +16,7 @@
   - `SCRUM-387` (`Task 19.2` Implement `FOR UPDATE SKIP LOCKED` sweeper claim query and atomic worker CAS transition to processing)
   - `SCRUM-388` (`Task 19.3` Implement 5-second background recovery sweeper polling staged events older than 10s and enqueuing via `RPUSH`)
   - `SCRUM-389` (`Task 19.4` Configure recovery sweeper background service and healthcheck in `docker-compose.yml`)
-  - `SCRUM-390` (`Task 19.5` Create test scenarios for stranded staged webhooks and recovery idempotency)
+  - `SCRUM-390` (`Task 19.5` Create failure-injection test scenarios for gateway crash between DB insert and Redis push, see [`backend/tests/scenarios/test_us19_staged_webhook_recovery_scenarios.md`](../backend/tests/scenarios/test_us19_staged_webhook_recovery_scenarios.md) / [`docs/staged-webhook-failure-injection-test-scenarios.md`](staged-webhook-failure-injection-test-scenarios.md))
   - `SCRUM-391` (`Task 19.6` Write automated chaos test verifying staged events recover within 15s without duplicate processing)
 
 ---

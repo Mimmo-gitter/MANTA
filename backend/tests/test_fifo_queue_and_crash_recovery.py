@@ -70,6 +70,18 @@ class InMemoryAsyncRedis:
     async def llen(self, key: str) -> int:
         return len(self.lists.get(key, []))
 
+    async def lpop(self, key: str) -> str | None:
+        items = self.lists.get(key, [])
+        if not items:
+            return None
+        return items.pop(0)
+
+    async def rpop(self, key: str) -> str | None:
+        items = self.lists.get(key, [])
+        if not items:
+            return None
+        return items.pop()
+
     async def lindex(self, key: str, index: int) -> str | None:
         items = self.lists.get(key, [])
         if 0 <= index < len(items):
