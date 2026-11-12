@@ -397,13 +397,17 @@ EXPLAIN SELECT id FROM outbox_events WHERE published_at IS NULL ORDER BY created
 1. Set tenant context to Tenant A:
    ```python
    async with get_tenant_db_context(tenant_a) as session_a:
-       ev_a = record_outbox_event(session_a, tenant_id=tenant_a, event_type="event.a", payload={"secret": "ten_a"})
+       ev_a = record_outbox_event(
+           session_a, tenant_id=tenant_a, event_type="event.a", payload={"secret": "ten_a"}
+       )
        await session_a.commit()
    ```
 2. Set tenant context to Tenant B:
    ```python
    async with get_tenant_db_context(tenant_b) as session_b:
-       ev_b = record_outbox_event(session_b, tenant_id=tenant_b, event_type="event.b", payload={"secret": "ten_b"})
+       ev_b = record_outbox_event(
+           session_b, tenant_id=tenant_b, event_type="event.b", payload={"secret": "ten_b"}
+       )
        await session_b.commit()
    ```
 3. Under Tenant A context, attempt direct lookup of Tenant B's event:
@@ -438,13 +442,13 @@ assert res_a.payload["data"]["secret"] == "ten_a"
    async with get_tenant_db_context(tenant_b) as session:
        # Unfiltered scan
        all_events = (await session.execute(select(OutboxEvent))).scalars().all()
-       
+
        # Adversarial cross-tenant query
        cross_query = (
-           await session.execute(
-               select(OutboxEvent).where(OutboxEvent.tenant_id == tenant_a)
-           )
-       ).scalars().all()
+           (await session.execute(select(OutboxEvent).where(OutboxEvent.tenant_id == tenant_a)))
+           .scalars()
+           .all()
+       )
    ```
 
 #### 5.8.3 Verification Assertions

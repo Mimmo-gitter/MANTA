@@ -457,4 +457,3 @@ async def test_cross_tenant_rls_query_filter():
         cross_res = await session.execute(cross_stmt)
         cross_events = cross_res.scalars().all()
         assert len(cross_events) == 0
-
