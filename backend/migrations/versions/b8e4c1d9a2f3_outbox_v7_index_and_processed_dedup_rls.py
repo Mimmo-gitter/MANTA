@@ -112,7 +112,7 @@ def upgrade() -> None:
             FROM outbox_events o
             WHERE o.published_at IS NULL
             GROUP BY o.tenant_id
-            ORDER BY MIN(o.id) ASC
+            ORDER BY MIN(o.id::text) ASC
             LIMIT p_limit;
         END;
         $$;

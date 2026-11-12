@@ -17,6 +17,7 @@ import uuid
 
 import pytest
 from sqlalchemy import text
+from sqlalchemy.dialects import postgresql
 
 from app.core.uuidv7 import generate_uuidv7
 from app.db.models.models import OutboxEvent
@@ -76,7 +77,12 @@ class _FakeRelaySession:
         self.rolled_back = False
 
     async def execute(self, stmt: object) -> _ScalarResult:
-        self.executed_sql.append(str(stmt))
+        compiled = (
+            stmt.compile(dialect=postgresql.dialect())  # type: ignore[attr-defined]
+            if hasattr(stmt, "compile")
+            else stmt
+        )
+        self.executed_sql.append(str(compiled))
         pending = sorted(
             (r for r in self.rows if r.published_at is None),
             key=lambda r: r.id,

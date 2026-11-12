@@ -94,7 +94,7 @@ Per SRS §2.4.1 / §3.2.1.3, the backend connects exclusively as `eng_app_user` 
 
 Following MANTA's established `recovery_sweeper` pattern (`a9c5e1d7b3f2`), `OutboxRelayWorker` preserves strict RLS isolation via a two-step protocol:
 1. **Cross-Tenant Discovery (`SECURITY DEFINER` RPC):**
-   Call `list_tenants_with_unpublished_outbox_events(p_limit INT DEFAULT 100)` (`SECURITY DEFINER`, `SET search_path = public, pg_temp`, `EXECUTE` granted solely to `eng_app_user`), returning distinct `tenant_id`s with `published_at IS NULL` ordered by earliest `MIN(id) ASC`.
+   Call `list_tenants_with_unpublished_outbox_events(p_limit INT DEFAULT 100)` (`SECURITY DEFINER`, `SET search_path = public, pg_temp`, `EXECUTE` granted solely to `eng_app_user`), returning distinct `tenant_id`s with `published_at IS NULL` ordered by earliest `MIN(id::text) ASC`.
 2. **Per-Tenant RLS-Scoped Batch Relay:**
    For each discovered `tenant_id`, enter `async with get_tenant_db_context(tenant_id) as session:` (`SELECT set_config('app.current_tenant_id', :tenant_id, true)`), execute the `ORDER BY id ASC LIMIT 100 FOR UPDATE SKIP LOCKED` query, publish rows via `XADD`, update `row.published_at = datetime.now(timezone.utc)`, and commit the transaction. Because Redis Streams are already partitioned per tenant (`tenant_stream:{tenant_id}`), per-tenant polling preserves strict per-stream UUIDv7 ordering with zero RLS bypass on event payloads.
 
