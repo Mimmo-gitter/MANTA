@@ -1,7 +1,7 @@
 """outbox_v7_index_and_processed_dedup_rls
 
 Revision ID: b8e4c1d9a2f3
-Revises: a9c5e1d7b3f2
+Revises: b3e9f2a6d4c1
 Create Date: 2026-11-12 21:15:00.000000
 
 Jira Requirements:
@@ -20,7 +20,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "b8e4c1d9a2f3"
-down_revision: Union[str, None] = "a9c5e1d7b3f2"
+down_revision: Union[str, None] = "b3e9f2a6d4c1"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
