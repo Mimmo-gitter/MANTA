@@ -248,6 +248,19 @@ async def test_rollback_on_error():
         outbox = await session.get(OutboxEvent, staged_outbox_id)
         assert outbox is None  # Never committed!
 
+        # Assert SELECT count() queries reflect full rollback of both operations
+        failed_count_res = await session.execute(
+            text("SELECT count(*) FROM deployments WHERE tenant_id = :tid AND status = 'FAILED';"),
+            {"tid": tenant_id},
+        )
+        assert failed_count_res.scalar() == 0
+
+        outbox_count_res = await session.execute(
+            text("SELECT count(*) FROM outbox_events WHERE tenant_id = :tid;"),
+            {"tid": tenant_id},
+        )
+        assert outbox_count_res.scalar() == 0
+
 
 @pytest.mark.asyncio
 async def test_database_constraint_error_rollback():
@@ -294,6 +307,18 @@ async def test_database_constraint_error_rollback():
 
         outbox = await session.get(OutboxEvent, staged_outbox_id)
         assert outbox is None
+
+        failed_count_res = await session.execute(
+            text("SELECT count(*) FROM deployments WHERE tenant_id = :tid AND status = 'FAILED';"),
+            {"tid": tenant_id},
+        )
+        assert failed_count_res.scalar() == 0
+
+        outbox_count_res = await session.execute(
+            text("SELECT count(*) FROM outbox_events WHERE tenant_id = :tid;"),
+            {"tid": tenant_id},
+        )
+        assert outbox_count_res.scalar() == 0
 
 
 @pytest.mark.asyncio
