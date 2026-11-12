@@ -1,15 +1,17 @@
 """
-SCRUM-476 / SCRUM-477: Transactional Outbox Pattern & Service Automated Tests.
+SCRUM-476 / SCRUM-477 / SCRUM-478 / SCRUM-479: Transactional Outbox Pattern & Service Automated Tests.
 Parent Story: SCRUM-371 (US-32: Transactional outbox).
+Design Specification: backend/tests/scenarios/test_us32_transactional_outbox_scenarios.md
 
 Automated verification of transactional outbox pattern and database invariants:
 - TC-OUTBOX-001: record_outbox_event stages row with published_at=None and canonical envelope.
 - TC-OUTBOX-002: Atomic dual-commit: Domain mutation + outbox event commit durably in one transaction.
 - TC-OUTBOX-003: Rollback on error: Exception before commit rolls back both domain entity and outbox event.
-- TC-OUTBOX-004: Relay polling query: claim_unpublished_outbox_events retrieves events via SKIP LOCKED.
-- TC-OUTBOX-005: Mark published: mark_outbox_events_published updates published_at timestamp.
+- TC-OUTBOX-004: Injected DB constraint violation rolls back both domain change and outbox event.
+- TC-OUTBOX-005: Relay polling query: claim_unpublished_outbox_events retrieves events via SKIP LOCKED.
 - TC-OUTBOX-006: Partial index: PostgreSQL EXPLAIN verifies usage of ix_outbox_events_unpublished.
 - TC-OUTBOX-007: Tenant RLS: Outbox events strictly isolated per tenant under eng_app_user.
+- TC-OUTBOX-008: Tenant RLS table scan and anti-enumeration filtering isolation.
 """
 
 from datetime import datetime, timezone
@@ -17,7 +19,7 @@ import uuid
 
 from httpx import ASGITransport, AsyncClient
 import pytest
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from app.db.models.models import Commit, Deployment, OutboxEvent, Project, Repository
 from app.db.session import async_engine, get_tenant_db_context
@@ -248,8 +250,55 @@ async def test_rollback_on_error():
 
 
 @pytest.mark.asyncio
+async def test_database_constraint_error_rollback():
+    """TC-OUTBOX-004: Injected DB constraint violation rolls back both domain change and outbox event."""
+    tenant_id, _ = await register_test_tenant("outbox-dberr")
+    project_id = await create_test_project(tenant_id)
+    deployment_id = await create_test_deployment(tenant_id, project_id)
+
+    staged_outbox_id = None
+    try:
+        async with get_tenant_db_context(tenant_id) as session:
+            dep, outbox = await record_deployment_failure_atomic(
+                session,
+                tenant_id=tenant_id,
+                deployment_id=deployment_id,
+                failure_reason="db_error_test",
+            )
+            staged_outbox_id = outbox.id
+
+            # Inject relational constraint violation: insert commit referencing non-existent repository
+            invalid_commit = Commit(
+                sha=uuid.uuid4().hex + uuid.uuid4().hex[:8],
+                tenant_id=tenant_id,
+                repository_id=uuid.uuid4(),  # Does not exist in repositories table
+                author_pseudonym_id="pseudo-" + uuid.uuid4().hex[:16],
+                lines_added=10,
+                lines_deleted=2,
+                authored_at=datetime.now(timezone.utc),
+                committed_at=datetime.now(timezone.utc),
+                is_root_of_branch=False,
+                created_at=datetime.now(timezone.utc),
+            )
+            session.add(invalid_commit)
+            await session.commit()
+    except Exception:
+        pass
+
+    # Verify that NEITHER the status update nor the outbox row was persisted
+    async with get_tenant_db_context(tenant_id) as session:
+        dep = await session.get(Deployment, deployment_id)
+        assert dep is not None
+        assert dep.status == "PENDING"
+        assert dep.is_change_failure is False
+
+        outbox = await session.get(OutboxEvent, staged_outbox_id)
+        assert outbox is None
+
+
+@pytest.mark.asyncio
 async def test_claim_and_publish_outbox_events():
-    """TC-OUTBOX-004 & 005: Relay polling query and mark_outbox_events_published."""
+    """TC-OUTBOX-005: Relay polling query and mark_outbox_events_published."""
     tenant_id, _ = await register_test_tenant("outbox-relay")
     project_id = await create_test_project(tenant_id)
 
@@ -362,3 +411,50 @@ async def test_outbox_tenant_rls_isolation():
         # Tenant A can see its own event
         own = await session.get(OutboxEvent, ev_a_id)
         assert own is not None
+
+
+@pytest.mark.asyncio
+async def test_cross_tenant_rls_query_filter():
+    """TC-OUTBOX-008: Tenant B queries cannot scan or filter Tenant A's outbox events under RLS."""
+    tenant_a, _ = await register_test_tenant("outbox-scan-a")
+    tenant_b, _ = await register_test_tenant("outbox-scan-b")
+    proj_a = await create_test_project(tenant_a)
+    proj_b = await create_test_project(tenant_b)
+
+    async with get_tenant_db_context(tenant_a) as session:
+        for i in range(3):
+            record_outbox_event(
+                session,
+                tenant_id=tenant_a,
+                project_id=proj_a,
+                event_type=f"tenant.a.scan.{i}",
+                payload={"index": i},
+            )
+        await session.commit()
+
+    async with get_tenant_db_context(tenant_b) as session:
+        for i in range(2):
+            record_outbox_event(
+                session,
+                tenant_id=tenant_b,
+                project_id=proj_b,
+                event_type=f"tenant.b.scan.{i}",
+                payload={"index": i},
+            )
+        await session.commit()
+
+    # Under Tenant B context, unfiltered query must return only Tenant B's 2 events
+    async with get_tenant_db_context(tenant_b) as session:
+        stmt = select(OutboxEvent)
+        res = await session.execute(stmt)
+        events_b = res.scalars().all()
+        assert len(events_b) == 2
+        for ev in events_b:
+            assert ev.tenant_id == tenant_b
+
+        # Explicit cross-tenant query for Tenant A must return 0 rows due to RLS policy
+        cross_stmt = select(OutboxEvent).where(OutboxEvent.tenant_id == tenant_a)
+        cross_res = await session.execute(cross_stmt)
+        cross_events = cross_res.scalars().all()
+        assert len(cross_events) == 0
+
