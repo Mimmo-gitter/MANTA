@@ -629,8 +629,8 @@ async def test_jira_story_status_transition_history():
 
     issue_id = uuid.uuid4()
     t0 = datetime(2026, 11, 12, 9, 0, 0, tzinfo=timezone.utc)
-    t1 = t0 + timedelta(hours=2)   # 11:00 UTC (In Progress)
-    t2 = t1 + timedelta(hours=4)   # 15:00 UTC (Done, duration = 14400s)
+    t1 = t0 + timedelta(hours=2)  # 11:00 UTC (In Progress)
+    t2 = t1 + timedelta(hours=4)  # 15:00 UTC (Done, duration = 14400s)
 
     async with get_tenant_db_context(tenant_id) as session:
         story = Issue(
@@ -817,7 +817,9 @@ async def test_incident_created_30h_after_deployment_not_linked():
     # Assert 0 links exist for this incident
     async with get_tenant_db_context(tenant_id) as session:
         links_count = await session.scalar(
-            select(func.count(DeploymentIncident.id)).where(DeploymentIncident.issue_id == incident_id)
+            select(func.count(DeploymentIncident.id)).where(
+                DeploymentIncident.issue_id == incident_id
+            )
         )
         assert links_count == 0
 
@@ -919,7 +921,9 @@ async def test_incident_transitioned_to_cancelled_unlinked():
             ),
             {"tid": tenant_id},
         )
-        assert cfr_query.scalar_one() == 0  # Cancelled incident is excluded from CFR failure numerator!
+        assert (
+            cfr_query.scalar_one() == 0
+        )  # Cancelled incident is excluded from CFR failure numerator!
 
 
 @pytest.mark.asyncio
