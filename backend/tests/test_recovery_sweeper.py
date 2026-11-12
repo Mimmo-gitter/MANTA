@@ -1,27 +1,29 @@
 """
-SCRUM-388 / SCRUM-389 (Tasks 19.3 & 19.4):
+SCRUM-388 / SCRUM-389 / SCRUM-390 (Tasks 19.3, 19.4 & 19.5):
 Comprehensive Automated Verification Suite for Staged Webhook Recovery Sweeper,
-Immediate Post-Commit Intake Enqueue, and Healthcheck Liveness Monitoring.
+Immediate Post-Commit Intake Enqueue, Failure-Injection Scenarios & Worker CAS Deduplication.
 
-Test Scenarios:
-1. TC-SWEEP-001: Stranded staged events older than 10s are claimed, pushed to Valkey/Redis
+Test Scenarios (Design Reference: docs/staged-webhook-failure-injection-test-scenarios.md):
+1. TC-SWEEP-001 / TC-STAGED-001: Stranded staged events older than 10s are claimed, pushed to Valkey/Redis
    via RPUSH, and transitioned to 'queued' within one sweep cycle (<= 15s total).
 2. TC-SWEEP-002: Events younger than 10s grace threshold or in other states ('processing',
    'completed', 'failed') are untouched by the sweeper.
-3. TC-SWEEP-003: Redis outage during sweep triggers atomic database rollback, cleanly
+3. TC-SWEEP-003 / TC-STAGED-003: Redis outage during sweep triggers atomic database rollback, cleanly
    reverting events to 'staged' with no stuck 'recovering' rows.
 4. TC-SWEEP-004: Subsequent sweep cycle after Redis recovery successfully claims and queues
    the previously stranded events without data loss.
-5. TC-SWEEP-005: Concurrency guarantee: Multiple sweeper workers running concurrently claim
-   disjoint sets of events with zero duplicate enqueues.
-6. TC-SWEEP-006: Tenant isolation under PostgreSQL Row-Level Security: Multi-tenant batches
+5. TC-SWEEP-005 / TC-STAGED-002: Concurrency guarantee: Multiple sweeper workers running concurrently claim
+   disjoint sets of events with zero duplicate enqueues (FOR UPDATE SKIP LOCKED).
+6. TC-SWEEP-006 / TC-STAGED-005: Tenant isolation under PostgreSQL Row-Level Security: Multi-tenant batches
    are discovered via SECURITY DEFINER function and processed strictly within their tenant RLS context.
 7. TC-SWEEP-007: Immediate intake enqueue: Normal POST /api/v1/webhooks/... traffic enqueues
    immediately to Valkey/Redis post-commit and marks rows 'queued' without waiting for the sweeper.
 8. TC-SWEEP-008: Intake resilience: Redis outage during POST intake still returns HTTP 202 Accepted,
    leaves the event safely 'staged' in PostgreSQL, and the sweeper recovers it when Redis recovers.
-9. TC-SWEEP-009: Sweeper heartbeat file generation and container healthcheck script verification.
-10. TC-SWEEP-010: Sweeper background loop graceful shutdown on stop event.
+9. TC-STAGED-004: Race condition between delayed gateway push and sweeper recovery: Valkey receives
+   duplicate envelopes; Worker CAS executes exactly once and discards duplicate (zero double-processing).
+10. TC-SWEEP-009: Sweeper heartbeat file generation and container healthcheck script verification.
+11. TC-SWEEP-010: Sweeper background loop graceful shutdown on stop event.
 """
 
 from __future__ import annotations
@@ -42,7 +44,12 @@ from app.db.models.models import WebhookEvent
 from app.db.session import async_engine, get_tenant_db_context
 from app.main import app
 from app.webhooks.enqueue import (
+    build_webhook_envelope,
     set_redis,
+)
+from app.webhooks.sweeper import (
+    cas_transition_to_processing,
+    complete_webhook_event,
 )
 from tests.test_reliable_job_queue import InMemoryAsyncRedis
 from workers.recovery_sweeper import (
@@ -463,6 +470,124 @@ async def test_intake_route_resilient_to_redis_failure():
         ev_recovered = await session.get(WebhookEvent, event_id)
         assert ev_recovered is not None
         assert ev_recovered.status == "queued"
+
+
+@pytest.mark.asyncio
+async def test_gateway_crash_after_db_commit_recovers_via_sweeper(redis_mock: InMemoryAsyncRedis):
+    """
+    TC-STAGED-001: Gateway inserts 'staged' row into PostgreSQL and crashes before
+    pushing to Valkey/Redis. The stranded row lingers in 'staged', is claimed by
+    the recovery sweeper (>10s threshold), pushed to Redis, and claimed via atomic CAS.
+    """
+    tenant_id, _ = await register_test_tenant("crash-rec")
+    now = datetime.now(timezone.utc)
+    event_id = uuid.uuid4()
+
+    # 1. Gateway commits 'staged' row, then crashes immediately (never calls redis.rpush)
+    async with get_tenant_db_context(tenant_id) as session:
+        ev = WebhookEvent(
+            id=event_id,
+            tenant_id=tenant_id,
+            provider="github",
+            provider_delivery_id=f"del-{event_id.hex[:8]}",
+            event_type="pull_request",
+            received_at=now - timedelta(seconds=12),  # > 10s grace threshold
+            payload={"action": "opened", "number": 42},
+            status="staged",
+            created_at=now - timedelta(seconds=12),
+        )
+        session.add(ev)
+        await session.flush()
+
+    # Redis queue remains completely empty
+    assert await redis_mock.llen(QUEUE_DEFAULT) == 0
+
+    # 2. Sweeper runs tick and claims stranded event
+    result = await sweep_once(redis_mock, threshold_seconds=10.0, tenant_id=tenant_id)
+    assert result.queued == 1
+    assert await redis_mock.llen(QUEUE_DEFAULT) == 1
+
+    # 3. Worker pops envelope from Redis and executes atomic CAS
+    raw_envelope = await redis_mock.lpop(QUEUE_DEFAULT)
+    envelope = json.loads(raw_envelope)
+    assert envelope["event_id"] == str(event_id)
+
+    async with get_tenant_db_context(tenant_id) as session:
+        cas_ok = await cas_transition_to_processing(session, event_id, tenant_id=tenant_id)
+        assert cas_ok is True
+
+        # Transition to completed
+        await complete_webhook_event(session, event_id, tenant_id=tenant_id)
+
+    # 4. Assert final terminal state and 0 duplicates
+    async with get_tenant_db_context(tenant_id) as session:
+        ev_final = await session.get(WebhookEvent, event_id)
+        assert ev_final is not None
+        assert ev_final.status == "completed"
+        assert ev_final.attempts == 1
+
+
+@pytest.mark.asyncio
+async def test_race_delayed_gateway_push_and_sweeper_recovery_cas_deduplication(redis_mock: InMemoryAsyncRedis):
+    """
+    TC-STAGED-004: Race condition between delayed gateway push and sweeper recovery.
+    Valkey queue holds duplicate envelopes (Copy A & Copy B); Worker CAS serializes
+    execution such that exactly one worker acquires processing claim while the second
+    worker detects duplicate and safely discards it (zero double-processing).
+    """
+    tenant_id, _ = await register_test_tenant("race-cas")
+    now = datetime.now(timezone.utc)
+    event_id = uuid.uuid4()
+
+    # Staged event (>10s old)
+    async with get_tenant_db_context(tenant_id) as session:
+        ev = WebhookEvent(
+            id=event_id,
+            tenant_id=tenant_id,
+            provider="github",
+            provider_delivery_id=f"del-{event_id.hex[:8]}",
+            event_type="push",
+            received_at=now - timedelta(seconds=15),
+            payload={"ref": "main"},
+            status="staged",
+            created_at=now - timedelta(seconds=15),
+        )
+        session.add(ev)
+        await session.flush()
+
+    # 1. Sweeper recovers event -> pushes Copy A, marks queued
+    res = await sweep_once(redis_mock, threshold_seconds=10.0, tenant_id=tenant_id)
+    assert res.queued == 1
+
+    # 2. Delayed gateway wakes up after 12s stall -> pushes Copy B
+    envelope_b = build_webhook_envelope(
+        event_id=event_id,
+        tenant_id=tenant_id,
+        provider="github",
+        event_type="push",
+    )
+    await redis_mock.rpush(QUEUE_DEFAULT, envelope_b)
+
+    # Queue now holds 2 envelopes for the same event
+    assert await redis_mock.llen(QUEUE_DEFAULT) == 2
+
+    # 3. Worker 1 pops Copy A and executes CAS -> WINS
+    async with get_tenant_db_context(tenant_id) as session:
+        cas_w1 = await cas_transition_to_processing(session, event_id, tenant_id=tenant_id)
+        assert cas_w1 is True
+
+    # 4. Worker 2 pops Copy B and executes CAS -> LOSES (0 rows updated)
+    async with get_tenant_db_context(tenant_id) as session:
+        cas_w2 = await cas_transition_to_processing(session, event_id, tenant_id=tenant_id)
+        assert cas_w2 is False  # DUPLICATE REJECTED AT DB LEVEL!
+
+    # 5. Worker 1 completes the job
+    async with get_tenant_db_context(tenant_id) as session:
+        await complete_webhook_event(session, event_id, tenant_id=tenant_id)
+        ev_final = await session.get(WebhookEvent, event_id)
+        assert ev_final is not None
+        assert ev_final.status == "completed"
+        assert ev_final.attempts == 1
 
 
 # ==============================================================================
