@@ -38,13 +38,16 @@ class TestMigrationsCICheck(unittest.TestCase):
         downgrade_indexes: list[tuple[str, str]] = []
         dropped_tables_so_far: set[str] = set()
 
-        # Collect columns, foreign keys, and indexes added in subsequent migrations
+        # Collect columns, renames, drops, PKs, FKs, and indexes from subsequent migrations
         subsequent_cols: set[tuple[str, str]] = set()
+        subsequent_dropped_cols: set[tuple[str, str]] = set()
+        subsequent_renamed_cols: dict[tuple[str, str], str] = {}
+        subsequent_pk_cols: dict[str, list[str]] = {}
         subsequent_indexes: set[tuple[str, str]] = set()
         subsequent_fk_cols: set[tuple[str, str]] = set()
         versions_dir = BACKEND_DIR / "migrations" / "versions"
         if versions_dir.exists():
-            for vfile in versions_dir.glob("*.py"):
+            for vfile in sorted(versions_dir.glob("*.py")):
                 if vfile.name == INITIAL_MIGRATION_PATH.name:
                     continue
                 sub_tree = ast.parse(vfile.read_text(encoding="utf-8"))
@@ -69,6 +72,36 @@ class TestMigrationsCICheck(unittest.TestCase):
                                         cname_arg = getattr(col_call.args[0], "value", None)
                                         if tname_arg and cname_arg:
                                             subsequent_cols.add((tname_arg, cname_arg))
+                                elif sub_attr == "drop_column" and len(sub_stmt.value.args) >= 2:
+                                    tname_arg = getattr(sub_stmt.value.args[0], "value", None)
+                                    cname_arg = getattr(sub_stmt.value.args[1], "value", None)
+                                    if tname_arg and cname_arg:
+                                        subsequent_dropped_cols.add((tname_arg, cname_arg))
+                                elif sub_attr == "alter_column" and len(sub_stmt.value.args) >= 2:
+                                    tname_arg = getattr(sub_stmt.value.args[0], "value", None)
+                                    old_cname = getattr(sub_stmt.value.args[1], "value", None)
+                                    new_cname = next(
+                                        (
+                                            getattr(kw.value, "value", None)
+                                            for kw in sub_stmt.value.keywords
+                                            if kw.arg == "new_column_name"
+                                        ),
+                                        None,
+                                    )
+                                    if tname_arg and old_cname and new_cname:
+                                        subsequent_renamed_cols[(tname_arg, old_cname)] = new_cname
+                                elif (
+                                    sub_attr == "create_primary_key"
+                                    and len(sub_stmt.value.args) >= 3
+                                ):
+                                    tname_arg = getattr(sub_stmt.value.args[1], "value", None)
+                                    pk_cols_arg = sub_stmt.value.args[2]
+                                    if tname_arg and isinstance(pk_cols_arg, ast.List):
+                                        subsequent_pk_cols[tname_arg] = [
+                                            elt.value
+                                            for elt in pk_cols_arg.elts
+                                            if hasattr(elt, "value")
+                                        ]
                                 elif (
                                     sub_attr == "create_foreign_key"
                                     and len(sub_stmt.value.args) >= 5
@@ -115,15 +148,23 @@ class TestMigrationsCICheck(unittest.TestCase):
                                     refs = tuple(e.value for e in arg.args[1].elts)
                                     mig_fks.append((cols, refs, kw.get("ondelete")))
 
+                            evolved_mig_cols = {
+                                subsequent_renamed_cols.get((tname, cname), cname): nullable
+                                for cname, nullable in mig_cols.items()
+                                if (tname, cname) not in subsequent_dropped_cols
+                            }
                             model_cols = {
                                 c.name: c.nullable
                                 for c in table.columns
                                 if (tname, c.name) not in subsequent_cols
                             }
-                            self.assertEqual(mig_cols, model_cols, f"Column mismatch in {tname}")
+                            self.assertEqual(
+                                evolved_mig_cols, model_cols, f"Column mismatch in {tname}"
+                            )
 
                             model_pks = [c.name for c in table.primary_key.columns]
-                            self.assertEqual(mig_pks, model_pks, f"PK mismatch in {tname}")
+                            expected_pks = subsequent_pk_cols.get(tname, mig_pks)
+                            self.assertEqual(expected_pks, model_pks, f"PK mismatch in {tname}")
 
                             model_uqs = [
                                 (tuple(c.name for c in cstr.columns), cstr.name)

@@ -57,7 +57,7 @@ Scope item #2 requires verifying that all tables, constraints, and indexes built
 | :--- | :--- | :--- | :--- | :--- |
 | `tenants` | `(id)` | `UNIQUE (slug)` | — | `tenant_isolation_policy` (`id`) |
 | `roles` | `(id)` | — | — | *Global exempt* |
-| `processed_outbox_events` | `(outbox_event_id, consumer_name)` | — | — | *Global exempt* |
+| `processed_outbox_events` | `(event_id)` *(migrated from `(outbox_event_id, consumer_name)` in `b8e4c1d9a2f3`)* | — | `idx_processed_outbox_events_tenant_id`, `idx_processed_outbox_events_processed_at` | `tenant_isolation_policy` |
 | `users` | `(id)` | `uq_tenant_user_email (tenant_id, email)`,<br>`uq_tenant_google_sub (tenant_id, google_sub)` | `idx_users_tenant_id`,<br>`idx_users_tenant_role`,<br>`idx_users_github_handle` | `tenant_isolation_policy` |
 | `user_identities` | `(id)` | `uq_tenant_google_identity (tenant_id, issuer_subject)` | `idx_user_identities_tenant_id`,<br>`idx_user_identities_user` | `tenant_isolation_policy` |
 | `user_sessions` | `(id)` | `UNIQUE (refresh_token_hash)` | `idx_user_sessions_tenant_id`,<br>`idx_user_sessions_lookup` | `tenant_isolation_policy` |

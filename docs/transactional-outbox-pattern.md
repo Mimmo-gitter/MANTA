@@ -19,6 +19,8 @@
   - `SCRUM-479` (`Task 32.5` Write automated pytest tests verifying both rows commit together or roll back together when an error occurs before commit)
   - `SCRUM-481` (`Task 33.1` Design Outbox Relay worker polling loop, Valkey publisher, and `processed_outbox_events` consumer table)
 
+> **Task 33.1 Update Notice:** See [`docs/outbox-relay-and-deduplication.md`](./outbox-relay-and-deduplication.md) for the authoritative `US-33` specification (application-side RFC 9562 `UUIDv7` generator in `backend/app/core/uuidv7.py`, `OutboxRelayWorker` in `backend/app/outbox/relay.py` with `XADD tenant_stream:{tenant_id} MAXLEN ~ 10000`, two-tier deduplication in `backend/app/outbox/consumer.py` with `outbox:dedup:{tenant_id}:{event_id}`, and the reconciled `(event_id, tenant_id, processed_at)` `processed_outbox_events` schema & RLS policy).
+
 ---
 
 ## 1. Executive Summary & The Dual-Write Hazard
