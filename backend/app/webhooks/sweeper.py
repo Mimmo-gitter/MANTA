@@ -272,4 +272,3 @@ async def mark_event_queued_if_staged(
         {"event_id": event_id, "tenant_id": tenant_id},
     )
     return result.fetchone() is not None
-

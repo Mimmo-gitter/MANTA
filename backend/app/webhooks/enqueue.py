@@ -111,7 +111,9 @@ async def enqueue_staged_event_best_effort(
             await mark_event_queued_if_staged(db, event_id, tenant_id=tenant_id)
 
         return True
-    except Exception as exc:  # Intentionally catch-all so intake endpoint never fails on queue outage
+    except (
+        Exception
+    ) as exc:  # Intentionally catch-all so intake endpoint never fails on queue outage
         logger.warning(
             f"Immediate enqueue failed for webhook event {event_id} (sweeper will recover): {exc}"
         )
