@@ -15,7 +15,7 @@
 - **Blocks / Enables:**
   - `SCRUM-476` (`Task 32.2` Write Alembic migration and tenant RLS policy for `outbox_events` table)
   - `SCRUM-477` (`Task 32.3` Implement transactional outbox session helper committing domain entity updates and `outbox_events` rows atomically)
-  - `SCRUM-478` (`Task 32.4` Create test scenarios for atomic dual-commit on deployment failure and mid-transaction error rollback)
+  - `SCRUM-478` (`Task 32.4` Create test scenarios for atomic dual-commit on deployment failure and mid-transaction error rollback, see [`backend/tests/scenarios/test_us32_transactional_outbox_scenarios.md`](../backend/tests/scenarios/test_us32_transactional_outbox_scenarios.md) / [`docs/transactional-outbox-test-scenarios.md`](transactional-outbox-test-scenarios.md))
   - `SCRUM-479` (`Task 32.5` Write automated pytest tests verifying both rows commit together or roll back together when an error occurs before commit)
   - `SCRUM-481` (`Task 33.1` Design Outbox Relay worker polling loop, Valkey publisher, and `processed_outbox_events` consumer table)
 
