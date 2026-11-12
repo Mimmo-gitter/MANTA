@@ -105,8 +105,8 @@ fun SignInScreen(onBiometricUnlockClick: () -> Unit = {}) {
             Text(
                 text = "Start creating your team projects with " +
                     "AI-Augmented Engineering Intelligence Platform",
-                style = MaterialTheme.typography.bodyMedium,
-                color = GrayText,
+                style = MaterialTheme.typography.bodySmall,
+                color = TextLight,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.padding(horizontal = 16.dp)
             )

@@ -109,7 +109,7 @@ fun BiometricUnlockScreen(
                     Spacer(modifier = Modifier.height(8.dp))
                     Text(
                         text = "Confirm your biometric key to unlock M.A.N.T.A. as $name.",
-                        style = MaterialTheme.typography.bodyMedium,
+                        style = MaterialTheme.typography.bodySmall,
                         color = TextLight,
                         textAlign = TextAlign.Center,
                         modifier = Modifier.padding(horizontal = 16.dp)
@@ -358,11 +358,9 @@ fun BiometricUnlockScreen(
                     )
                 }
             }
-
             Spacer(modifier = Modifier.height(32.dp))
             ProtectedBadge()
-
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(32.dp))
         }
     }
 }

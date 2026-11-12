@@ -104,7 +104,12 @@ class AuthRepository(private val encryptedStorage: EncryptedStorage) {
             encryptedStorage.writeString(KEY_USER_EMAIL, claims.email)
         }
         if (claims.roles.isNotEmpty()) {
-            encryptedStorage.writeString(KEY_PRIMARY_ROLE, claims.roles.first())
+            val userRole = claims.roles.firstOrNull { role ->
+                !role.startsWith("default-roles") &&
+                    role != "offline_access" &&
+                    role != "uma_authorization"
+            } ?: claims.roles.first()
+            encryptedStorage.writeString(KEY_PRIMARY_ROLE, userRole)
         }
 
         val session = UserSession(
