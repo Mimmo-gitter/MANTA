@@ -6,12 +6,12 @@
 - `SCRUM-475`: Design `outbox_events` table schema and atomic domain-mutation + outbox transaction boundary pattern (`Task 32.1`, [`docs/transactional-outbox-pattern.md`](../../../docs/transactional-outbox-pattern.md))  
 - `SCRUM-476`: Write Alembic migration and tenant RLS policy for `outbox_events` table (`Task 32.2`, [`backend/migrations/versions/f1b8a4c9d7e2_outbox_events_partial_index_and_rls.py`](../../migrations/versions/f1b8a4c9d7e2_outbox_events_partial_index_and_rls.py))  
 - `SCRUM-477`: Implement transactional outbox session helper committing domain entity updates and `outbox_events` rows atomically (`Task 32.3`, [`backend/app/outbox/service.py`](../../app/outbox/service.py))  
-- `SCRUM-479`: Write automated pytest tests verifying both rows commit together or roll back together when an error occurs before commit (`Task 32.5`, [`backend/tests/test_outbox_service.py`](../test_outbox_service.py))  
+- `SCRUM-479`: Write automated pytest tests verifying both rows commit together or roll back together when an error occurs before commit (`Task 32.5`, [`backend/tests/test_transactional_outbox.py`](../test_transactional_outbox.py))  
 - `SCRUM-481`: Design Outbox Relay worker polling loop, Valkey publisher, and `processed_outbox_events` consumer table (`Task 33.1`)  
 
 **Target Storage Engine:** PostgreSQL 16 with Row-Level Security (`pgvector/pgvector:pg16`) & Valkey 7 (`valkey/valkey:7-alpine`)  
 **Target Implementation Modules:** [`backend/app/outbox/service.py`](../../app/outbox/service.py), [`backend/app/db/models/models.py`](../../app/db/models/models.py), [`backend/app/db/session.py`](../../app/db/session.py)  
-**Authoritative Automated Pytest Suite:** [`backend/tests/test_outbox_service.py`](../test_outbox_service.py)  
+**Authoritative Automated Pytest Suites:** [`backend/tests/test_transactional_outbox.py`](../test_transactional_outbox.py), [`backend/tests/test_outbox_service.py`](../test_outbox_service.py)  
 **Assignee:** Matvii Yeromenko  
 **Category:** Testing - Design  
 **Estimate:** 0.25 Story Points (0h 30m Original Estimate)  
@@ -485,14 +485,15 @@ To run the complete automated test suite verifying all US-32 transactional outbo
 
 ```bash
 # Run transactional outbox automated pytest suite
+pytest backend/tests/test_transactional_outbox.py -v
 pytest backend/tests/test_outbox_service.py -v
 
 # Run with PostgreSQL query logging
-pytest backend/tests/test_outbox_service.py -v -s --log-cli-level=DEBUG
+pytest backend/tests/test_transactional_outbox.py -v -s --log-cli-level=DEBUG
 ```
 
 ### 7.2 Test Suite Execution Summary
-- **Target File:** [`backend/tests/test_outbox_service.py`](../test_outbox_service.py)
+- **Target Files:** [`backend/tests/test_transactional_outbox.py`](../test_transactional_outbox.py), [`backend/tests/test_outbox_service.py`](../test_outbox_service.py)
 - **Coverage:**
   - `test_record_outbox_event_staging`: Validates envelope structure and uncommitted staging (`TC-OUTBOX-001`).
   - `test_atomic_dual_commit`: Validates atomic commit of deployment `FAILED` status and outbox event (`TC-OUTBOX-002`).
