@@ -14,6 +14,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.uuidv7 import generate_uuidv7
 from app.db.models.models import Deployment, OutboxEvent
 
 logger = logging.getLogger("app.outbox.service")
@@ -40,7 +41,7 @@ def record_outbox_event(
     and this outbox event roll back atomically.
     """
     now = occurred_at or datetime.now(timezone.utc)
-    ev_id = event_id or uuid.uuid4()
+    ev_id = event_id or generate_uuidv7()
     agg_id = str(aggregate_id) if aggregate_id is not None else str(ev_id)
 
     # Construct canonical event envelope payload as specified in SRS §3.2.3 and architecture design
@@ -131,16 +132,16 @@ async def record_deployment_failure_atomic(
 async def claim_unpublished_outbox_events(
     db: AsyncSession,
     *,
-    limit: int = 50,
+    limit: int = 100,
 ) -> list[OutboxEvent]:
     """
     Selects pending unpublished outbox events using FOR UPDATE SKIP LOCKED
-    for safe, non-blocking concurrent Outbox Relay polling.
+    for safe, non-blocking concurrent Outbox Relay polling in monotonic UUIDv7 order.
     """
     stmt = (
         select(OutboxEvent)
         .where(OutboxEvent.published_at.is_(None))
-        .order_by(OutboxEvent.created_at.asc(), OutboxEvent.id.asc())
+        .order_by(OutboxEvent.id.asc())
         .limit(limit)
         .with_for_update(skip_locked=True)
     )

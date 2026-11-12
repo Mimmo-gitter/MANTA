@@ -1,22 +1,25 @@
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
 import uuid
-from datetime import datetime
-from typing import Optional, List, Dict, Any
+
 from sqlalchemy import (
-    String,
-    Text,
+    BigInteger,
     Boolean,
+    CheckConstraint,
+    DateTime,
+    ForeignKey,
+    Index,
     Integer,
     Numeric,
-    BigInteger,
-    ForeignKey,
-    DateTime,
+    String,
+    Text,
     UniqueConstraint,
-    Index,
-    CheckConstraint,
     text,
 )
-from sqlalchemy.dialects.postgresql import UUID, JSONB, INET
+from sqlalchemy.dialects.postgresql import INET, JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+from app.core.uuidv7 import generate_uuidv7
 
 
 class Base(DeclarativeBase):
@@ -1283,10 +1286,17 @@ class OutboxEvent(Base):
             "created_at",
             postgresql_where=text("published_at IS NULL"),
         ),
+        Index(
+            "ix_outbox_events_unpublished_id",
+            "id",
+            postgresql_where=text("published_at IS NULL"),
+        ),
         Index("ix_outbox_events_tenant_published", "tenant_id", "published_at"),
     )
 
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=generate_uuidv7
+    )
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
     )
@@ -1295,7 +1305,7 @@ class OutboxEvent(Base):
     event_type: Mapped[str] = mapped_column(String(64), nullable=False)
     payload: Mapped[Dict[str, Any]] = mapped_column(JSONB, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow, nullable=False
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
     )
     published_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
 
@@ -1303,10 +1313,20 @@ class OutboxEvent(Base):
 class ProcessedOutboxEvent(Base):
     __tablename__ = "processed_outbox_events"
 
-    outbox_event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
-    consumer_name: Mapped[str] = mapped_column(String(128), primary_key=True)
+    __table_args__ = (
+        Index("idx_processed_outbox_events_tenant_id", "tenant_id"),
+        Index("idx_processed_outbox_events_processed_at", "processed_at"),
+    )
+
+    event_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
     processed_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), default=datetime.utcnow, nullable=False
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        server_default=text("now()"),
+        nullable=False,
     )
 
 
