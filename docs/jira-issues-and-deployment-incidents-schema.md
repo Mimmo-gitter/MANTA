@@ -16,7 +16,7 @@
   - `SCRUM-399` (`Task 67.2` Write Alembic migration and SQLAlchemy models for `jira_issues` and `deployment_incidents` with tenant RLS)
   - `SCRUM-400` (`Task 67.3` Implement Jira webhook processor updating issue states, acceptance criteria versions, and issue links)
   - `SCRUM-401` (`Task 67.4` Implement deployment incident correlation worker linking incidents to production deployments within 24 hours)
-  - `SCRUM-402` (`Task 67.5` Create test scenarios for Jira issue version precedence, acceptance criteria diffs, and incident correlation)
+  - `SCRUM-402` (`Task 67.5` Create test scenarios for Jira story AC storage, incident linking within 24h and incident cancellation, [`docs/jira-story-ac-storage-incident-linking-and-cancellation-test-scenarios.md`](jira-story-ac-storage-incident-linking-and-cancellation-test-scenarios.md))
   - `SCRUM-442` (`Task 28.1` Design Change Failure Rate calculation engine with distinct union of deployment failures and linked incidents)
 
 ---
