@@ -182,20 +182,24 @@ async def link_repository(
                 detail=f"Project '{project_id}' not found.",
             )
 
-        # 2. Resolve active GitHub integration for the tenant
+        # 2. Resolve and verify active GitHub integration for the tenant (SCRUM-378)
         if data.integration_id:
             integ_stmt = select(Integration).where(
                 Integration.id == data.integration_id,
                 Integration.tenant_id == tenant_id,
                 Integration.provider == "github",
-                Integration.is_active.is_(True),
             )
             integ_res = await session.execute(integ_stmt)
             integration = integ_res.scalars().first()
             if not integration:
                 raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"GitHub integration '{data.integration_id}' not found.",
+                )
+            if not integration.is_active:
+                raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"GitHub integration '{data.integration_id}' is invalid or inactive.",
+                    detail=f"GitHub integration '{data.integration_id}' is inactive.",
                 )
         else:
             integ_stmt = select(Integration).where(
