@@ -9,7 +9,7 @@
 - `SCRUM-388`: Implement 5-second background recovery sweeper polling staged events older than 10s and enqueuing via RPUSH (`Task 19.3`, [`backend/workers/recovery_sweeper.py`](../../workers/recovery_sweeper.py) & [`backend/app/webhooks/enqueue.py`](../../app/webhooks/enqueue.py))  
 - `SCRUM-389`: Configure recovery sweeper background service and healthcheck in `docker-compose.yml` (`Task 19.4`, [`backend/docker-compose.yml`](../../docker-compose.yml))  
 - `SCRUM-390`: Create failure-injection test scenarios for gateway crash between DB insert and Redis push (`Task 19.5`, this document)  
-- `SCRUM-391`: Write automated chaos test verifying staged events recover within 15s without duplicate processing (`Task 19.6`, [`backend/tests/test_recovery_sweeper.py`](../test_recovery_sweeper.py))  
+- `SCRUM-391`: Write automated chaos test verifying staged events recover within 15s without duplicate processing (`Task 19.6`, [`backend/tests/test_staged_event_recovery.py`](../test_staged_event_recovery.py))  
 
 **Target Infrastructure Engines:** PostgreSQL 16 with Row-Level Security (`pgvector/pgvector:pg16`) & Valkey 7 (`valkey/valkey:7-alpine`) / Redis 7+  
 **Target Implementation Modules:** [`backend/app/webhooks/enqueue.py`](../../app/webhooks/enqueue.py), [`backend/app/webhooks/sweeper.py`](../../app/webhooks/sweeper.py), [`backend/workers/recovery_sweeper.py`](../../workers/recovery_sweeper.py), [`backend/app/webhooks/router.py`](../../app/webhooks/router.py)  
@@ -492,7 +492,7 @@ sequenceDiagram
 
 ## 6. Implementation Contract for Automated Chaos Pytest Suite (`SCRUM-391` / `Task 19.6`)
 
-The automated verification suite in [`backend/tests/test_recovery_sweeper.py`](../test_recovery_sweeper.py) implements the executable counterparts to this design:
+The automated verification suite in [`backend/tests/test_staged_event_recovery.py`](../test_staged_event_recovery.py) implements the executable counterparts to this design:
 
 ```python
 # Reference Implementation for Chaos Scenarios in backend/tests/test_recovery_sweeper.py
