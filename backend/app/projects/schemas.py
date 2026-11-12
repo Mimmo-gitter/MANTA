@@ -1,9 +1,12 @@
 from datetime import datetime
 from enum import Enum
+import hashlib
 from typing import Optional
 import uuid
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from app.projects.validators import normalize_and_validate_github_repo
 
 
 class DeploymentSignalType(str, Enum):
@@ -101,17 +104,25 @@ class ProjectCreateRequest(BaseModel):
 
 
 class RepositoryLinkRequest(BaseModel):
-    """Payload to link a GitHub repository to a project."""
+    """Payload to link a GitHub repository to a project (US-17 / SCRUM-378)."""
 
-    external_repo_id: int = Field(
-        ...,
-        description="Unique GitHub repository ID (numeric)",
+    external_repo_id: Optional[int] = Field(
+        None,
+        description="Unique GitHub repository ID (numeric). Auto-derived if omitted.",
     )
-    full_name: str = Field(
-        ...,
+    full_name: Optional[str] = Field(
+        None,
         min_length=1,
         max_length=255,
-        description="Repository full name, e.g. 'organization/repository'",
+        description="Repository full name, e.g. 'organization/repository' or URL",
+    )
+    repository_url: Optional[str] = Field(
+        None,
+        description="GitHub repository URL (e.g. 'https://github.com/owner/repo') or 'owner/repo'",
+    )
+    github_url: Optional[str] = Field(
+        None,
+        description="Alias for repository_url",
     )
     default_branch: str = Field(
         default="main",
@@ -127,6 +138,21 @@ class RepositoryLinkRequest(BaseModel):
         None,
         description="Explicit GitHub integration ID. If omitted, the tenant's active GitHub integration is used.",
     )
+
+    @model_validator(mode="after")
+    def validate_and_normalize_identifier(self) -> "RepositoryLinkRequest":
+        raw_target = self.repository_url or self.github_url or self.full_name
+        if not raw_target:
+            raise ValueError("Either 'full_name' or 'repository_url' must be provided.")
+        canonical_name, _, _ = normalize_and_validate_github_repo(raw_target)
+        self.full_name = canonical_name
+        if not self.repository_url:
+            self.repository_url = f"https://github.com/{canonical_name}"
+
+        if self.external_repo_id is None:
+            digest = hashlib.sha256(canonical_name.encode("utf-8")).digest()
+            self.external_repo_id = int.from_bytes(digest[:8], byteorder="big") & 0x7FFFFFFFFFFFFFFF
+        return self
 
 
 class RepositoryResponse(BaseModel):
