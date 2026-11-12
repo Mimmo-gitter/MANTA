@@ -18,7 +18,7 @@ import logging
 from typing import Any, List, Optional
 import uuid
 
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 logger = logging.getLogger("app.webhooks.sweeper")
@@ -92,6 +92,28 @@ _FAIL_EVENT_SQL = text(
     SET status = 'failed',
         error_message = :error_message
     WHERE id = :event_id
+      AND (CAST(:tenant_id AS uuid) IS NULL OR tenant_id = CAST(:tenant_id AS uuid))
+    RETURNING id;
+    """
+)
+
+_MARK_EVENTS_QUEUED_SQL = text(
+    """
+    UPDATE webhook_events
+    SET status = 'queued'
+    WHERE id IN :ids
+      AND status = 'recovering'
+      AND (CAST(:tenant_id AS uuid) IS NULL OR tenant_id = CAST(:tenant_id AS uuid))
+    RETURNING id;
+    """
+).bindparams(bindparam("ids", expanding=True))
+
+_MARK_QUEUED_FROM_STAGED_SQL = text(
+    """
+    UPDATE webhook_events
+    SET status = 'queued'
+    WHERE id = :event_id
+      AND status = 'staged'
       AND (CAST(:tenant_id AS uuid) IS NULL OR tenant_id = CAST(:tenant_id AS uuid))
     RETURNING id;
     """
@@ -212,3 +234,42 @@ async def fail_webhook_event(
         {"event_id": event_id, "error_message": error_message, "tenant_id": tenant_id},
     )
     return result.fetchone() is not None
+
+
+async def mark_events_queued(
+    db: AsyncSession,
+    event_ids: List[uuid.UUID],
+    *,
+    tenant_id: Optional[uuid.UUID] = None,
+) -> int:
+    """
+    Transitions events from 'recovering' to 'queued' (used by recovery sweeper).
+    Returns the number of events updated.
+    """
+    if not event_ids:
+        return 0
+    result = await db.execute(
+        _MARK_EVENTS_QUEUED_SQL,
+        {"ids": list(event_ids), "tenant_id": tenant_id},
+    )
+    rows = result.fetchall()
+    return len(rows)
+
+
+async def mark_event_queued_if_staged(
+    db: AsyncSession,
+    event_id: uuid.UUID,
+    *,
+    tenant_id: Optional[uuid.UUID] = None,
+) -> bool:
+    """
+    Transitions an event from 'staged' to 'queued' if still in 'staged' status
+    (used by immediate post-commit webhook intake).
+    Returns True if successfully transitioned, False if already claimed or processed.
+    """
+    result = await db.execute(
+        _MARK_QUEUED_FROM_STAGED_SQL,
+        {"event_id": event_id, "tenant_id": tenant_id},
+    )
+    return result.fetchone() is not None
+
