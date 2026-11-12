@@ -497,6 +497,7 @@ The automated verification suite in [`backend/tests/test_recovery_sweeper.py`](.
 ```python
 # Reference Implementation for Chaos Scenarios in backend/tests/test_recovery_sweeper.py
 
+
 @pytest.mark.asyncio
 async def test_gateway_crash_after_db_commit_recovers_via_sweeper(redis_mock: InMemoryAsyncRedis):
     """
@@ -538,7 +539,7 @@ async def test_gateway_crash_after_db_commit_recovers_via_sweeper(redis_mock: In
     async with get_tenant_db_context(tenant_id) as session:
         cas_ok = await cas_transition_to_processing(session, event_id, tenant_id=tenant_id)
         assert cas_ok is True
-        
+
         # Transition to completed
         await complete_webhook_event(session, event_id, tenant_id=tenant_id)
 
@@ -550,7 +551,9 @@ async def test_gateway_crash_after_db_commit_recovers_via_sweeper(redis_mock: In
 
 
 @pytest.mark.asyncio
-async def test_race_delayed_gateway_push_and_sweeper_recovery_cas_deduplication(redis_mock: InMemoryAsyncRedis):
+async def test_race_delayed_gateway_push_and_sweeper_recovery_cas_deduplication(
+    redis_mock: InMemoryAsyncRedis,
+):
     """
     TC-STAGED-004: Race condition between delayed gateway push and sweeper recovery.
     Valkey receives 2 envelopes; Worker CAS executes exactly once and discards duplicate.

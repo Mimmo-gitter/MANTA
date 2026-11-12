@@ -509,6 +509,7 @@ async def test_gateway_crash_after_db_commit_recovers_via_sweeper(redis_mock: In
 
     # 3. Worker pops envelope from Redis and executes atomic CAS
     raw_envelope = await redis_mock.lpop(QUEUE_DEFAULT)
+    assert raw_envelope is not None
     envelope = json.loads(raw_envelope)
     assert envelope["event_id"] == str(event_id)
 
@@ -521,14 +522,20 @@ async def test_gateway_crash_after_db_commit_recovers_via_sweeper(redis_mock: In
 
     # 4. Assert final terminal state and 0 duplicates
     async with get_tenant_db_context(tenant_id) as session:
-        ev_final = await session.get(WebhookEvent, event_id)
-        assert ev_final is not None
-        assert ev_final.status == "completed"
-        assert ev_final.attempts == 1
+        res = await session.execute(
+            text("SELECT status, attempts FROM webhook_events WHERE id = :id"),
+            {"id": event_id},
+        )
+        row = res.fetchone()
+        assert row is not None
+        assert row[0] == "completed"
+        assert row[1] == 1
 
 
 @pytest.mark.asyncio
-async def test_race_delayed_gateway_push_and_sweeper_recovery_cas_deduplication(redis_mock: InMemoryAsyncRedis):
+async def test_race_delayed_gateway_push_and_sweeper_recovery_cas_deduplication(
+    redis_mock: InMemoryAsyncRedis,
+):
     """
     TC-STAGED-004: Race condition between delayed gateway push and sweeper recovery.
     Valkey queue holds duplicate envelopes (Copy A & Copy B); Worker CAS serializes
@@ -584,10 +591,14 @@ async def test_race_delayed_gateway_push_and_sweeper_recovery_cas_deduplication(
     # 5. Worker 1 completes the job
     async with get_tenant_db_context(tenant_id) as session:
         await complete_webhook_event(session, event_id, tenant_id=tenant_id)
-        ev_final = await session.get(WebhookEvent, event_id)
-        assert ev_final is not None
-        assert ev_final.status == "completed"
-        assert ev_final.attempts == 1
+        res = await session.execute(
+            text("SELECT status, attempts FROM webhook_events WHERE id = :id"),
+            {"id": event_id},
+        )
+        row = res.fetchone()
+        assert row is not None
+        assert row[0] == "completed"
+        assert row[1] == 1
 
 
 # ==============================================================================
