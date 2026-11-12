@@ -46,6 +46,12 @@ class Settings(BaseSettings):
     KC_SERVICE_CLIENT_ID: str = "manta-backend"
     KC_SERVICE_CLIENT_SECRET: str = ""
 
+    # Recovery Sweeper Settings (SCRUM-388)
+    SWEEP_INTERVAL_SECONDS: float = 5.0
+    SWEEP_THRESHOLD_SECONDS: float = 10.0
+    SWEEP_BATCH_SIZE: int = 100
+    SWEEPER_HEARTBEAT_FILE: str = "/tmp/sweeper.heartbeat"
+
     @property
     def cors_origins(self) -> list[str]:
         return [orig.strip() for orig in self.CORS_ORIGINS.split(",") if orig.strip()]

@@ -27,6 +27,7 @@ from app.db.models.models import Integration
 from app.db.session import AsyncSessionLocal, get_tenant_db_context
 from app.integrations.crypto import encryption_service
 from app.webhooks.delivery import extract_delivery_id
+from app.webhooks.enqueue import enqueue_staged_event_best_effort
 from app.webhooks.schemas import WebhookIntakeResponse
 from app.webhooks.service import stage_webhook_event_idempotent
 from app.webhooks.verification import verify_signature_for_provider
@@ -157,6 +158,15 @@ async def ingest_webhook_by_provider(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Database storage service unavailable. Please retry delivery.",
             headers={"Retry-After": "30"},
+        )
+
+    # 6. Immediate post-commit enqueue to Valkey/Redis (SCRUM-388)
+    if not result.is_duplicate and result.event_id is not None:
+        await enqueue_staged_event_best_effort(
+            event_id=result.event_id,
+            tenant_id=resolved_tenant_id,
+            provider=prov,
+            event_type=str(event_type)[:64],
         )
 
     return WebhookIntakeResponse(
@@ -353,6 +363,15 @@ async def ingest_webhook_for_integration(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Database storage service unavailable. Please retry delivery.",
             headers={"Retry-After": "30"},
+        )
+
+    # Immediate post-commit enqueue to Valkey/Redis (SCRUM-388)
+    if not result.is_duplicate and result.event_id is not None:
+        await enqueue_staged_event_best_effort(
+            event_id=result.event_id,
+            tenant_id=tenant_id,
+            provider=provider,
+            event_type=event_type,
         )
 
     return WebhookIntakeResponse(
