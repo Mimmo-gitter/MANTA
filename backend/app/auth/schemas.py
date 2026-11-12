@@ -27,6 +27,19 @@ class TokenClaims(BaseModel):
     def tenant_uuid(self) -> uuid.UUID:
         return uuid.UUID(self.tenant_id)
 
+    @property
+    def user_id(self) -> uuid.UUID | None:
+        raw_uid = self.raw.get("user_id")
+        if raw_uid:
+            try:
+                return uuid.UUID(str(raw_uid))
+            except ValueError:
+                pass
+        try:
+            return uuid.UUID(self.sub)
+        except ValueError:
+            return None
+
     @classmethod
     def from_claims(cls, claims: dict[str, Any]) -> "TokenClaims":
         realm_access = claims.get("realm_access")
