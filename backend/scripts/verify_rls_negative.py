@@ -40,6 +40,9 @@ DEFAULT_TARGET_TABLE = "projects"
 DEFAULT_TEST_TARGETS = [
     "tests/security",
 ]
+FAST_RESTORE_TARGETS = [
+    "tests/security/test_00_rls_guardrails_security.py",
+]
 
 
 class RLSNegativeCheckError(RuntimeError):
@@ -253,10 +256,12 @@ async def run_single_negative_cycle(
     mode: str,
     test_targets: Optional[list[str]] = None,
     verbose: bool = False,
+    run_baseline: bool = True,
+    restore_targets: Optional[list[str]] = None,
 ) -> None:
     """Execute one negative test cycle:
 
-    1. Baseline check (must PASS)
+    1. Baseline check (must PASS, when run_baseline=True)
     2. Tamper check (must FAIL)
     3. Restore check (must PASS)
     """
@@ -265,17 +270,20 @@ async def run_single_negative_cycle(
     print("=" * 70)
 
     # 1. Baseline verification
-    print("\n[Phase 1] Running baseline security tests with policies intact...")
-    code, output = run_security_test_stage(db_name, test_targets)
-    if code != 0:
-        if verbose:
-            print(output)
-        raise RLSNegativeCheckError(
-            f"Baseline security tests failed prior to negative tampering (code={code})!\n{output}",
-            returncode=code,
-            output=output,
-        )
-    print("[Phase 1: PASS] Baseline security tests passed with all policies active.")
+    if run_baseline:
+        print("\n[Phase 1] Running baseline security tests with policies intact...")
+        code, output = run_security_test_stage(db_name, test_targets)
+        if code != 0:
+            if verbose:
+                print(output)
+            raise RLSNegativeCheckError(
+                f"Baseline security tests failed prior to negative tampering (code={code})!\n{output}",
+                returncode=code,
+                output=output,
+            )
+        print("[Phase 1: PASS] Baseline security tests passed with all policies active.")
+    else:
+        print("\n[Phase 1] Skipping redundant baseline check (already verified).")
 
     # 2. Tampering - deliberate regression
     print(f"\n[Phase 2] Inducing security regression (mode='{mode}' on '{table}')...")
@@ -304,8 +312,9 @@ async def run_single_negative_cycle(
     await restore_rls(db_name, table, mode)
 
     # 5. Security tests MUST pass again
+    effective_restore_targets = restore_targets if restore_targets is not None else test_targets
     print("[Phase 3] Running security tests after restoration (EXPECTING SUCCESS)...")
-    restored_code, restored_output = run_security_test_stage(db_name, test_targets)
+    restored_code, restored_output = run_security_test_stage(db_name, effective_restore_targets)
     if restored_code != 0:
         if verbose:
             print(restored_output)
@@ -327,6 +336,7 @@ async def run_negative_rls_check(
     keep_db: bool = False,
     test_targets: Optional[list[str]] = None,
     verbose: bool = False,
+    skip_baseline: bool = False,
 ) -> int:
     """Full end-to-end negative verification workflow across throwaway DB lifecycle."""
     maintenance_db = "manta_db"
@@ -336,13 +346,24 @@ async def run_negative_rls_check(
         await create_throwaway_database(db_name, maintenance_db=maintenance_db)
         apply_migrations_to_database(db_name)
 
-        for m in modes_to_test:
+        uses_default_targets = test_targets is None or list(test_targets) == list(
+            DEFAULT_TEST_TARGETS
+        )
+        for idx, m in enumerate(modes_to_test):
+            is_last_mode = idx == len(modes_to_test) - 1
+            effective_restore_targets = (
+                FAST_RESTORE_TARGETS
+                if (not is_last_mode and uses_default_targets)
+                else test_targets
+            )
             await run_single_negative_cycle(
                 db_name=db_name,
                 table=table,
                 mode=m,
                 test_targets=test_targets,
                 verbose=verbose,
+                run_baseline=(idx == 0 and not skip_baseline),
+                restore_targets=effective_restore_targets,
             )
 
         print("\n" + "=" * 70)
@@ -416,6 +437,11 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         dest="test_targets",
         help="Specific pytest target(s) to execute as security stage (repeatable)",
     )
+    parser.add_argument(
+        "--skip-baseline",
+        action="store_true",
+        help="Skip initial baseline pytest run (useful in CI when security-test already verified baseline)",
+    )
     return parser.parse_args(argv)
 
 
@@ -474,6 +500,7 @@ async def execute_step(args: argparse.Namespace) -> int:
             keep_db=args.keep_db,
             test_targets=targets,
             verbose=args.verbose,
+            skip_baseline=args.skip_baseline,
         )
     else:
         raise ValueError(f"Unknown step '{step}'")

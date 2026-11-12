@@ -99,8 +99,15 @@ class TestRLSNegativeCLIRunner(unittest.TestCase):
         self.assertEqual(args.db_name, "manta_rls_negative_test")
         self.assertFalse(args.keep_db)
         self.assertFalse(args.verbose)
+        self.assertFalse(args.skip_baseline)
         self.assertIsNone(args.test_targets)
         self.assertEqual(verify_rls_negative.DEFAULT_TEST_TARGETS, ["tests/security"])
+
+    def test_cli_skip_baseline_flag(self) -> None:
+        """Verify --skip-baseline flag is parsed properly."""
+        args = verify_rls_negative.parse_args(["--mode", "all", "--skip-baseline"])
+        self.assertEqual(args.mode, "all")
+        self.assertTrue(args.skip_baseline)
 
     def test_cli_custom_arguments(self) -> None:
         """Verify CLI parser with custom arguments and repeatable flags."""
@@ -158,6 +165,66 @@ class TestRLSNegativeCLIRunner(unittest.TestCase):
         self.assertEqual(err.returncode, 2)
         self.assertEqual(err.output, "Sample failure log")
         self.assertEqual(str(err), "Test failed")
+
+    def test_run_negative_rls_check_optimizes_all_modes_and_skip_baseline(self) -> None:
+        """Verify mode='all' skips intermediate baselines and uses fast restore checks."""
+        import asyncio
+        from unittest.mock import AsyncMock
+
+        stage_calls: list[tuple[list[str] | None, bool]] = []
+
+        def fake_stage(_db_name, targets=None, failfast=False):
+            stage_calls.append((targets, failfast))
+            return (1 if failfast else 0), "mocked"
+
+        with (
+            patch.object(verify_rls_negative, "create_throwaway_database", AsyncMock()),
+            patch.object(verify_rls_negative, "apply_migrations_to_database"),
+            patch.object(verify_rls_negative, "drop_throwaway_database", AsyncMock()),
+            patch.object(verify_rls_negative, "tamper_rls", AsyncMock()),
+            patch.object(verify_rls_negative, "restore_rls", AsyncMock()),
+            patch.object(verify_rls_negative, "run_security_test_stage", side_effect=fake_stage),
+        ):
+            rc = asyncio.run(
+                verify_rls_negative.run_negative_rls_check(
+                    mode="all",
+                    test_targets=verify_rls_negative.DEFAULT_TEST_TARGETS,
+                    skip_baseline=True,
+                )
+            )
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(
+            stage_calls,
+            [
+                (verify_rls_negative.DEFAULT_TEST_TARGETS, True),
+                (verify_rls_negative.FAST_RESTORE_TARGETS, False),
+                (verify_rls_negative.DEFAULT_TEST_TARGETS, True),
+                (verify_rls_negative.FAST_RESTORE_TARGETS, False),
+                (verify_rls_negative.DEFAULT_TEST_TARGETS, True),
+                (verify_rls_negative.DEFAULT_TEST_TARGETS, False),
+            ],
+        )
+
+        stage_calls.clear()
+        with (
+            patch.object(verify_rls_negative, "create_throwaway_database", AsyncMock()),
+            patch.object(verify_rls_negative, "apply_migrations_to_database"),
+            patch.object(verify_rls_negative, "drop_throwaway_database", AsyncMock()),
+            patch.object(verify_rls_negative, "tamper_rls", AsyncMock()),
+            patch.object(verify_rls_negative, "restore_rls", AsyncMock()),
+            patch.object(verify_rls_negative, "run_security_test_stage", side_effect=fake_stage),
+        ):
+            rc = asyncio.run(
+                verify_rls_negative.run_negative_rls_check(mode="all", skip_baseline=False)
+            )
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(stage_calls), 7)
+        self.assertEqual(stage_calls[0], (None, False))
+        self.assertEqual(stage_calls[-1], (None, False))
+        self.assertEqual(stage_calls[2], (verify_rls_negative.FAST_RESTORE_TARGETS, False))
+        self.assertEqual(stage_calls[4], (verify_rls_negative.FAST_RESTORE_TARGETS, False))
 
 
 if __name__ == "__main__":
