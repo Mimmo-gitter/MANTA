@@ -6,6 +6,7 @@ from app.notifications.router import router as invitations_router
 from app.adr import adr_router
 from app.auth import JWKSClient, JWTAuthMiddleware, auth_router
 from app.config import settings
+from app.dead_letters import dead_letters_router
 from app.dora import dora_router
 from app.integrations import integrations_router
 from app.projects import projects_router
@@ -56,6 +57,7 @@ app.include_router(webhooks_router)
 
 # Include integration connection and management endpoints (SCRUM-322, SCRUM-323)
 app.include_router(integrations_router)
+app.include_router(dead_letters_router)
 
 # Member invitations (SCRUM-314, SCRUM-315)
 app.include_router(invitations_router)
