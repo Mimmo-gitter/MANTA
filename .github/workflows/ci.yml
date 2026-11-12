@@ -5,50 +5,162 @@ on:
     branches:
       - main
       - develop
-      - "feature/**"
-      - "feat/**"
-      - "fix/**"
-      - "hotfix/**"
-      - "chore/**"
   pull_request:
     types:
       - opened
       - synchronize
       - reopened
+  schedule:
+    - cron: "0 3 * * *"
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  changes:
+    name: Detect Changed Components
+    runs-on: ubuntu-latest
+    outputs:
+      run_all: ${{ steps.mode.outputs.run_all }}
+      backend: ${{ steps.mode.outputs.run_all == 'true' || steps.filter.outputs.backend == 'true' }}
+      backend_migrations: ${{ steps.mode.outputs.run_all == 'true' || steps.filter.outputs.backend_migrations == 'true' }}
+      backend_security: ${{ steps.mode.outputs.run_all == 'true' || steps.filter.outputs.backend_security == 'true' }}
+      backend_rls_negative: ${{ steps.mode.outputs.run_all == 'true' || steps.filter.outputs.backend_rls_negative == 'true' }}
+      backend_pgbouncer: ${{ steps.mode.outputs.run_all == 'true' || steps.filter.outputs.backend_pgbouncer == 'true' }}
+      backend_docker: ${{ steps.mode.outputs.run_all == 'true' || steps.filter.outputs.backend_docker == 'true' }}
+      web: ${{ steps.mode.outputs.run_all == 'true' || steps.filter.outputs.web == 'true' }}
+      web_keycloak: ${{ steps.mode.outputs.run_all == 'true' || steps.filter.outputs.web_keycloak == 'true' }}
+    steps:
+      - name: Determine execution mode
+        id: mode
+        run: |
+          if [ "${{ github.event_name }}" = "schedule" ] || [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ "${{ github.ref }}" = "refs/heads/main" ]; then
+            echo "run_all=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run_all=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout repository for push diff
+        if: steps.mode.outputs.run_all != 'true' && github.event_name == 'push'
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed paths
+        id: filter
+        if: steps.mode.outputs.run_all != 'true'
+        uses: dorny/paths-filter@v3
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+              - 'infra/**'
+              - 'pyproject.toml'
+              - '.github/workflows/ci.yml'
+            backend_migrations:
+              - 'backend/migrations/**'
+              - 'backend/alembic.ini'
+              - 'backend/app/models/**'
+              - 'backend/app/db/**'
+              - 'backend/scripts/verify_migrations.py'
+              - 'backend/tests/test_migrations_ci.py'
+              - 'backend/requirements.txt'
+              - '.github/workflows/ci.yml'
+            backend_security:
+              - 'backend/app/**'
+              - 'backend/migrations/**'
+              - 'backend/alembic.ini'
+              - 'backend/tests/security/**'
+              - 'backend/tests/conftest.py'
+              - 'backend/scripts/verify_migrations.py'
+              - 'backend/requirements.txt'
+              - 'backend/pytest.ini'
+              - 'pyproject.toml'
+              - '.github/workflows/ci.yml'
+            backend_rls_negative:
+              - 'backend/migrations/**'
+              - 'backend/alembic.ini'
+              - 'backend/app/db/**'
+              - 'backend/app/models/**'
+              - 'backend/app/auth/**'
+              - 'backend/tests/security/**'
+              - 'backend/tests/conftest.py'
+              - 'backend/scripts/verify_rls_negative.py'
+              - 'backend/tests/test_rls_negative_ci.py'
+              - 'backend/requirements.txt'
+              - '.github/workflows/ci.yml'
+            backend_pgbouncer:
+              - 'infra/pgbouncer/**'
+              - 'backend/docker-compose.yml'
+              - 'backend/app/auth/**'
+              - 'backend/app/db/**'
+              - 'backend/app/integrations/**'
+              - 'backend/app/tenants/**'
+              - 'backend/app/webhooks/**'
+              - 'backend/app/config.py'
+              - 'backend/app/main.py'
+              - 'backend/tests/conftest.py'
+              - 'backend/tests/test_pgbouncer_*'
+              - 'backend/tests/test_webhook_*'
+              - 'backend/requirements.txt'
+              - '.github/workflows/ci.yml'
+            backend_docker:
+              - 'backend/Dockerfile'
+              - 'backend/.dockerignore'
+              - 'backend/requirements.txt'
+              - 'backend/app/**'
+              - 'backend/migrations/**'
+              - 'backend/alembic.ini'
+              - '.github/workflows/ci.yml'
+            web:
+              - 'web/**'
+              - '.github/workflows/ci.yml'
+            web_keycloak:
+              - 'web/src/app/(auth)/**'
+              - 'web/src/app/**/login/**'
+              - 'web/src/app/api/auth/**'
+              - 'web/src/**/auth/**'
+              - 'web/src/**/session/**'
+              - 'web/src/lib/auth*'
+              - 'web/src/lib/keycloak*'
+              - 'web/src/middleware.ts'
+              - 'web/e2e/auth-keycloak-journey.spec.ts'
+              - 'web/e2e/auth-session-renewal.spec.ts'
+              - 'web/e2e/helpers/**'
+              - 'web/playwright.config.*'
+              - 'web/package*.json'
+              - 'web/next.config.*'
+              - 'infra/keycloak/**'
+              - 'backend/docker-compose.yml'
+              - '.github/workflows/ci.yml'
+
   backend-lint:
     name: Backend Lint & Formatting
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: "pip"
-          cache-dependency-path: backend/requirements.txt
-
-      - name: Install Ruff
-        run: |
-          python -m pip install --upgrade pip
-          pip install ruff>=0.3.0
-
       - name: Check code formatting (Ruff)
-        run: ruff format --check .
+        uses: astral-sh/ruff-action@v3
+        with:
+          src: "."
+          args: "format --check"
 
       - name: Run static analysis linter (Ruff)
-        run: ruff check .
+        uses: astral-sh/ruff-action@v3
+        with:
+          src: "."
+          args: "check"
 
   backend-test:
     name: Backend Test Suite
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -78,13 +190,15 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: "pip"
-          cache-dependency-path: backend/requirements.txt
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "backend/requirements.txt"
 
       - name: Install backend dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+        run: uv pip install --system -r requirements.txt
 
       - name: Wait for PostgreSQL service readiness
         run: python scripts/verify_migrations.py --step wait
@@ -93,10 +207,12 @@ jobs:
         run: python scripts/verify_migrations.py --step upgrade
 
       - name: Execute pytest test suite
-        run: python -m pytest tests --ignore=tests/security -v
+        run: python -m pytest tests --ignore=tests/security --ignore=tests/test_webhook_authentication.py --ignore=tests/test_webhook_load.py --ignore=tests/test_webhook_staging_and_outage.py --ignore=tests/test_webhook_delivery_idempotency.py -v
 
   security-test:
     name: Security Test Suite (tests/security)
+    needs: changes
+    if: needs.changes.outputs.backend_security == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -126,13 +242,15 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: "pip"
-          cache-dependency-path: backend/requirements.txt
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "backend/requirements.txt"
 
       - name: Install backend dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+        run: uv pip install --system -r requirements.txt
 
       - name: Wait for PostgreSQL service readiness
         run: python scripts/verify_migrations.py --step wait
@@ -145,6 +263,8 @@ jobs:
 
   backend-migrations:
     name: Database Migration Check
+    needs: changes
+    if: needs.changes.outputs.backend_migrations == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -173,13 +293,15 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: "pip"
-          cache-dependency-path: backend/requirements.txt
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "backend/requirements.txt"
 
       - name: Install backend dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+        run: uv pip install --system -r requirements.txt
 
       - name: Wait for PostgreSQL service readiness
         run: python scripts/verify_migrations.py --step wait
@@ -198,6 +320,8 @@ jobs:
 
   security-negative-test:
     name: Negative RLS Security Tests
+    needs: changes
+    if: needs.changes.outputs.backend_rls_negative == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -227,25 +351,26 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: "pip"
-          cache-dependency-path: backend/requirements.txt
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "backend/requirements.txt"
 
       - name: Install backend dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+        run: uv pip install --system -r requirements.txt
 
       - name: Wait for PostgreSQL service readiness
         run: python scripts/verify_migrations.py --step wait
 
-      - name: Apply baseline migrations to head
-        run: python scripts/verify_migrations.py --step upgrade
-
       - name: Execute RLS negative safety net verification on throwaway database
-        run: python scripts/verify_rls_negative.py --mode all -v
+        run: python scripts/verify_rls_negative.py --mode all --skip-baseline -v
 
   pgbouncer-integration:
     name: PgBouncer Tenant-Isolation Tests
+    needs: changes
+    if: needs.changes.outputs.backend_pgbouncer == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -258,13 +383,15 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-          cache: "pip"
-          cache-dependency-path: backend/requirements.txt
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: "backend/requirements.txt"
 
       - name: Install backend dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r backend/requirements.txt
+        run: uv pip install --system -r backend/requirements.txt
 
       - name: Apply migrations to head (creates tables & eng_app_user role)
         env:
@@ -286,6 +413,8 @@ jobs:
 
   backend-docker-build:
     name: Backend Docker Image Build
+    needs: changes
+    if: needs.changes.outputs.backend_docker == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -306,6 +435,8 @@ jobs:
 
   web-checks:
     name: Web Portal Lint & Build
+    needs: changes
+    if: needs.changes.outputs.web == 'true' || needs.changes.outputs.web_keycloak == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -326,14 +457,85 @@ jobs:
       - name: Install web dependencies
         run: npm ci
 
+      - name: Cache Next.js build cache
+        uses: actions/cache@v4
+        with:
+          path: web/.next/cache
+          key: ${{ runner.os }}-nextjs-${{ hashFiles('web/package-lock.json') }}-${{ hashFiles('web/src/**', 'web/next.config.*') }}
+          restore-keys: |
+            ${{ runner.os }}-nextjs-${{ hashFiles('web/package-lock.json') }}-
+            ${{ runner.os }}-nextjs-
+
       - name: Run Next.js lint
         run: npm run lint
 
       - name: Build Next.js application
         run: npm run build
 
+      - name: Upload Next.js build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-next-build
+          path: |
+            web/.next/
+            !web/.next/cache/**
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 1
+
   web-e2e:
-    name: Web Portal Playwright E2E Tests
+    name: Web Portal Playwright E2E Tests (Mocked)
+    needs: [changes, web-checks]
+    if: needs.changes.outputs.web == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install web dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Download Next.js build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: web-next-build
+          path: web/.next
+
+      - name: Verify Next.js build artifact
+        run: test -f web/.next/BUILD_ID
+
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('web/package-lock.json') }}
+
+      - name: Install Playwright Chromium browser
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        working-directory: web
+        run: npx playwright install chromium
+
+      - name: Run parallel mocked Playwright E2E suite
+        working-directory: web
+        env:
+          CI: "true"
+          FORCE_KEYCLOAK_MOCK: "true"
+          PLAYWRIGHT_WORKERS: "4"
+        run: npx playwright test --workers=4
+
+  web-e2e-keycloak:
+    name: Web Portal Playwright E2E Tests (Keycloak)
+    needs: [changes, web-checks]
+    if: needs.changes.outputs.web_keycloak == 'true'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -368,19 +570,33 @@ jobs:
         working-directory: web
         run: npm ci
 
-      - name: Build Next.js application for E2E
-        working-directory: web
-        run: npm run build
+      - name: Download Next.js build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: web-next-build
+          path: web/.next
+
+      - name: Verify Next.js build artifact
+        run: test -f web/.next/BUILD_ID
+
+      - name: Cache Playwright browsers
+        id: playwright-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: ${{ runner.os }}-playwright-${{ hashFiles('web/package-lock.json') }}
 
       - name: Install Playwright Chromium browser
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
         working-directory: web
         run: npx playwright install chromium
 
-      - name: Run Playwright E2E tests against Keycloak test realm
+      - name: Run serial Playwright E2E tests against Keycloak test realm
         working-directory: web
         env:
           CI: "true"
-        run: npm run test:e2e
+          PLAYWRIGHT_WORKERS: "1"
+        run: npx playwright test e2e/auth-keycloak-journey.spec.ts e2e/auth-session-renewal.spec.ts --workers=1
 
       - name: Collect Keycloak logs on failure
         if: failure()
@@ -390,6 +606,7 @@ jobs:
     name: CI Status Check
     runs-on: ubuntu-latest
     needs:
+      - changes
       - backend-lint
       - backend-test
       - security-test
@@ -399,32 +616,55 @@ jobs:
       - backend-docker-build
       - web-checks
       - web-e2e
+      - web-e2e-keycloak
     if: always()
     steps:
       - name: Evaluate overall CI pipeline status
         run: |
-          echo "Evaluating CI stage results..."
-          echo "Backend Lint:            ${{ needs.backend-lint.result }}"
-          echo "Backend Test:            ${{ needs.backend-test.result }}"
-          echo "Security Test Suite:     ${{ needs.security-test.result }}"
-          echo "Backend Migrations:      ${{ needs.backend-migrations.result }}"
-          echo "Security Negative Test:  ${{ needs.security-negative-test.result }}"
-          echo "PgBouncer Integration:   ${{ needs.pgbouncer-integration.result }}"
-          echo "Backend Docker Build:    ${{ needs.backend-docker-build.result }}"
-          echo "Web Checks:              ${{ needs.web-checks.result }}"
-          echo "Web E2E Tests:           ${{ needs.web-e2e.result }}"
-
-          if [ "${{ needs.backend-lint.result }}" != "success" ] || \
-             [ "${{ needs.backend-test.result }}" != "success" ] || \
-             [ "${{ needs.security-test.result }}" != "success" ] || \
-             [ "${{ needs.backend-migrations.result }}" != "success" ] || \
-             [ "${{ needs.security-negative-test.result }}" != "success" ] || \
-             [ "${{ needs.pgbouncer-integration.result }}" != "success" ] || \
-             [ "${{ needs.backend-docker-build.result }}" != "success" ] || \
-             [ "${{ needs.web-checks.result }}" != "success" ] || \
-             [ "${{ needs.web-e2e.result }}" != "success" ]; then
-            echo "CI Pipeline failed: One or more stages failed or were cancelled. Merging is blocked."
+          echo "Evaluating CI stage results (run_all=${{ needs.changes.outputs.run_all }})..."
+          if [ "${{ needs.changes.result }}" != "success" ]; then
+            echo "CI Pipeline failed: Path filter stage did not succeed (${{ needs.changes.result }})."
             exit 1
           fi
 
-          echo "All stages passed successfully! CI status check is GREEN."
+          FAILED=0
+          evaluate_job() {
+            local name="$1"
+            local should_run="$2"
+            local result="$3"
+            printf "%-28s should_run=%-5s result=%s\n" "$name" "$should_run" "$result"
+            if [ "$should_run" = "true" ]; then
+              if [ "$result" != "success" ]; then
+                echo "ERROR: $name was expected to run but ended with '$result'."
+                FAILED=1
+              fi
+            else
+              if [ "$result" != "skipped" ] && [ "$result" != "success" ]; then
+                echo "ERROR: $name ended unexpectedly with '$result'."
+                FAILED=1
+              fi
+            fi
+          }
+
+          WEB_CHECKS_SHOULD_RUN="false"
+          if [ "${{ needs.changes.outputs.web }}" = "true" ] || [ "${{ needs.changes.outputs.web_keycloak }}" = "true" ]; then
+            WEB_CHECKS_SHOULD_RUN="true"
+          fi
+
+          evaluate_job "Backend Lint"            "${{ needs.changes.outputs.backend }}"              "${{ needs.backend-lint.result }}"
+          evaluate_job "Backend Test"            "${{ needs.changes.outputs.backend }}"              "${{ needs.backend-test.result }}"
+          evaluate_job "Security Test Suite"     "${{ needs.changes.outputs.backend_security }}"     "${{ needs.security-test.result }}"
+          evaluate_job "Backend Migrations"      "${{ needs.changes.outputs.backend_migrations }}"   "${{ needs.backend-migrations.result }}"
+          evaluate_job "Security Negative Test"  "${{ needs.changes.outputs.backend_rls_negative }}" "${{ needs.security-negative-test.result }}"
+          evaluate_job "PgBouncer Integration"   "${{ needs.changes.outputs.backend_pgbouncer }}"    "${{ needs.pgbouncer-integration.result }}"
+          evaluate_job "Backend Docker Build"    "${{ needs.changes.outputs.backend_docker }}"       "${{ needs.backend-docker-build.result }}"
+          evaluate_job "Web Checks"              "$WEB_CHECKS_SHOULD_RUN"                            "${{ needs.web-checks.result }}"
+          evaluate_job "Web E2E (Mocked)"        "${{ needs.changes.outputs.web }}"                  "${{ needs.web-e2e.result }}"
+          evaluate_job "Web E2E (Keycloak)"      "${{ needs.changes.outputs.web_keycloak }}"         "${{ needs.web-e2e-keycloak.result }}"
+
+          if [ "$FAILED" -ne 0 ]; then
+            echo "CI Pipeline failed: One or more required stages failed or were cancelled. Merging is blocked."
+            exit 1
+          fi
+
+          echo "All required stages passed successfully! CI status check is GREEN."

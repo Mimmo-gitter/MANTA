@@ -2,34 +2,34 @@
 
 ## 1. Overview & Architecture
 
-The MANTA Engineering Intelligence Platform enforces a deterministic, automated CI pipeline via GitHub Actions (`.github/workflows/ci.yml`). Every change submitted via push (to `develop`, `main`, or feature/fix branches) or pull request is automatically guarded against regressions, syntax errors, test failures, broken or irreversible database migrations, and broken container builds.
+The MANTA Engineering Intelligence Platform enforces a deterministic, path-filtered CI pipeline via GitHub Actions (`.github/workflows/ci.yml`). Push events to `develop` and pull requests execute only the checks relevant to changed paths (avoiding duplicate runs on feature branches), while pushes to `main`, scheduled nightly runs (`03:00 UTC`), and manual `workflow_dispatch` runs execute the full cross-component regression suite.
 
 ```
-       Git Push / Pull Request (develop / main / feature/** / fix/**)
-                         │
-                         ▼
-             GitHub Actions CI Pipeline
-                         │
-         ┌───────────────┼───────────────┬────────────────┬────────────────┐
-         ▼               ▼               ▼                ▼                ▼
-   Backend Lint    Backend Tests   Security Tests   Migration Check  PgBouncer Test
-   (Ruff check)     (pytest core)   (tests/security) (Alembic check)  (Pooler Live)
-         │               │               │                │                │
-         └───────────────┼───────────────┼────────────────┼────────────────┘
-         ┌───────────────┼───────────────┴────────────────┐
-         ▼               ▼                                ▼
-   RLS Negative    Docker Build                      Web Checks
-    (tamper DB)     (Buildx gha)                  (ESLint & E2E)
-         │               │                                │
-         └───────────────┴───────────────┬────────────────┘
-                                         ▼
-                                CI Status Check (ci-gate)
-                                         │
-                          ┌──────────────┴──────────────┐
-                          ▼                             ▼
-                       [PASS]                        [FAIL]
-                  Green status check             Red status check
-                  Merge permitted to develop     Merge BLOCKED by protection
+       Pull Request / Push (develop, main) / Nightly / Manual Dispatch
+                                     │
+                                     ▼
+                    Path Filter & Mode (`changes`)
+                                     │
+         ┌───────────────┬───────────┴───────┬────────────────┐
+         ▼               ▼                   ▼                ▼
+   Backend Core     Security & DB        PgBouncer        Web Portal
+   Lint / Tests     Migrations / RLS    & Webhooks       Lint & Build
+   (Ruff, pytest)   (Alembic, Negative)  (Live Pooler)   (Next.js cache)
+         │               │                   │                │
+         │               │                   │       ┌────────┴────────┐
+         │               │                   │       ▼                 ▼
+         │               │                   │   Web E2E          Web E2E
+         │               │                   │   (Mocked x4)   (Keycloak Live)
+         └───────────────┴───────────────────┴───────┴─────────────────┘
+                                     │
+                                     ▼
+                         CI Status Check (`ci-gate`)
+                                     │
+                      ┌──────────────┴──────────────┐
+                      ▼                             ▼
+                   [PASS]                        [FAIL]
+              Green status check             Red status check
+              Merge permitted                Merge BLOCKED by protection
 ```
 
 ---
@@ -38,17 +38,19 @@ The MANTA Engineering Intelligence Platform enforces a deterministic, automated 
 
 | Stage | Job Name | Primary Tool | Caching Mechanism | Purpose |
 |---|---|---|---|---|
-| **Backend Lint** | `backend-lint` | Ruff (`format --check`, `check`) | GitHub Actions pip cache (`backend/requirements.txt`) | Enforces PEP 8 style, import sorting (`isort`), code cleanliness, and Python 3.12 compatibility. |
-| **Backend Tests** | `backend-test` | `pytest`, `pytest-asyncio` | GitHub Actions pip cache (`backend/requirements.txt`) | Executes the backend core test suite (`backend/tests --ignore=tests/security`), verifying API endpoints, identity configuration, and static pooler settings against migrated PostgreSQL. |
-| **Security Tests** | `security-test` | `pytest`, `pytest-asyncio` | GitHub Actions pip cache (`backend/requirements.txt`) | Executes the dedicated tenant boundary security test suite (`backend/tests/security`), verifying cross-tenant isolation, forged tenant claims, and missing tenant contexts against PostgreSQL initialised through migrations. |
-| **Migration Check** | `backend-migrations` | Alembic, PostgreSQL 16 (`pgvector/pgvector:pg16`) | GitHub Actions pip cache (`backend/requirements.txt`) | Starts a PostgreSQL + pgvector service and runs `upgrade head`, `downgrade base`, `upgrade head`, and `alembic check` (drift detection), printing the failing revision on any error. |
-| **Negative RLS Security** | `security-negative-test` | `verify_rls_negative.py`, PostgreSQL 16 | GitHub Actions pip cache (`backend/requirements.txt`) | Validates the safety net by deliberately tampering with RLS policies/FORCE in throwaway databases to ensure regressions are caught. |
-| **PgBouncer Tests** | `pgbouncer-integration` | `docker compose`, `pytest` | GitHub Actions pip cache (`backend/requirements.txt`) | Spins up live Postgres & PgBouncer containers to verify that `pool_mode=transaction` and `server_reset_query_always=1` purge session state across clients. |
-| **Docker Build** | `backend-docker-build` | Docker Buildx (`docker/build-push-action`) | GitHub Actions cache backend (`type=gha`, `mode=max`) | Validates multi-stage Docker image compilation and dependency resolution without pushing unverified images. |
-| **Web Checks** | `web-checks` | Next.js 15, ESLint | GitHub Actions npm cache (`web/package-lock.json`) | Verifies web portal TypeScript types, ESLint compliance, and production static site builds. |
-| **Web E2E Tests** | `web-e2e` | Playwright, Keycloak 24 (`manta` realm) | GitHub Actions npm cache (`web/package-lock.json`) | Boots Keycloak with `infra/keycloak/realm-export.json` and runs automated browser tests covering sign-in, wrong password, cancelled login, sign-out, and protected route access (`docs/auth-test-scenarios.md`). |
-| **Mobile Quality & Build** | `mobile-ci` (`.github/workflows/mobile-ci.yml`) | Gradle 9, Ktlint, Android Lint, JUnit | GitHub Actions Gradle cache (`actions/setup-java@v4`) | Enforces Kotlin code formatting (`ktlintCheck`), Android static analysis (`lintDebug`), unit tests (`testDebugUnitTest`), and compiles debug APKs (`assembleDebug`). |
-| **Unified Status Gate** | `ci-gate` | Bash status evaluator | N/A | Consolidates upstream results; exits `1` if any stage fails or cancels, emitting a unified status check to GitHub. |
+| **Path Detection** | `changes` | `dorny/paths-filter@v3` | N/A | Determines changed component flags and enables full `run_all` mode on `main`, `schedule`, and `workflow_dispatch`. |
+| **Backend Lint** | `backend-lint` | `astral-sh/ruff-action@v3` | Built-in action binary cache | Enforces PEP 8 style, import sorting, code cleanliness, and Python 3.12 compatibility (`format --check`, `check`). |
+| **Backend Tests** | `backend-test` | `pytest`, `pytest-asyncio` | `astral-sh/setup-uv@v5` (`backend/requirements.txt`) | Executes core backend tests (`tests --ignore=tests/security` and excluding live webhook suites covered by `pgbouncer-integration`). |
+| **Security Tests** | `security-test` | `pytest`, `pytest-asyncio` | `astral-sh/setup-uv@v5` (`backend/requirements.txt`) | Executes the dedicated tenant boundary security suite (`backend/tests/security`) against migrated PostgreSQL. |
+| **Migration Check** | `backend-migrations` | Alembic, PostgreSQL 16 (`pgvector/pgvector:pg16`) | `astral-sh/setup-uv@v5` (`backend/requirements.txt`) | Runs `upgrade head`, `downgrade base`, `upgrade head`, and `alembic check` (drift detection). |
+| **Negative RLS Security** | `security-negative-test` | `verify_rls_negative.py --mode all --skip-baseline`, PostgreSQL 16 | `astral-sh/setup-uv@v5` (`backend/requirements.txt`) | Validates RLS tamper detection across all 3 modes in throwaway DBs, skipping redundant baseline migration/test cycles. |
+| **PgBouncer Tests** | `pgbouncer-integration` | `docker compose`, `pytest` | `astral-sh/setup-uv@v5` (`backend/requirements.txt`) | Spins up live Postgres & PgBouncer containers for pooler isolation/load and live webhook auth/load/idempotency tests. |
+| **Docker Build** | `backend-docker-build` | Docker Buildx (`docker/build-push-action`) | GitHub Actions cache (`type=gha`, `mode=max`) | Validates multi-stage Docker image compilation using trimmed `.dockerignore` context. |
+| **Web Checks** | `web-checks` | Next.js 15, ESLint | npm cache + `web/.next/cache` | Runs TypeScript/ESLint checks, builds production Next.js app once, and uploads `web/.next` as an artifact. |
+| **Web E2E (Mocked)** | `web-e2e` | Playwright (`--workers=4`, `FORCE_KEYCLOAK_MOCK=true`) | npm + `~/.cache/ms-playwright` + `web/.next` artifact | Runs mocked/UI Playwright suites in parallel across 4 workers without booting Postgres/Keycloak. |
+| **Web E2E (Keycloak)** | `web-e2e-keycloak` | Playwright (`--workers=1`), Keycloak 24 (`manta` realm) | npm + `~/.cache/ms-playwright` + `web/.next` artifact | Triggered on auth/Keycloak changes; boots Keycloak test realm and runs live OIDC journey & session renewal specs serially. |
+| **Mobile Quality & Build** | `mobile-ci` (`.github/workflows/mobile-ci.yml`) | Gradle, Ktlint, Android Lint, JUnit | `gradle/actions/setup-gradle@v4` + `--build-cache` | Runs `ktlintCheck`, `lintDevDebug`, `lintStageDebug`, unit tests, and `assembleDebug` in a single Gradle invocation. |
+| **Unified Status Gate** | `ci-gate` | Bash status evaluator | N/A | Evaluates all upstream jobs against `changes` outputs; accepts expected `skipped` jobs and blocks on any unexpected skip/failure/cancel. |
 
 ---
 
@@ -67,7 +69,7 @@ To ensure no code can be merged into `develop` without passing all CI checks, fo
    - Check **Require status checks to pass before merging**
    - Check **Require branches to be up to date before merging**
    - In the **Status checks that are required** search box, select:
-     - `CI Status Check` (or the underlying jobs: `Backend Lint & Formatting`, `Backend Test Suite`, `Security Test Suite (tests/security)`, `Database Migration Check`, `Negative RLS Security Tests`, `PgBouncer Tenant-Isolation Tests`, `Backend Docker Image Build`, `Web Portal Lint & Build`, `Web Portal Playwright E2E Tests`)
+     - **`CI Status Check`** *(recommended single unified gate because component jobs are path-filtered and may legitimately be `skipped` when unrelated components change)*
 5. Click **Create** or **Save changes**.
 
 *(Repeat the same rule for the `main` branch to guarantee production release protection).*
