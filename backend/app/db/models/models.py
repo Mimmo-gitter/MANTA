@@ -394,7 +394,15 @@ class WebhookEvent(Base):
 class DeadLetterEvent(Base):
     __tablename__ = "dead_letter_events"
 
-    __table_args__ = (Index("idx_dead_letter_events_tenant_id", "tenant_id"),)
+    __table_args__ = (
+        Index("idx_dead_letter_events_tenant_id", "tenant_id"),
+        Index(
+            "idx_dead_letter_events_unresolved",
+            "tenant_id",
+            "is_resolved",
+            text("quarantined_at DESC"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
     original_event_id: Mapped[uuid.UUID] = mapped_column(
