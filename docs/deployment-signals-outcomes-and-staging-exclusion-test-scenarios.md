@@ -1110,7 +1110,7 @@ deployment = Deployment(
     deployed_at=datetime.now(timezone.utc),
 )
 db.add(deployment)
-await db.commit() # Succeeded without foreign key constraint error
+await db.commit()  # Succeeded without foreign key constraint error
 ```
 
 ---
