@@ -1,4 +1,4 @@
-"""Integration tests for US-25 Tasks 25.2, 25.3, and 25.4 against PostgreSQL + FORCE RLS."""
+"""Integration tests for US-25 (Tasks 25.2, 25.3, 25.4, and 25.5/25.6) against PostgreSQL + FORCE RLS."""
 
 import asyncio
 from datetime import datetime, timezone

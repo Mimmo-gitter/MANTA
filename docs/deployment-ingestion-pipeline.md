@@ -8,6 +8,7 @@
 - Architectural Blueprint v3.0 (§4.3–§4.5, §6.2–§6.3, §8.1–§8.2, §10.3)
 - [Contributor PII Isolation & Pseudonymization](contributor-pii-isolation-and-pseudonymization.md) (Task 20.3)
 - [Deployment Signal Selection & DORA Reporting](deployment-signal-selection-persistence-and-dora-response-reporting-test-scenarios.md) (US-18)
+- [Deployment Signals, Outcomes & Staging Exclusion Test Scenarios](deployment-signals-outcomes-and-staging-exclusion-test-scenarios.md) (Task 25.5 / SCRUM-431)
 
 ---
 
