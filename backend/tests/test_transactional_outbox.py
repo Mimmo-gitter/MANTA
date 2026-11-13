@@ -17,7 +17,9 @@ Acceptance Criteria & Scope Verified:
 - Partial index ix_outbox_events_unpublished catalog verification.
 """
 
+import asyncio
 from datetime import datetime, timezone
+import os
 import uuid
 
 from httpx import ASGITransport, AsyncClient
@@ -34,6 +36,33 @@ from app.outbox.service import (
     record_deployment_failure_atomic,
     record_outbox_event,
 )
+
+
+def is_live_db_available() -> bool:
+    """
+    Checks if a real PostgreSQL instance is reachable with configured credentials.
+    In CI / GitHub Actions, this always returns True to enforce end-to-end live testing.
+    """
+    if os.getenv("CI") == "true" or os.getenv("GITHUB_ACTIONS") == "true":
+        return True
+    try:
+
+        async def _ping():
+            async with async_engine.connect() as conn:
+                await conn.execute(text("SELECT 1"))
+
+        asyncio.run(_ping())
+        return True
+    except Exception:
+        return False
+
+
+LIVE_DB_AVAILABLE = is_live_db_available()
+skip_without_live_db = pytest.mark.skipif(
+    not LIVE_DB_AVAILABLE,
+    reason="PostgreSQL database service not available with configured credentials in local environment",
+)
+pytestmark = [pytest.mark.asyncio, skip_without_live_db]
 
 
 @pytest.fixture(autouse=True)
@@ -348,7 +377,7 @@ async def test_rollback_on_database_constraint_error():
     deployment_id = await create_test_deployment(tenant_id, project_id, initial_status="SUCCESS")
 
     staged_outbox_id = None
-    try:
+    with pytest.raises(DBAPIError):
         async with get_tenant_db_context(tenant_id) as session:
             dep, outbox = await record_deployment_failure_atomic(
                 session,
@@ -374,9 +403,6 @@ async def test_rollback_on_database_constraint_error():
             )
             session.add(invalid_commit)
             await session.commit()
-    except Exception:
-        # Expected database integrity error on commit flush
-        pass
 
     # Verify that neither the deployment status nor the outbox row was committed
     async with get_tenant_db_context(tenant_id) as session:
