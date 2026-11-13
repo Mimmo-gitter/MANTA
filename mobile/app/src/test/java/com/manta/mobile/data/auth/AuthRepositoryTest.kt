@@ -10,6 +10,7 @@ import com.manta.mobile.features.auth.AuthRepository
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -33,7 +34,8 @@ class AuthRepositoryTest {
     private val mockAccessToken = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9." +
         "eyJzdWIiOiJ1c2VyLXV1aWQtMTIzNCIsImVtYWlsIjoiZGV2ZWxvcGVyQG1hbnRhLmNvbSIs" +
         "Im5hbWUiOiJNYW50YSBEZXZlbG9wZXIiLCJ0ZW5hbnRfaWQiOiJ0ZW5hbnQtdXVpZC01Njc4Iiw" +
-        "icmVhbG1fYWNjZXNzIjp7InJvbGVzIjpbIkRFVkVMT1BFUiJdfSwiYXVkIjoibWFudGEtYmFja2VuZCJ9." +
+        "icmVhbG1fYWNjZXNzIjp7InJvbGVzIjpbImRlZmF1bHQtcm9sZXMtbWFudGEiLCJERVZFTE9QRVIiXX0s" +
+        "ImF1ZCI6Im1hbnRhLWJhY2tlbmQifQ." +
         "signature"
 
     @Before
@@ -60,12 +62,35 @@ class AuthRepositoryTest {
     }
 
     @Test
-    fun checkInitialAuthState_whenTokensStored_returnsLockedRequiresBiometric() = runTest {
-        encryptedStorage.writeString("auth_access_token", mockAccessToken)
+    fun checkInitialAuthState_whenTokensStored_returnsLockedRequiresBiometricWithCachedProfile() =
+        runTest {
+            encryptedStorage.writeString("auth_access_token", mockAccessToken)
+            encryptedStorage.writeString("auth_user_name", "Manta Developer")
+            encryptedStorage.writeString("auth_user_email", "developer@manta.com")
+            encryptedStorage.writeString("auth_primary_role", "DEVELOPER")
 
-        val state = authRepository.checkInitialAuthState()
-        assertTrue(state is AuthState.LockedRequiresBiometric)
-        assertTrue(authRepository.authState.value is AuthState.LockedRequiresBiometric)
+            val state = authRepository.checkInitialAuthState()
+            assertTrue(state is AuthState.LockedRequiresBiometric)
+            val lockedState = state as AuthState.LockedRequiresBiometric
+            assertEquals("Manta Developer", lockedState.userName)
+            assertEquals("developer@manta.com", lockedState.userEmail)
+            assertEquals("DEVELOPER", lockedState.primaryRole)
+            assertEquals(BiometricUnlockSubState.Ready, lockedState.subState)
+        }
+
+    @Test
+    fun updateBiometricSubState_updatesSubStateOfLockedRequiresBiometric() = runTest {
+        encryptedStorage.writeString("auth_access_token", mockAccessToken)
+        authRepository.checkInitialAuthState()
+
+        authRepository.updateBiometricSubState(BiometricUnlockSubState.Success)
+
+        val currentState = authRepository.authState.value
+        assertTrue(currentState is AuthState.LockedRequiresBiometric)
+        assertEquals(
+            BiometricUnlockSubState.Success,
+            (currentState as AuthState.LockedRequiresBiometric).subState
+        )
     }
 
     @Test
@@ -88,13 +113,12 @@ class AuthRepositoryTest {
     @Test
     fun unlockSession_whenNoTokensExist_returnsFalseAndUnauthenticated() = runTest {
         val result = authRepository.unlockSession()
-
         assertFalse(result)
         assertEquals(AuthState.Unauthenticated, authRepository.authState.value)
     }
 
     @Test
-    fun saveTokens_persistsTokensAndSetsAuthenticatedState() = runTest {
+    fun saveTokens_filtersSystemRolesAndCachesPrimaryRole() = runTest {
         authRepository.saveTokens(
             accessToken = mockAccessToken,
             refreshToken = "mock_refresh_token",
@@ -106,22 +130,23 @@ class AuthRepositoryTest {
         val session = (currentState as AuthState.Authenticated).session
         assertEquals("user-uuid-1234", session.userId)
         assertEquals("mock_refresh_token", session.refreshToken)
-        assertEquals("mock_id_token", session.idToken)
 
-        // Verify tokens are written to EncryptedStorage
-        assertEquals(mockAccessToken, encryptedStorage.readString("auth_access_token"))
-        assertEquals("mock_refresh_token", encryptedStorage.readString("auth_refresh_token"))
+        assertEquals("DEVELOPER", encryptedStorage.readString("auth_primary_role"))
+        assertEquals("Manta Developer", encryptedStorage.readString("auth_user_name"))
+        assertEquals("developer@manta.com", encryptedStorage.readString("auth_user_email"))
     }
 
     @Test
-    fun logout_clearsTokensAndResetsToUnauthenticated() = runTest {
+    fun logout_clearsTokensAndProfileMetadata() = runTest {
         authRepository.saveTokens(mockAccessToken, "refresh_token", "id_token")
-
         authRepository.logout()
 
         assertEquals(AuthState.Unauthenticated, authRepository.authState.value)
-        assertEquals(null, encryptedStorage.readString("auth_access_token"))
-        assertEquals(null, encryptedStorage.readString("auth_refresh_token"))
-        assertEquals(null, encryptedStorage.readString("auth_id_token"))
+        assertNull(encryptedStorage.readString("auth_access_token"))
+        assertNull(encryptedStorage.readString("auth_refresh_token"))
+        assertNull(encryptedStorage.readString("auth_id_token"))
+        assertNull(encryptedStorage.readString("auth_user_name"))
+        assertNull(encryptedStorage.readString("auth_user_email"))
+        assertNull(encryptedStorage.readString("auth_primary_role"))
     }
 }

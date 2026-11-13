@@ -3,6 +3,7 @@ package com.manta.mobile.features.auth
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import androidx.core.net.toUri
 import com.manta.mobile.BuildConfig
 import com.manta.mobile.core.auth.PkceUtils
 import kotlinx.coroutines.Dispatchers
@@ -32,7 +33,7 @@ object PkceAuthManager {
     private const val SCOPE = "openid profile email offline_access"
 
     private val json = Json { ignoreUnknownKeys = true }
-    private val httpClient = OkHttpClient()
+    private val httpClient by lazy { OkHttpClient() }
 
     private var currentCodeVerifier: String? = null
 
@@ -44,9 +45,8 @@ object PkceAuthManager {
         currentCodeVerifier = verifier
 
         val challenge = PkceUtils.generateCodeChallenge(verifier)
-        val authUrl = Uri.parse(
-            "${BuildConfig.KEYCLOAK_URL}/realms/manta/protocol/openid-connect/auth"
-        )
+        val authUrl = "${BuildConfig.KEYCLOAK_URL}/realms/manta/protocol/openid-connect/auth"
+            .toUri()
             .buildUpon()
             .appendQueryParameter("response_type", "code")
             .appendQueryParameter("client_id", CLIENT_ID)
