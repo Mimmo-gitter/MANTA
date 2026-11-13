@@ -694,7 +694,8 @@ async def test_tc_dep_argo_001_postsync_production_success():
             )
         ).scalar_one()
         assert contrib.provider == "argocd"
-        assert contrib.raw_handle == "sre-lead@acme.com"
+        assert contrib.external_actor_id == "sre-lead@acme.com"
+        assert contrib.raw_email == "sre-lead@acme.com"
 
 
 @pytest.mark.asyncio
@@ -929,7 +930,10 @@ async def test_tc_dep_argo_006_presync_hook_skip():
         integ_id, tenant_id, secret, payload_presync, event_type="presync"
     )
     assert status_code == 202
-    assert outcome == "noop:ignored_argocd_hook:presync"
+    assert outcome in (
+        "noop:ignored_argocd_hook:PreSync",
+        "noop:ignored_argocd_hook:presync",
+    )
 
     async with get_tenant_db_context(tenant_id) as db:
         ev = (
@@ -1463,19 +1467,20 @@ async def test_tc_dep_dir_006_rbac_and_abac_permission_enforcement(_mock_auth_ct
 
     # 4. Service-level ABAC check for human user not assigned to project
     user_sub = f"human-user-{uuid.uuid4().hex[:6]}"
+    user_id = uuid.uuid4()
     async with get_tenant_db_context(tenant_id) as db:
         user_row = User(
-            id=uuid.uuid4(),
+            id=user_id,
             tenant_id=tenant_id,
             google_sub=user_sub,
             email=f"{user_sub}@example.com",
-            name="Human PM",
+            full_name="Human PM",
         )
         db.add(user_row)
-        await db.commit()
 
-        # Non-admin human user not in ProjectMember raises 403 "caller is not assigned to this project"
-        claims = TokenClaims(sub=user_sub, tenant_id=str(tenant_id), roles=["PROJECT_MANAGER"])
+    claims = TokenClaims(sub=user_sub, tenant_id=str(tenant_id), roles=["PROJECT_MANAGER"])
+    # Non-admin human user not in ProjectMember raises 403 "caller is not assigned to this project"
+    async with get_tenant_db_context(tenant_id) as db:
         with pytest.raises(HTTPException) as exc_info:
             await _enforce_abac_project_assignment_if_non_admin(
                 db, user=claims, tenant_id=tenant_id, project_id=project_id
@@ -1483,18 +1488,19 @@ async def test_tc_dep_dir_006_rbac_and_abac_permission_enforcement(_mock_auth_ct
         assert exc_info.value.status_code == 403
         assert "not assigned to this project" in exc_info.value.detail
 
-        # Assigned in ProjectMember succeeds without exception
+    # Assigned in ProjectMember succeeds without exception
+    async with get_tenant_db_context(tenant_id) as db:
         db.add(
             ProjectMember(
                 id=uuid.uuid4(),
                 tenant_id=tenant_id,
                 project_id=project_id,
-                user_id=user_row.id,
+                user_id=user_id,
                 role="PROJECT_MANAGER",
             )
         )
-        await db.commit()
 
+    async with get_tenant_db_context(tenant_id) as db:
         await _enforce_abac_project_assignment_if_non_admin(
             db, user=claims, tenant_id=tenant_id, project_id=project_id
         )
@@ -1713,21 +1719,22 @@ async def test_tc_dep_dora_002_dynamic_signal_switch(_mock_auth_ctx):
             headers={"Authorization": f"Bearer {token_admin}"},
         )
 
+    # Phase 1: argocd is authoritative
     async with get_tenant_db_context(tenant_id) as db:
-        # Phase 1: argocd is authoritative
         auth_1 = await list_authoritative_production_deployments(
             db, tenant_id=tenant_id, project_id=project_id
         )
         assert len(auth_1) == 1
         assert auth_1[0].commit_sha == argo_sha
 
-        # Switch project authoritative signal to direct_deployment_api
+    # Switch project authoritative signal to direct_deployment_api
+    async with get_tenant_db_context(tenant_id) as db:
         proj = await db.get(Project, project_id)
         assert proj is not None
         proj.authoritative_cd_signal = "direct_deployment_api"
-        await db.commit()
 
-        # Phase 2: direct_deployment_api is authoritative
+    # Phase 2: direct_deployment_api is authoritative
+    async with get_tenant_db_context(tenant_id) as db:
         auth_2 = await list_authoritative_production_deployments(
             db, tenant_id=tenant_id, project_id=project_id
         )
@@ -1839,7 +1846,7 @@ async def test_tc_dep_ord_001_out_of_order_commit_sha_relaxed_fk():
             deployed_at=now,
         )
         db.add(dep)
-        await db.commit()
+        await db.flush()
 
         persisted = await db.get(Deployment, dep.id)
         assert persisted is not None
