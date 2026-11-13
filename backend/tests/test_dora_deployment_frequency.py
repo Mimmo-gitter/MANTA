@@ -64,8 +64,7 @@ def test_acceptance_criteria_14_day_excludes_staging_and_failed():
 def test_30_day_rolling_window_and_boundary_exclusions():
     window_end = datetime(2026, 11, 13, 12, 0, 0, tzinfo=timezone.utc)
     deployments = [
-        _make_deployment(deployed_at=window_end - timedelta(days=i * 2))
-        for i in range(15)
+        _make_deployment(deployed_at=window_end - timedelta(days=i * 2)) for i in range(15)
     ]
     # Out-of-window deployments (too old & future)
     deployments.append(_make_deployment(deployed_at=window_end - timedelta(days=31)))
@@ -100,8 +99,7 @@ async def test_calculate_rolling_deployment_frequency_builds_authoritative_query
     window_end = datetime(2026, 11, 13, 12, 0, 0, tzinfo=timezone.utc)
     captured_statements = []
     prod_rows = [
-        _make_deployment(deployed_at=window_end - timedelta(days=d))
-        for d in (1, 2, 3, 4, 5, 6)
+        _make_deployment(deployed_at=window_end - timedelta(days=d)) for d in (1, 2, 3, 4, 5, 6)
     ]
 
     class _FakeScalars:
