@@ -32,7 +32,9 @@ def _extract_event_and_tenant_ids(parsed_payload: dict[str, Any]) -> tuple[uuid.
         if isinstance(parsed_payload.get("payload"), dict)
         else parsed_payload
     )
-    raw_event_id = inner.get("event_id") or parsed_payload.get("event_id") or parsed_payload.get("job_id")
+    raw_event_id = (
+        inner.get("event_id") or parsed_payload.get("event_id") or parsed_payload.get("job_id")
+    )
     raw_tenant_id = inner.get("tenant_id") or parsed_payload.get("tenant_id")
     if not raw_event_id or not raw_tenant_id:
         raise ValueError(

@@ -60,7 +60,9 @@ def _mock_auth_ctx():
     app.state.jwks_client = orig
 
 
-def _mint_jwt(auth_ctx: dict[str, Any], tenant_id: uuid.UUID, roles: list[str], sub: str = "us25-ci") -> str:
+def _mint_jwt(
+    auth_ctx: dict[str, Any], tenant_id: uuid.UUID, roles: list[str], sub: str = "us25-ci"
+) -> str:
     now = int(datetime.now(timezone.utc).timestamp())
     return jwt.encode(
         {
@@ -352,18 +354,24 @@ async def test_task25_3_github_and_argocd_webhooks_end_to_end():
 
     async with get_tenant_db_context(tenant_id) as db:
         all_deps = (
-            await db.execute(select(Deployment).where(Deployment.project_id == project_id))
-        ).scalars().all()
+            (await db.execute(select(Deployment).where(Deployment.project_id == project_id)))
+            .scalars()
+            .all()
+        )
         assert len(all_deps) == 2
 
-        gh_dep = next(d for d in all_deps if d.authoritative_signal_source == "github_deployments_api")
+        gh_dep = next(
+            d for d in all_deps if d.authoritative_signal_source == "github_deployments_api"
+        )
         assert gh_dep.status == "FAILED"
         assert gh_dep.is_change_failure is True
         assert gh_dep.commit_sha == gh_sha
         assert gh_dep.environment == "production"
         assert gh_dep.actor_pseudonym_id and len(gh_dep.actor_pseudonym_id) == 64
 
-        argo_dep = next(d for d in all_deps if d.authoritative_signal_source == "argocd_postsync_webhook")
+        argo_dep = next(
+            d for d in all_deps if d.authoritative_signal_source == "argocd_postsync_webhook"
+        )
         assert argo_dep.status == "SUCCESS"
         assert argo_dep.is_change_failure is False
         assert argo_dep.commit_sha == argo_sha

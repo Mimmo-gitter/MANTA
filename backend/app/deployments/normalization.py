@@ -168,9 +168,7 @@ def _extract_github_actor(
     deployment: dict[str, Any],
 ) -> Optional[DeploymentActorInput]:
     candidate = (
-        deployment_status.get("creator")
-        or payload.get("sender")
-        or deployment.get("creator")
+        deployment_status.get("creator") or payload.get("sender") or deployment.get("creator")
     )
     if not isinstance(candidate, dict):
         return None
@@ -221,11 +219,7 @@ def normalize_github_deployment_status(
     else:
         return NormalizationResult(kind="noop", reason=f"unrecognized_state:{raw_state}")
 
-    raw_env = (
-        deployment_status.get("environment")
-        or deployment.get("environment")
-        or ""
-    )
+    raw_env = deployment_status.get("environment") or deployment.get("environment") or ""
     try:
         canonical_env, is_prod = normalize_environment(str(raw_env))
     except ValueError:
@@ -323,7 +317,9 @@ def _map_argocd_outcome(
     health_block = app_status.get("health") if isinstance(app_status.get("health"), dict) else {}
     if not health_block and isinstance(payload.get("health"), dict):
         health_block = payload["health"]
-    health_status = str(health_block.get("status") or payload.get("healthStatus") or "").strip().lower()
+    health_status = (
+        str(health_block.get("status") or payload.get("healthStatus") or "").strip().lower()
+    )
 
     phase_lower = raw_phase.lower()
     status_lower = raw_status.lower()

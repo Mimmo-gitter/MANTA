@@ -237,35 +237,30 @@ async def persist_deployment_idempotent(
         authoritative_signal_source=authoritative_signal_source.value,
         deployed_at=deployed_at,
     )
-    stmt = (
-        stmt.on_conflict_do_update(
-            index_elements=[
-                Deployment.tenant_id,
-                Deployment.project_id,
-                Deployment.authoritative_signal_source,
-                Deployment.external_deployment_id,
-            ],
-            index_where=text("external_deployment_id IS NOT NULL"),
-            set_={
-                "commit_sha": stmt.excluded.commit_sha,
-                "environment": stmt.excluded.environment,
-                "status": stmt.excluded.status,
-                "is_change_failure": stmt.excluded.is_change_failure,
-                "deployed_at": stmt.excluded.deployed_at,
-                "repository_id": func.coalesce(
-                    stmt.excluded.repository_id, Deployment.repository_id
-                ),
-                "integration_id": func.coalesce(
-                    stmt.excluded.integration_id, Deployment.integration_id
-                ),
-                "actor_pseudonym_id": func.coalesce(
-                    stmt.excluded.actor_pseudonym_id, Deployment.actor_pseudonym_id
-                ),
-            },
-            where=(stmt.excluded.deployed_at >= Deployment.deployed_at),
-        )
-        .returning(Deployment.id, text("(xmax = 0) AS inserted"))
-    )
+    stmt = stmt.on_conflict_do_update(
+        index_elements=[
+            Deployment.tenant_id,
+            Deployment.project_id,
+            Deployment.authoritative_signal_source,
+            Deployment.external_deployment_id,
+        ],
+        index_where=text("external_deployment_id IS NOT NULL"),
+        set_={
+            "commit_sha": stmt.excluded.commit_sha,
+            "environment": stmt.excluded.environment,
+            "status": stmt.excluded.status,
+            "is_change_failure": stmt.excluded.is_change_failure,
+            "deployed_at": stmt.excluded.deployed_at,
+            "repository_id": func.coalesce(stmt.excluded.repository_id, Deployment.repository_id),
+            "integration_id": func.coalesce(
+                stmt.excluded.integration_id, Deployment.integration_id
+            ),
+            "actor_pseudonym_id": func.coalesce(
+                stmt.excluded.actor_pseudonym_id, Deployment.actor_pseudonym_id
+            ),
+        },
+        where=(stmt.excluded.deployed_at >= Deployment.deployed_at),
+    ).returning(Deployment.id, text("(xmax = 0) AS inserted"))
 
     row = (await db.execute(stmt)).first()
     if row is None:

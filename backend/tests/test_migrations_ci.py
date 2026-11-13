@@ -134,8 +134,7 @@ class TestMigrationsCICheck(unittest.TestCase):
                                         for lcol, tref in zip(loc_cols, target_refs):
                                             subsequent_fk_elements.add((src_table, lcol, tref))
                                 elif (
-                                    sub_attr == "drop_constraint"
-                                    and len(sub_stmt.value.args) >= 2
+                                    sub_attr == "drop_constraint" and len(sub_stmt.value.args) >= 2
                                 ):
                                     cstr_name = getattr(sub_stmt.value.args[0], "value", None)
                                     tname_arg = getattr(sub_stmt.value.args[1], "value", None)

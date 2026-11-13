@@ -907,9 +907,7 @@ async def dispatch_worker_job(parsed_payload: dict[str, Any]) -> Any:
     return f"ignored_job_type:{job_type or 'unknown'}"
 
 
-async def process_webhook_event_arq(
-    ctx: dict[str, Any], parsed_payload: dict[str, Any]
-) -> Any:
+async def process_webhook_event_arq(ctx: dict[str, Any], parsed_payload: dict[str, Any]) -> Any:
     """ARQ-compatible task wrapper delegating to process_webhook_job."""
     from app.webhooks.processor import process_webhook_job
 

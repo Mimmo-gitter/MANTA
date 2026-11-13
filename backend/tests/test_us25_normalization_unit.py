@@ -73,7 +73,9 @@ def test_github_deployment_status_mappings_and_inactive_policy():
             "repository": {"id": 777, "full_name": "acme/manta"},
         }
 
-    ok = normalize_github_deployment_status("deployment_status", make_payload("success", "prod"), received_at=now)
+    ok = normalize_github_deployment_status(
+        "deployment_status", make_payload("success", "prod"), received_at=now
+    )
     assert ok.kind == "normalized"
     assert ok.outcome == DeploymentOutcome.SUCCESS
     assert ok.environment == "production"
@@ -81,16 +83,22 @@ def test_github_deployment_status_mappings_and_inactive_policy():
     assert ok.external_deployment_id == "gh:5001"
     assert ok.actor is not None and ok.actor.external_id == "42"
 
-    fail = normalize_github_deployment_status("deployment_status", make_payload("failure"), received_at=now)
+    fail = normalize_github_deployment_status(
+        "deployment_status", make_payload("failure"), received_at=now
+    )
     assert fail.kind == "normalized"
     assert fail.outcome == DeploymentOutcome.FAILED
 
-    err = normalize_github_deployment_status("deployment_status", make_payload("error"), received_at=now)
+    err = normalize_github_deployment_status(
+        "deployment_status", make_payload("error"), received_at=now
+    )
     assert err.kind == "normalized"
     assert err.outcome == DeploymentOutcome.FAILED
 
     # Standard GitHub supersession emits state='inactive' and must be skipped by default
-    superseded = normalize_github_deployment_status("deployment_status", make_payload("inactive"), received_at=now)
+    superseded = normalize_github_deployment_status(
+        "deployment_status", make_payload("inactive"), received_at=now
+    )
     assert superseded.kind == "noop"
     assert superseded.reason == "superseded_inactive"
 
@@ -105,9 +113,13 @@ def test_github_deployment_status_mappings_and_inactive_policy():
 
     # Non-terminal & staging ignored cleanly
     for st in ("pending", "queued", "in_progress"):
-        res = normalize_github_deployment_status("deployment_status", make_payload(st), received_at=now)
+        res = normalize_github_deployment_status(
+            "deployment_status", make_payload(st), received_at=now
+        )
         assert res.kind == "noop"
-    stg = normalize_github_deployment_status("deployment_status", make_payload("success", "staging"), received_at=now)
+    stg = normalize_github_deployment_status(
+        "deployment_status", make_payload("success", "staging"), received_at=now
+    )
     assert stg.kind == "noop"
     assert stg.reason == "non_production_environment:staging"
 
