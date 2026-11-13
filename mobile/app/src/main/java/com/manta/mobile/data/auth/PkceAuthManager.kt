@@ -1,4 +1,4 @@
-package com.manta.mobile.features.auth
+package com.manta.mobile.data.auth
 
 import android.content.Context
 import android.content.Intent
@@ -6,6 +6,7 @@ import android.net.Uri
 import androidx.core.net.toUri
 import com.manta.mobile.BuildConfig
 import com.manta.mobile.core.auth.PkceUtils
+import com.manta.mobile.features.auth.AuthRepository
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
