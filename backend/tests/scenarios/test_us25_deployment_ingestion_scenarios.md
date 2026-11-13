@@ -7,14 +7,14 @@
 - `SCRUM-428`: Database migration and models for deployments schema extensions and relaxed commit FK (`Task 25.2`, [`backend/migrations/versions/c7f4e9b2a1d8_extend_deployments_us25.py`](../migrations/versions/c7f4e9b2a1d8_extend_deployments_us25.py))  
 - `SCRUM-429`: Implement GitHub `deployment_status` and ArgoCD `PostSync` webhook ingestion and worker normalization (`Task 25.3`, [`backend/app/webhooks/processor.py`](../app/webhooks/processor.py))  
 - `SCRUM-430`: Implement direct deployment REST ingestion endpoint with RBAC/ABAC and actor pseudonymization (`Task 25.4`, [`backend/app/deployments/router.py`](../app/deployments/router.py), [`backend/app/deployments/service.py`](../app/deployments/service.py))  
-- `SCRUM-432`: Automated integration test suite for production deployment ingestion across all 3 signals (`Task 25.6`, [`backend/tests/test_us25_deployment_ingestion_integration.py`](test_us25_deployment_ingestion_integration.py))  
+- `SCRUM-432`: Automated integration test suite for production deployment ingestion across all 3 signals (`Task 25.6`, [`backend/tests/test_deployment_ingestion.py`](../test_deployment_ingestion.py))  
 - `SCRUM-384`: Deployment signal selection persistence and DORA response reporting (`US-18` / `Task 18.4`, [`docs/deployment-signal-selection-persistence-and-dora-response-reporting-test-scenarios.md`](../../docs/deployment-signal-selection-persistence-and-dora-response-reporting-test-scenarios.md))  
 - `SCRUM-374`: Contributor PII isolation and cryptographic pseudonymization (`Task 20.3`, [`docs/contributor-pii-isolation-and-pseudonymization.md`](../../docs/contributor-pii-isolation-and-pseudonymization.md))  
 - `SCRUM-439` / `SCRUM-442`: DORA Deployment Frequency & Change Failure Rate metric calculation engines (`US-26` / `US-27` / `US-28`)  
 
 **Target Storage Engine:** PostgreSQL 16 with Row-Level Security (`pgvector/pgvector:pg16`) & Valkey 7 / Redis 7+  
 **Target Implementation Modules:** [`backend/app/deployments/`](../app/deployments/), [`backend/app/webhooks/`](../app/webhooks/), [`backend/app/contributors/`](../app/contributors/), [`backend/app/db/models/models.py`](../app/db/models/models.py)  
-**Authoritative Automated Test Suites:** [`backend/tests/test_us25_deployment_ingestion_integration.py`](test_us25_deployment_ingestion_integration.py), [`backend/tests/test_us25_normalization_unit.py`](test_us25_normalization_unit.py)  
+**Authoritative Automated Test Suites:** [`backend/tests/test_deployment_ingestion.py`](../test_deployment_ingestion.py), [`backend/tests/test_us25_normalization_unit.py`](../test_us25_normalization_unit.py)  
 **Specification Location in Test Suite:** [`backend/tests/scenarios/test_us25_deployment_ingestion_scenarios.md`](test_us25_deployment_ingestion_scenarios.md)  
 **Assignee:** Matvii Yeromenko  
 **Category:** Testing - Design  
