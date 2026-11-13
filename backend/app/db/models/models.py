@@ -8,6 +8,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     Numeric,
@@ -921,7 +922,38 @@ class Notification(Base):
 class Deployment(Base):
     __tablename__ = "deployments"
 
-    __table_args__ = (Index("idx_deployments_tenant_id", "tenant_id"),)
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["tenant_id", "actor_pseudonym_id"],
+            ["contributors.tenant_id", "contributors.pseudonym_id"],
+            name="fk_deployments_tenant_actor_pseudonym",
+        ),
+        CheckConstraint(
+            "status IN ('SUCCESS', 'FAILED', 'ROLLED_BACK')",
+            name="ck_deployments_status",
+        ),
+        CheckConstraint(
+            "authoritative_signal_source IN ('github_deployments_api', 'argocd_postsync_webhook', 'direct_deployment_api')",
+            name="ck_deployments_signal_source",
+        ),
+        Index("idx_deployments_tenant_id", "tenant_id"),
+        Index(
+            "idx_deployments_project_env_deployed_at",
+            "project_id",
+            "environment",
+            text("deployed_at DESC"),
+        ),
+        Index(
+            "uq_deployments_tenant_proj_source_ext_id",
+            "tenant_id",
+            "project_id",
+            "authoritative_signal_source",
+            "external_deployment_id",
+            unique=True,
+            postgresql_where=text("external_deployment_id IS NOT NULL"),
+        ),
+        Index("idx_deployments_tenant_commit_sha", "tenant_id", "commit_sha"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(
@@ -939,8 +971,10 @@ class Deployment(Base):
     triggered_by: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
     )
+    actor_pseudonym_id: Mapped[Optional[str]] = mapped_column(String(64))
+    external_deployment_id: Mapped[Optional[str]] = mapped_column(String(128))
     environment: Mapped[str] = mapped_column(String(32), nullable=False)
-    commit_sha: Mapped[str] = mapped_column(String(40), ForeignKey("commits.sha"), nullable=False)
+    commit_sha: Mapped[str] = mapped_column(String(40), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False)
     is_change_failure: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     authoritative_signal_source: Mapped[str] = mapped_column(

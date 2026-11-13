@@ -108,6 +108,20 @@ def extract_delivery_id(
         if ts_hdr:
             return f"slack-{ts_hdr}-r{retry_hdr}"
 
+    # 3b. ArgoCD Extraction
+    elif prov == "argocd":
+        argo_hdr = (
+            _get_header(headers, "X-ArgoCD-Delivery")
+            or _get_header(headers, "X-Delivery-Id")
+            or _get_header(headers, "X-Request-Id")
+        )
+        if argo_hdr:
+            return argo_hdr
+        if parsed_payload.get("external_deployment_id"):
+            return str(parsed_payload["external_deployment_id"]).strip()
+        if parsed_payload.get("operation_id"):
+            return str(parsed_payload["operation_id"]).strip()
+
     # 4. Generic Provider Header Checks
     generic_hdr = (
         _get_header(headers, "X-Delivery-Id")

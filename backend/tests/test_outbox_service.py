@@ -130,7 +130,7 @@ async def create_test_deployment(
             repository_id=repo_id,
             environment="production",
             commit_sha=commit_sha,
-            status="PENDING",
+            status="SUCCESS",
             is_change_failure=False,
             authoritative_signal_source="github_deployments_api",
             deployed_at=now,
@@ -242,7 +242,7 @@ async def test_rollback_on_error():
     async with get_tenant_db_context(tenant_id) as session:
         dep = await session.get(Deployment, deployment_id)
         assert dep is not None
-        assert dep.status == "PENDING"  # NOT FAILED!
+        assert dep.status == "SUCCESS"  # NOT FAILED!
         assert dep.is_change_failure is False
 
         outbox = await session.get(OutboxEvent, staged_outbox_id)
@@ -302,7 +302,7 @@ async def test_database_constraint_error_rollback():
     async with get_tenant_db_context(tenant_id) as session:
         dep = await session.get(Deployment, deployment_id)
         assert dep is not None
-        assert dep.status == "PENDING"
+        assert dep.status == "SUCCESS"
         assert dep.is_change_failure is False
 
         outbox = await session.get(OutboxEvent, staged_outbox_id)

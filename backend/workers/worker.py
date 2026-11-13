@@ -895,6 +895,25 @@ async def shutdown(ctx: dict[str, Any]) -> None:
     logger.info("Worker %s shutting down", ctx.get("worker_id", "unknown"))
 
 
+async def dispatch_worker_job(parsed_payload: dict[str, Any]) -> Any:
+    """Route a queued MantaJobEnvelope payload to the registered domain processor."""
+    job_type = str(parsed_payload.get("job_type") or "").strip().lower()
+    if job_type == "webhook.process" or "event_id" in parsed_payload:
+        from app.webhooks.processor import process_webhook_job
+
+        return await process_webhook_job(parsed_payload)
+
+    logger.info("Ignoring unhandled worker job_type=%s", job_type or "unknown")
+    return f"ignored_job_type:{job_type or 'unknown'}"
+
+
+async def process_webhook_event_arq(ctx: dict[str, Any], parsed_payload: dict[str, Any]) -> Any:
+    """ARQ-compatible task wrapper delegating to process_webhook_job."""
+    from app.webhooks.processor import process_webhook_job
+
+    return await process_webhook_job(parsed_payload)
+
+
 def get_default_redis_settings() -> RedisSettings:
     """Creates RedisSettings from settings.REDIS_URL with fallback to default RedisSettings."""
     try:
@@ -904,10 +923,41 @@ def get_default_redis_settings() -> RedisSettings:
 
 
 class WorkerSettings:
-    functions: list[Any] = []
+    functions: list[Any] = [process_webhook_event_arq]
     on_startup = startup
     on_shutdown = shutdown
     redis_settings = get_default_redis_settings()
+
+
+async def run_worker_daemon() -> None:
+    """Start the production fetch/lease/retry worker loop consuming Valkey webhook queues."""
+    import socket
+
+    import redis.asyncio as aioredis
+
+    from app.db.session import AsyncSessionLocal
+
+    redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
+    worker_id = f"{socket.gethostname()}-{os.getpid()}"
+    stop_event = asyncio.Event()
+    try:
+        async with AsyncSessionLocal() as session:
+            await run_worker_fetch_loop(
+                redis_client,
+                worker_id,
+                dispatch_worker_job,
+                stop_event=stop_event,
+                recover_on_start=True,
+                db=session,
+                acquire_lease=True,
+                retry_on_failure=True,
+            )
+    finally:
+        await redis_client.aclose()
+
+
+if __name__ == "__main__":
+    asyncio.run(run_worker_daemon())
 
 
 __all__ = [

@@ -72,7 +72,7 @@ class TestPermissionMatrixCompleteness(unittest.TestCase):
         matrix = self.docs_matrix_data.get("matrix", {})
 
         self.assertEqual(len(roles), 7, f"Expected 7 roles, found {len(roles)}")
-        self.assertEqual(len(actions), 13, f"Expected 13 actions, found {len(actions)}")
+        self.assertEqual(len(actions), 14, f"Expected 14 actions, found {len(actions)}")
 
         total_cells = 0
         for r in roles:
@@ -91,8 +91,8 @@ class TestPermissionMatrixCompleteness(unittest.TestCase):
 
         self.assertEqual(
             total_cells,
-            91,
-            f"Expected exactly 91 explicit decisions (7 roles x 13 actions), counted {total_cells}",
+            98,
+            f"Expected exactly 98 explicit decisions (7 roles x 14 actions), counted {total_cells}",
         )
 
     def test_adding_action_without_decision_fails_completeness_check(self) -> None:

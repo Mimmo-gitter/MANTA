@@ -24,6 +24,7 @@ EXPECTED_ROLES = {
 EXPECTED_ACTIONS = {
     "VIEW_PROJECT_DORA",
     "VIEW_PORTFOLIO_OVERVIEW",
+    "INGEST_PROJECT_DEPLOYMENTS",
     "VIEW_SPRINT_BURNDOWN_WIP",
     "RECEIVE_SCOPE_CREEP_ALERT",
     "REASSIGN_PR_REVIEWER_MOBILE",
@@ -123,13 +124,13 @@ class TestRolePermissionsMatrix(unittest.TestCase):
             self.assertTrue(role.get("source"), f"Missing source on {role}")
 
     def test_thirteen_actions_declared(self):
-        """Verify all thirteen platform actions across 5 domains are defined."""
+        """Verify all fourteen platform actions across 5 domains are defined."""
         actions = self.data.get("actions", [])
         action_ids = [a.get("id") for a in actions]
 
         # No duplicate action IDs
         self.assertEqual(len(action_ids), len(set(action_ids)), "Duplicate action IDs found")
-        # Exactly the 13 expected actions
+        # Exactly the 14 expected actions
         self.assertEqual(set(action_ids), EXPECTED_ACTIONS)
 
         # Check required fields on every action
@@ -183,7 +184,7 @@ class TestRolePermissionsMatrix(unittest.TestCase):
                 total_decisions += 1
 
         self.assertEqual(
-            total_decisions, 7 * 13, f"Expected 91 explicit decisions, counted {total_decisions}"
+            total_decisions, 7 * 14, f"Expected 98 explicit decisions, counted {total_decisions}"
         )
 
     def test_architecture_6_2_baseline_parity(self):
@@ -255,6 +256,7 @@ class TestRolePermissionsMatrix(unittest.TestCase):
         """
         tm_permissions = self.data["matrix"]["TOP_MANAGEMENT"]
         operational_actions = [
+            "INGEST_PROJECT_DEPLOYMENTS",
             "REASSIGN_PR_REVIEWER_MOBILE",
             "TRIGGER_REFACTOR_ANALYSIS",
             "APPROVE_ADR_TENANT_PRIVATE",
