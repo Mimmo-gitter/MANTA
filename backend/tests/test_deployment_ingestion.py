@@ -695,7 +695,8 @@ async def test_tc_dep_argo_001_postsync_production_success():
         ).scalar_one()
         assert contrib.provider == "argocd"
         assert contrib.external_actor_id == "sre-lead@acme.com"
-        assert contrib.raw_email == "sre-lead@acme.com"
+        assert contrib.raw_email.startswith("enc:v1:")
+        assert encryption_service.decrypt(contrib.raw_email) == "sre-lead@acme.com"
 
 
 @pytest.mark.asyncio
