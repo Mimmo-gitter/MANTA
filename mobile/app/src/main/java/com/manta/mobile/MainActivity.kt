@@ -17,10 +17,14 @@ import com.manta.mobile.core.security.BiometricPromptManager
 import com.manta.mobile.core.security.EncryptedStorage
 import com.manta.mobile.core.theme.ui.MobileTheme
 import com.manta.mobile.data.auth.AuthState
+import com.manta.mobile.data.auth.BiometricUnlockSubState
 import com.manta.mobile.features.auth.AuthRepository
+import com.manta.mobile.features.auth.BiometricUnlockScreen
 import com.manta.mobile.features.auth.PkceAuthManager
 import com.manta.mobile.features.auth.SignInScreen
 import com.manta.mobile.ui.navigation.NavShell
+import kotlin.time.Duration.Companion.milliseconds
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class MainActivity : FragmentActivity() {
@@ -28,6 +32,8 @@ class MainActivity : FragmentActivity() {
     private lateinit var encryptedStorage: EncryptedStorage
     private lateinit var authRepository: AuthRepository
     private lateinit var biometricPromptManager: BiometricPromptManager
+
+    private var failedAttemptCount = 0
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -58,21 +64,38 @@ class MainActivity : FragmentActivity() {
             biometricPromptManager.promptResults.collect { result ->
                 when (result) {
                     is BiometricPromptManager.BiometricResult.AuthenticationSuccess -> {
+                        failedAttemptCount = 0
+                        authRepository.updateBiometricSubState(BiometricUnlockSubState.Success)
+                        delay(1000.milliseconds)
                         authRepository.unlockSession()
                     }
                     is BiometricPromptManager.BiometricResult.AuthenticationError -> {
-                        Toast.makeText(
-                            this@MainActivity,
-                            "Biometric failed: ${result.error}",
-                            Toast.LENGTH_SHORT
-                        ).show()
+                        failedAttemptCount++
+                        val attemptsLeft = (3 - failedAttemptCount).coerceAtLeast(0)
+                        if (attemptsLeft == 0 ||
+                            result.error.contains("lockout", ignoreCase = true)
+                        ) {
+                            authRepository.updateBiometricSubState(
+                                BiometricUnlockSubState.Unavailable
+                            )
+                        } else {
+                            authRepository.updateBiometricSubState(
+                                BiometricUnlockSubState.Failed(attemptsLeft)
+                            )
+                        }
                     }
                     BiometricPromptManager.BiometricResult.AuthenticationFailed -> {
-                        Toast.makeText(
-                            this@MainActivity,
-                            "Authentication failed",
-                            Toast.LENGTH_SHORT
-                        ).show()
+                        failedAttemptCount++
+                        val attemptsLeft = (3 - failedAttemptCount).coerceAtLeast(0)
+                        if (attemptsLeft == 0) {
+                            authRepository.updateBiometricSubState(
+                                BiometricUnlockSubState.Unavailable
+                            )
+                        } else {
+                            authRepository.updateBiometricSubState(
+                                BiometricUnlockSubState.Failed(attemptsLeft)
+                            )
+                        }
                     }
                 }
             }
@@ -82,7 +105,7 @@ class MainActivity : FragmentActivity() {
             val authState by authRepository.authState.collectAsState()
 
             MobileTheme {
-                when (authState) {
+                when (val state = authState) {
                     is AuthState.Unauthenticated, is AuthState.ReauthRequired -> {
                         SignInScreen(
                             onBiometricUnlockClick = { triggerBiometricUnlock() }
@@ -90,10 +113,32 @@ class MainActivity : FragmentActivity() {
                     }
                     is AuthState.LockedRequiresBiometric -> {
                         LaunchedEffect(Unit) {
-                            triggerBiometricUnlock()
+                            if (state.subState == BiometricUnlockSubState.Ready) {
+                                triggerBiometricUnlock()
+                            }
                         }
-                        SignInScreen(
-                            onBiometricUnlockClick = { triggerBiometricUnlock() }
+                        BiometricUnlockScreen(
+                            userName = state.userName,
+                            userEmail = state.userEmail,
+                            primaryRole = state.primaryRole,
+                            subState = state.subState,
+                            onRetryClick = {
+                                authRepository.updateBiometricSubState(
+                                    BiometricUnlockSubState.Ready
+                                )
+                                triggerBiometricUnlock()
+                            },
+                            onSwitchClick = {
+                                lifecycleScope.launch {
+                                    authRepository.logout()
+                                }
+                            },
+                            onSsoClick = {
+                                lifecycleScope.launch {
+                                    authRepository.logout()
+                                    PkceAuthManager.launchOidcFlow(this@MainActivity)
+                                }
+                            }
                         )
                     }
                     is AuthState.Authenticated -> {
@@ -121,20 +166,23 @@ class MainActivity : FragmentActivity() {
     private fun triggerBiometricUnlock() {
         when (val status = biometricPromptManager.canAuthenticate()) {
             is BiometricPromptManager.BiometricStatus.Ready -> {
+                authRepository.updateBiometricSubState(BiometricUnlockSubState.Verifying)
                 biometricPromptManager.showBiometricPrompt(
                     title = "Unlock MANTA Workspace",
                     description = "Scan your fingerprint or face to proceed"
                 )
             }
             is BiometricPromptManager.BiometricStatus.NotEnrolled -> {
+                authRepository.updateBiometricSubState(BiometricUnlockSubState.Unavailable)
                 Toast.makeText(
                     this,
-                    "No biometric/PIN enrolled. Please set up device lock in the settings.",
-                    Toast.LENGTH_LONG
+                    "No biometric/PIN enrolled on this device. Please set up device lock in the settings.",
+                    Toast.LENGTH_SHORT
                 ).show()
             }
             is BiometricPromptManager.BiometricStatus.FeatureUnavailable,
             is BiometricPromptManager.BiometricStatus.HardwareUnavailable -> {
+                authRepository.updateBiometricSubState(BiometricUnlockSubState.Unavailable)
                 Toast.makeText(
                     this,
                     "Biometric hardware unavailable on this device.",
@@ -142,9 +190,10 @@ class MainActivity : FragmentActivity() {
                 ).show()
             }
             else -> {
+                authRepository.updateBiometricSubState(BiometricUnlockSubState.Unavailable)
                 Toast.makeText(
                     this,
-                    "Biometric authentication status: $status",
+                    "Biometric status: $status",
                     Toast.LENGTH_SHORT
                 ).show()
             }

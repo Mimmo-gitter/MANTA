@@ -1,6 +1,5 @@
 package com.manta.mobile.features.auth
 
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -23,7 +22,6 @@ import androidx.compose.material.icons.filled.AlternateEmail
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Card
@@ -46,15 +44,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import com.manta.mobile.R
 import com.manta.mobile.core.theme.ui.AppBackground
 import com.manta.mobile.core.theme.ui.Danger
 import com.manta.mobile.core.theme.ui.DarkSurface
@@ -63,7 +58,9 @@ import com.manta.mobile.core.theme.ui.Primary
 import com.manta.mobile.core.theme.ui.Secondary
 import com.manta.mobile.core.theme.ui.SecondaryLight
 import com.manta.mobile.core.theme.ui.TextLight
+import com.manta.mobile.ui.Logo
 import com.manta.mobile.ui.PrimaryButton
+import com.manta.mobile.ui.ProtectedBadge
 
 @Preview
 @Composable
@@ -94,11 +91,7 @@ fun SignInScreen(onBiometricUnlockClick: () -> Unit = {}) {
             verticalArrangement = Arrangement.Center
         ) {
             Spacer(modifier = Modifier.height(24.dp))
-            Image(
-                painter = painterResource(id = R.drawable.manta_logo),
-                contentDescription = "M.A.N.T.A. Logo",
-                modifier = Modifier.size(100.dp)
-            )
+            Logo()
             Spacer(modifier = Modifier.height(16.dp))
 
             Text(
@@ -112,8 +105,8 @@ fun SignInScreen(onBiometricUnlockClick: () -> Unit = {}) {
             Text(
                 text = "Start creating your team projects with " +
                     "AI-Augmented Engineering Intelligence Platform",
-                style = MaterialTheme.typography.bodyMedium,
-                color = GrayText,
+                style = MaterialTheme.typography.bodySmall,
+                color = TextLight,
                 textAlign = TextAlign.Center,
                 modifier = Modifier.padding(horizontal = 16.dp)
             )
@@ -334,26 +327,7 @@ fun SignInScreen(onBiometricUnlockClick: () -> Unit = {}) {
             }
 
             Spacer(modifier = Modifier.height(16.dp))
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .background(Color(0xFF181B26), shape = RoundedCornerShape(16.dp))
-                    .padding(horizontal = 12.dp, vertical = 6.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Shield,
-                    contentDescription = null,
-                    tint = Primary,
-                    modifier = Modifier.size(16.dp)
-                )
-                Spacer(modifier = Modifier.width(6.dp))
-                Text(
-                    text = "Protected by M.A.N.T.A. team",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = TextLight,
-                    fontSize = 11.sp
-                )
-            }
+            ProtectedBadge()
 
             Spacer(modifier = Modifier.height(32.dp))
         }

@@ -64,8 +64,8 @@ class AuthRepositoryTest {
         encryptedStorage.writeString("auth_access_token", mockAccessToken)
 
         val state = authRepository.checkInitialAuthState()
-        assertEquals(AuthState.LockedRequiresBiometric, state)
-        assertEquals(AuthState.LockedRequiresBiometric, authRepository.authState.value)
+        assertTrue(state is AuthState.LockedRequiresBiometric)
+        assertTrue(authRepository.authState.value is AuthState.LockedRequiresBiometric)
     }
 
     @Test
