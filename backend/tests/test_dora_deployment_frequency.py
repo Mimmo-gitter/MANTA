@@ -61,6 +61,36 @@ def test_acceptance_criteria_14_day_excludes_staging_and_failed():
     assert counts_by_date[(window_end - timedelta(days=2)).date()] == 0
 
 
+def test_acceptance_criteria_30_day_window_with_same_fixture_yields_point_twenty():
+    """Same 6 successful prod, 3 staging, 1 failed prod over 30 days -> 6 / 30 = 0.20 deployments/day."""
+    window_end = datetime(2026, 11, 13, 12, 0, 0, tzinfo=timezone.utc)
+    deployments = [
+        # 6 successful production deployments
+        _make_deployment(deployed_at=window_end - timedelta(days=1)),
+        _make_deployment(deployed_at=window_end - timedelta(days=1, hours=2)),
+        _make_deployment(deployed_at=window_end - timedelta(days=4)),
+        _make_deployment(deployed_at=window_end - timedelta(days=7)),
+        _make_deployment(deployed_at=window_end - timedelta(days=10)),
+        _make_deployment(deployed_at=window_end - timedelta(days=13)),
+        # 3 staging deployments (excluded)
+        _make_deployment(environment="staging", deployed_at=window_end - timedelta(days=2)),
+        _make_deployment(environment="staging", deployed_at=window_end - timedelta(days=5)),
+        _make_deployment(environment="staging", deployed_at=window_end - timedelta(days=8)),
+        # 1 failed production deployment (excluded)
+        _make_deployment(status="FAILED", deployed_at=window_end - timedelta(days=3)),
+        # 1 rolled-back production deployment (excluded)
+        _make_deployment(status="ROLLED_BACK", deployed_at=window_end - timedelta(days=6)),
+    ]
+
+    result = compute_deployment_frequency(deployments, window_days=30, window_end=window_end)
+
+    assert result.window_days == 30
+    assert result.successful_deployment_count == 6
+    assert result.deployments_per_day == 0.20
+    assert len(result.daily_series) == 30
+    assert sum(bucket.count for bucket in result.daily_series) == 6
+
+
 def test_30_day_rolling_window_and_boundary_exclusions():
     window_end = datetime(2026, 11, 13, 12, 0, 0, tzinfo=timezone.utc)
     deployments = [
@@ -81,12 +111,19 @@ def test_30_day_rolling_window_and_boundary_exclusions():
 def test_zero_deployments_returns_zero_rate_and_zero_series():
     window_end = datetime(2026, 11, 13, 12, 0, 0, tzinfo=timezone.utc)
 
-    result = compute_deployment_frequency([], window_days=14, window_end=window_end)
+    result_14 = compute_deployment_frequency([], window_days=14, window_end=window_end)
+    assert result_14.successful_deployment_count == 0
+    assert result_14.deployments_per_day == 0.0
+    assert result_14.deployments_per_day is not None
+    assert len(result_14.daily_series) == 14
+    assert all(bucket.count == 0 for bucket in result_14.daily_series)
 
-    assert result.successful_deployment_count == 0
-    assert result.deployments_per_day == 0.0
-    assert len(result.daily_series) == 14
-    assert all(bucket.count == 0 for bucket in result.daily_series)
+    result_30 = compute_deployment_frequency([], window_days=30, window_end=window_end)
+    assert result_30.successful_deployment_count == 0
+    assert result_30.deployments_per_day == 0.0
+    assert result_30.deployments_per_day is not None
+    assert len(result_30.daily_series) == 30
+    assert all(bucket.count == 0 for bucket in result_30.daily_series)
 
 
 def test_unsupported_window_days_raises_value_error():
