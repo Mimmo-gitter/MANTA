@@ -28,7 +28,7 @@ from httpx import ASGITransport, AsyncClient
 import jwt
 from jwt.algorithms import RSAAlgorithm
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 
 from app.auth.jwks import JWKSClient
@@ -1496,7 +1496,7 @@ async def test_tc_dep_dir_006_rbac_and_abac_permission_enforcement(_mock_auth_ct
                 tenant_id=tenant_id,
                 project_id=project_id,
                 user_id=user_id,
-                role="PROJECT_MANAGER",
+                project_role="PROJECT_MANAGER",
             )
         )
 
@@ -1729,9 +1729,11 @@ async def test_tc_dep_dora_002_dynamic_signal_switch(_mock_auth_ctx):
 
     # Switch project authoritative signal to direct_deployment_api
     async with get_tenant_db_context(tenant_id) as db:
-        proj = await db.get(Project, project_id)
-        assert proj is not None
-        proj.authoritative_cd_signal = "direct_deployment_api"
+        await db.execute(
+            update(Project)
+            .where(Project.tenant_id == tenant_id, Project.id == project_id)
+            .values(authoritative_cd_signal="direct_deployment_api")
+        )
 
     # Phase 2: direct_deployment_api is authoritative
     async with get_tenant_db_context(tenant_id) as db:
