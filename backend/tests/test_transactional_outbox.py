@@ -91,7 +91,7 @@ async def create_test_project(tenant_id: uuid.UUID, name: str = "Outbox Project"
 async def create_test_deployment(
     tenant_id: uuid.UUID,
     project_id: uuid.UUID,
-    initial_status: str = "PENDING",
+    initial_status: str = "SUCCESS",
 ) -> uuid.UUID:
     """Creates a complete repo, commit, and deployment hierarchy in specified status."""
     deployment_id = uuid.uuid4()
@@ -162,7 +162,7 @@ async def test_atomic_dual_commit_deployment_failure():
     """
     tenant_id, _ = await register_test_tenant("tx-outbox-dual")
     project_id = await create_test_project(tenant_id)
-    deployment_id = await create_test_deployment(tenant_id, project_id, initial_status="PENDING")
+    deployment_id = await create_test_deployment(tenant_id, project_id, initial_status="SUCCESS")
 
     # 1. Execute atomic deployment failure mutation + outbox event staging in active session
     async with get_tenant_db_context(tenant_id) as session:
@@ -237,7 +237,7 @@ async def test_rollback_on_simulated_exception_before_commit():
     """
     tenant_id, _ = await register_test_tenant("tx-outbox-sim-err")
     project_id = await create_test_project(tenant_id)
-    deployment_id = await create_test_deployment(tenant_id, project_id, initial_status="PENDING")
+    deployment_id = await create_test_deployment(tenant_id, project_id, initial_status="SUCCESS")
 
     # 1. Capture baseline counts before initiating the mutation
     async with get_tenant_db_context(tenant_id) as session:
@@ -326,10 +326,10 @@ async def test_rollback_on_simulated_exception_before_commit():
         ).scalar()
         assert staged_row_count == 0
 
-        # Verify deployment domain record status remained PENDING (not FAILED)
+        # Verify deployment domain record status remained SUCCESS (not FAILED)
         refreshed_dep = await session.get(Deployment, deployment_id)
         assert refreshed_dep is not None
-        assert refreshed_dep.status == "PENDING"
+        assert refreshed_dep.status == "SUCCESS"
         assert refreshed_dep.is_change_failure is False
 
         # Verify outbox event record is None
@@ -345,7 +345,7 @@ async def test_rollback_on_database_constraint_error():
     """
     tenant_id, _ = await register_test_tenant("tx-outbox-dberr")
     project_id = await create_test_project(tenant_id)
-    deployment_id = await create_test_deployment(tenant_id, project_id, initial_status="PENDING")
+    deployment_id = await create_test_deployment(tenant_id, project_id, initial_status="SUCCESS")
 
     staged_outbox_id = None
     try:
@@ -397,7 +397,7 @@ async def test_rollback_on_database_constraint_error():
 
         dep = await session.get(Deployment, deployment_id)
         assert dep is not None
-        assert dep.status == "PENDING"
+        assert dep.status == "SUCCESS"
         assert dep.is_change_failure is False
 
 

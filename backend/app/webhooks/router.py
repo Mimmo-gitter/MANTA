@@ -92,7 +92,7 @@ async def ingest_webhook_by_provider(
     SCRUM-331: Returns HTTP 503 with Retry-After if database is unavailable.
     """
     prov = provider.lower().strip()
-    if prov not in {"github", "jira", "slack", "generic"}:
+    if prov not in {"github", "jira", "slack", "argocd", "generic"}:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Unsupported webhook provider '{provider}'",
@@ -100,8 +100,21 @@ async def ingest_webhook_by_provider(
 
     payload, raw_body, raw_payload_json = await _read_request_data(request)
 
-    # 1. Optional signature verification if explicit secret is provided
-    if x_webhook_secret:
+    # 1. Fail-closed HMAC authentication for ArgoCD; header-triggered for legacy providers
+    if prov == "argocd":
+        if not x_webhook_secret:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Missing X-Webhook-Secret header for ArgoCD webhook authentication",
+                headers={"WWW-Authenticate": "WebhookSignature"},
+            )
+        verify_signature_for_provider(
+            provider=prov,
+            secret=x_webhook_secret,
+            raw_body=raw_body,
+            headers=request.headers,
+        )
+    elif x_webhook_secret:
         verify_signature_for_provider(
             provider=prov,
             secret=x_webhook_secret,
@@ -135,9 +148,11 @@ async def ingest_webhook_by_provider(
     event_type = (
         request.headers.get("x-github-event")
         or request.headers.get("x-atlassian-webhook-event")
+        or request.headers.get("x-argocd-event")
+        or payload.get("hookType")
         or payload.get("event_type")
         or payload.get("type")
-        or "webhook"
+        or ("postsync" if prov == "argocd" else "webhook")
     )
 
     # 5. Idempotently stage event into database under tenant context (SCRUM-331 resilient)
@@ -237,6 +252,13 @@ def _verify_and_extract_for_integration(
     provider: str = row["provider"]
     secret_hash: str | None = row.get("webhook_secret_hash")
 
+    if provider.lower().strip() == "argocd" and not secret_hash:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing configured webhook secret for ArgoCD integration",
+            headers={"WWW-Authenticate": "WebhookSignature"},
+        )
+
     if secret_hash:
         raw_secret = secret_hash
         if encryption_service.is_encrypted(secret_hash):
@@ -274,9 +296,11 @@ def _verify_and_extract_for_integration(
     event_type = (
         request.headers.get("x-github-event")
         or request.headers.get("x-atlassian-webhook-event")
+        or request.headers.get("x-argocd-event")
+        or payload.get("hookType")
         or payload.get("event_type")
         or payload.get("type")
-        or "webhook"
+        or ("postsync" if provider.lower().strip() == "argocd" else "webhook")
     )
     return tenant_id, provider, delivery_id, str(event_type)[:64]
 

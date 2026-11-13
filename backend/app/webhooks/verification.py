@@ -186,6 +186,50 @@ def verify_slack_signature(
         )
 
 
+def verify_argocd_signature(
+    secret: str,
+    raw_body: bytes,
+    headers: Mapping[str, str],
+) -> None:
+    """
+    SRS §3.1.4 / §3.2.2: Verifies ArgoCD webhook HMAC-SHA256 payload signature
+    fail-closed using constant-time hmac.compare_digest.
+    Accepts X-Hub-Signature-256, X-ArgoCD-Signature, or X-Webhook-Signature.
+    """
+    signature_header = (
+        _get_header(headers, "X-Hub-Signature-256")
+        or _get_header(headers, "X-ArgoCD-Signature")
+        or _get_header(headers, "X-Webhook-Signature")
+    )
+    if not signature_header:
+        logger.warning("ArgoCD webhook missing signature header")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing ArgoCD webhook signature header",
+            headers={"WWW-Authenticate": "WebhookSignature"},
+        )
+
+    computed_mac = hmac.new(
+        secret.encode("utf-8"),
+        raw_body,
+        hashlib.sha256,
+    ).hexdigest()
+    expected_sig = f"sha256={computed_mac}"
+
+    if signature_header.startswith("sha256="):
+        valid = hmac.compare_digest(signature_header, expected_sig)
+    else:
+        valid = hmac.compare_digest(signature_header, computed_mac)
+
+    if not valid:
+        logger.warning("ArgoCD webhook signature verification failed")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid ArgoCD webhook signature",
+            headers={"WWW-Authenticate": "WebhookSignature"},
+        )
+
+
 def verify_signature_for_provider(
     provider: str,
     secret: str,
@@ -200,6 +244,8 @@ def verify_signature_for_provider(
         verify_jira_signature(secret, raw_body, headers)
     elif prov == "slack":
         verify_slack_signature(secret, raw_body, headers)
+    elif prov == "argocd":
+        verify_argocd_signature(secret, raw_body, headers)
     elif prov == "generic":
         signature_header = _get_header(headers, "X-Hub-Signature-256") or _get_header(
             headers, "X-Webhook-Signature"
@@ -219,3 +265,9 @@ def verify_signature_for_provider(
                     detail="Invalid generic webhook signature",
                     headers={"WWW-Authenticate": "WebhookSignature"},
                 )
+    else:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail=f"Unsupported webhook provider '{provider}'",
+            headers={"WWW-Authenticate": "WebhookSignature"},
+        )

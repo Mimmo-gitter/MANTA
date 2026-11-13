@@ -35,10 +35,11 @@ class Role(StrEnum):
 
 
 class Permission(StrEnum):
-    """The thirteen platform actions defined in the role-permission matrix."""
+    """The fourteen platform actions defined in the role-permission matrix."""
 
     VIEW_PROJECT_DORA = "VIEW_PROJECT_DORA"
     VIEW_PORTFOLIO_OVERVIEW = "VIEW_PORTFOLIO_OVERVIEW"
+    INGEST_PROJECT_DEPLOYMENTS = "INGEST_PROJECT_DEPLOYMENTS"
     VIEW_SPRINT_BURNDOWN_WIP = "VIEW_SPRINT_BURNDOWN_WIP"
     RECEIVE_SCOPE_CREEP_ALERT = "RECEIVE_SCOPE_CREEP_ALERT"
     REASSIGN_PR_REVIEWER_MOBILE = "REASSIGN_PR_REVIEWER_MOBILE"

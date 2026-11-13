@@ -44,7 +44,9 @@ class TestMigrationsCICheck(unittest.TestCase):
         subsequent_renamed_cols: dict[tuple[str, str], str] = {}
         subsequent_pk_cols: dict[str, list[str]] = {}
         subsequent_indexes: set[tuple[str, str]] = set()
-        subsequent_fk_cols: set[tuple[str, str]] = set()
+        subsequent_fk_signatures: set[tuple[str, tuple[str, ...], tuple[str, ...]]] = set()
+        subsequent_fk_elements: set[tuple[str, str, str]] = set()
+        subsequent_dropped_fks: set[tuple[str, str]] = set()
         versions_dir = BACKEND_DIR / "migrations" / "versions"
         if versions_dir.exists():
             for vfile in sorted(versions_dir.glob("*.py")):
@@ -107,11 +109,46 @@ class TestMigrationsCICheck(unittest.TestCase):
                                     and len(sub_stmt.value.args) >= 5
                                 ):
                                     src_table = getattr(sub_stmt.value.args[1], "value", None)
+                                    ref_table = getattr(sub_stmt.value.args[2], "value", None)
                                     loc_cols_arg = sub_stmt.value.args[3]
-                                    if isinstance(loc_cols_arg, ast.List):
-                                        for elt in loc_cols_arg.elts:
-                                            if hasattr(elt, "value"):
-                                                subsequent_fk_cols.add((src_table, elt.value))
+                                    ref_cols_arg = sub_stmt.value.args[4]
+                                    if (
+                                        src_table
+                                        and ref_table
+                                        and isinstance(loc_cols_arg, ast.List)
+                                        and isinstance(ref_cols_arg, ast.List)
+                                    ):
+                                        loc_cols = tuple(
+                                            elt.value
+                                            for elt in loc_cols_arg.elts
+                                            if hasattr(elt, "value")
+                                        )
+                                        target_refs = tuple(
+                                            f"{ref_table}.{elt.value}"
+                                            for elt in ref_cols_arg.elts
+                                            if hasattr(elt, "value")
+                                        )
+                                        subsequent_fk_signatures.add(
+                                            (src_table, loc_cols, target_refs)
+                                        )
+                                        for lcol, tref in zip(loc_cols, target_refs):
+                                            subsequent_fk_elements.add((src_table, lcol, tref))
+                                elif (
+                                    sub_attr == "drop_constraint"
+                                    and len(sub_stmt.value.args) >= 2
+                                ):
+                                    cstr_name = getattr(sub_stmt.value.args[0], "value", None)
+                                    tname_arg = getattr(sub_stmt.value.args[1], "value", None)
+                                    cstr_type = next(
+                                        (
+                                            getattr(kw.value, "value", None)
+                                            for kw in sub_stmt.value.keywords
+                                            if kw.arg == "type_"
+                                        ),
+                                        None,
+                                    )
+                                    if cstr_name and tname_arg and cstr_type == "foreignkey":
+                                        subsequent_dropped_fks.add((tname_arg, cstr_name))
 
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef) and node.name == "upgrade":
@@ -146,7 +183,9 @@ class TestMigrationsCICheck(unittest.TestCase):
                                     kw = {k.arg: k.value.value for k in arg.keywords}
                                     cols = tuple(e.value for e in arg.args[0].elts)
                                     refs = tuple(e.value for e in arg.args[1].elts)
-                                    mig_fks.append((cols, refs, kw.get("ondelete")))
+                                    fk_name = kw.get("name") or f"{tname}_{'_'.join(cols)}_fkey"
+                                    if (tname, fk_name) not in subsequent_dropped_fks:
+                                        mig_fks.append((cols, refs, kw.get("ondelete")))
 
                             evolved_mig_cols = {
                                 subsequent_renamed_cols.get((tname, cname), cname): nullable
@@ -181,10 +220,12 @@ class TestMigrationsCICheck(unittest.TestCase):
                                 )
                                 for cstr in table.constraints
                                 if isinstance(cstr, ForeignKeyConstraint)
-                                and not any(
-                                    (tname, fk.parent.name) in subsequent_fk_cols
-                                    for fk in cstr.elements
+                                and (
+                                    tname,
+                                    tuple(fk.parent.name for fk in cstr.elements),
+                                    tuple(fk.target_fullname for fk in cstr.elements),
                                 )
+                                not in subsequent_fk_signatures
                             ]
                             self.assertEqual(set(mig_fks), set(model_fks), f"FK diff in {tname}")
 
@@ -229,7 +270,7 @@ class TestMigrationsCICheck(unittest.TestCase):
         created: set[str] = set()
         for tname in upgrade_tables:
             for fk in Base.metadata.tables[tname].foreign_keys:
-                if (tname, fk.parent.name) in subsequent_fk_cols:
+                if (tname, fk.parent.name, fk.target_fullname) in subsequent_fk_elements:
                     continue
                 target_table = fk.column.table.name
                 if target_table != tname:
@@ -246,7 +287,7 @@ class TestMigrationsCICheck(unittest.TestCase):
             remaining.remove(tname)
             for other in remaining:
                 for fk in Base.metadata.tables[other].foreign_keys:
-                    if (other, fk.parent.name) in subsequent_fk_cols:
+                    if (other, fk.parent.name, fk.target_fullname) in subsequent_fk_elements:
                         continue
                     self.assertNotEqual(
                         fk.column.table.name,

@@ -7,6 +7,7 @@ from app.adr import adr_router
 from app.auth import JWKSClient, JWTAuthMiddleware, auth_router
 from app.config import settings
 from app.dead_letters import dead_letters_router
+from app.deployments import deployments_router
 from app.dora import dora_router
 from app.integrations import integrations_router
 from app.projects import projects_router
@@ -67,6 +68,7 @@ app.include_router(members_router)
 # Include stub endpoints for future iteration actions (SCRUM-308)
 app.include_router(dora_router)
 app.include_router(projects_router)
+app.include_router(deployments_router)
 app.include_router(refactoring_router)
 app.include_router(search_router)
 app.include_router(adr_router)

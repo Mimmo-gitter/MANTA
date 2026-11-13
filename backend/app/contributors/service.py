@@ -18,6 +18,7 @@ from typing import Any, Dict, Optional
 import uuid
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Contributor
@@ -119,8 +120,18 @@ async def resolve_or_create_contributor_pseudonym(
         salt_secret=encrypted_salt,
         is_erased=False,
     )
-    db.add(contributor)
-    await db.flush()
+    try:
+        async with db.begin_nested():
+            db.add(contributor)
+            await db.flush()
+    except IntegrityError:
+        # Concurrent delivery inserted the same (tenant_id, provider, external_actor_id);
+        # re-select the committed winner inside the outer transaction.
+        existing_res = await db.execute(stmt)
+        existing_winner = existing_res.scalar_one_or_none()
+        if existing_winner is None:
+            raise
+        return existing_winner.pseudonym_id
 
     return pseudonym_id
 

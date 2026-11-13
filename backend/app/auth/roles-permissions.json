@@ -85,6 +85,17 @@
       "source": "SRS §2.3, §3.2.1.4"
     },
     {
+      "id": "INGEST_PROJECT_DEPLOYMENTS",
+      "domain": "DORA & Delivery Analytics",
+      "description": "Ingest production and non-production deployment outcome events directly into an assigned tenant project via REST API.",
+      "preconditions": [
+        "Authenticated tenant context verified via JWT",
+        "Authorized role or CI/CD automation credential verified",
+        "Target project belongs to authenticated tenant and user is authorized"
+      ],
+      "source": "SRS §2.4.2, §3.2.1, §3.2.3"
+    },
+    {
       "id": "VIEW_SPRINT_BURNDOWN_WIP",
       "domain": "Sprint & Risk Management",
       "description": "Monitor team velocity, sprint burndown charts, and Work In Progress (WIP) limit congestion.",
@@ -285,6 +296,13 @@
         "condition": null,
         "needs_ba_review": false,
         "notes": "Tenant administration privilege reserved for Tenant Admin."
+      },
+      "INGEST_PROJECT_DEPLOYMENTS": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Direct deployment ingestion is restricted to Tenant Admin / CI automation principals."
       }
     },
     "SCRUM_MASTER": {
@@ -378,6 +396,13 @@
         "condition": null,
         "needs_ba_review": false,
         "notes": "Tenant administration privilege reserved for Tenant Admin."
+      },
+      "INGEST_PROJECT_DEPLOYMENTS": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Direct deployment ingestion is restricted to Tenant Admin / CI automation principals."
       }
     },
     "PROJECT_MANAGER": {
@@ -471,6 +496,13 @@
         "condition": null,
         "needs_ba_review": false,
         "notes": "Tenant administration privilege reserved for Tenant Admin."
+      },
+      "INGEST_PROJECT_DEPLOYMENTS": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Direct deployment ingestion is restricted to Tenant Admin / CI automation principals."
       }
     },
     "SOLUTION_ARCHITECT": {
@@ -564,6 +596,13 @@
         "condition": null,
         "needs_ba_review": false,
         "notes": "Tenant administration privilege reserved for Tenant Admin."
+      },
+      "INGEST_PROJECT_DEPLOYMENTS": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Direct deployment ingestion is restricted to Tenant Admin / CI automation principals."
       }
     },
     "DELIVERY_DIRECTOR": {
@@ -657,6 +696,13 @@
         "condition": null,
         "needs_ba_review": false,
         "notes": "Tenant administration privilege reserved for Tenant Admin."
+      },
+      "INGEST_PROJECT_DEPLOYMENTS": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Direct deployment ingestion is restricted to Tenant Admin / CI automation principals."
       }
     },
     "TOP_MANAGEMENT": {
@@ -750,6 +796,13 @@
         "condition": null,
         "needs_ba_review": false,
         "notes": "Tenant administration privilege reserved for Tenant Admin."
+      },
+      "INGEST_PROJECT_DEPLOYMENTS": {
+        "decision": "DENY",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Top Management maintains strategic read-only oversight; direct deployment ingestion is denied."
       }
     },
     "TENANT_ADMIN": {
@@ -843,6 +896,13 @@
         "condition": null,
         "needs_ba_review": false,
         "notes": "Manages user invitations, role assignments, and executes GDPR Article 17 erasure requests."
+      },
+      "INGEST_PROJECT_DEPLOYMENTS": {
+        "decision": "ALLOW",
+        "source": "SRS_DERIVED",
+        "condition": null,
+        "needs_ba_review": false,
+        "notes": "Authorized to ingest deployment outcomes directly via REST API or CI/CD automation principals."
       }
     }
   }
