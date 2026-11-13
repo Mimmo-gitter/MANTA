@@ -3,11 +3,12 @@
 **Parent User Story:** US-27 — DORA Deployment Frequency  
 **Task:** Task 27.1 (Design / SCRUM-438)  
 **Is Blocked By:** Task 25.1 ([Production Deployment Ingestion Pipeline](deployment-ingestion-pipeline.md))  
-**Blocks / Enables:** Task 27.2, Task 27.3, Task 30.1  
+**Blocks / Enables:** Task 27.2 ([Implementation](../backend/app/dora/service.py)), Task 27.3 ([Test Scenarios](dora-deployment-frequency-test-scenarios.md)), Task 30.1  
 **Authoritative References:**
 - M.A.N.T.A. Software Requirements Specification (SRS) V1.0 (§3.2.1, §3.2.2)
 - [Production Deployment Ingestion Pipeline](deployment-ingestion-pipeline.md) (Task 25.1)
-- [Authoritative Deployment Query](file:///c:/Users/idusc/Desktop/MANTA/dev/backend/app/deployments/service.py#L415-L459) (`build_authoritative_production_deployments_query`)
+- [Deployment Frequency Test Scenarios](dora-deployment-frequency-test-scenarios.md) (Task 27.3 / SCRUM-440)
+- [Authoritative Deployment Query](../backend/app/deployments/service.py) (`build_authoritative_production_deployments_query`)
 
 ---
 
