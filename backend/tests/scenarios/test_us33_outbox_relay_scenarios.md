@@ -561,7 +561,11 @@ assert redis.calls[0]["fields"]["event_id"] == original_event_id
 assert published_count == 1
 assert row.published_at is not None
 assert len(redis.calls) == 2
-assert redis.calls[0]["fields"]["event_id"] == redis.calls[1]["fields"]["event_id"] == original_event_id
+assert (
+    redis.calls[0]["fields"]["event_id"]
+    == redis.calls[1]["fields"]["event_id"]
+    == original_event_id
+)
 ```
 
 ---
@@ -771,7 +775,9 @@ assert set(worker_a_rows) | set(worker_b_rows) == set(all_event_ids)
 
 #### 5.8.4 Verification Assertions
 ```python
-assert (consumer_1_claimed and not consumer_2_claimed) or (consumer_2_claimed and not consumer_1_claimed)
+assert (consumer_1_claimed and not consumer_2_claimed) or (
+    consumer_2_claimed and not consumer_1_claimed
+)
 assert total_handler_executions == 1
 assert await get_processed_outbox_count(tenant_id, event_id) == 1
 ```
@@ -938,8 +944,12 @@ python -m pytest backend/tests/test_outbox_relay.py backend/tests/test_outbox_co
 from app.outbox.consumer import OUTBOX_DUPLICATE_SKIP_COUNTER
 
 # Verify Prometheus metrics counters are incremented on duplicates
-redis_skips = OUTBOX_DUPLICATE_SKIP_COUNTER.labels(tier="redis", event_type="deployment.failed")._value.get()
-postgres_skips = OUTBOX_DUPLICATE_SKIP_COUNTER.labels(tier="postgres", event_type="deployment.failed")._value.get()
+redis_skips = OUTBOX_DUPLICATE_SKIP_COUNTER.labels(
+    tier="redis", event_type="deployment.failed"
+)._value.get()
+postgres_skips = OUTBOX_DUPLICATE_SKIP_COUNTER.labels(
+    tier="postgres", event_type="deployment.failed"
+)._value.get()
 assert redis_skips >= 1
 assert postgres_skips >= 1
 ```
