@@ -409,7 +409,9 @@ assert row["status"] == "queued"
 
 # 3. Non-blocking queue assertion
 assert len(processed_valid_jobs) == 5
-assert max(v_completion_times) < (t_0 + 1.0)  # Valid jobs completed in < 1s, never blocked by 2s delay
+assert max(v_completion_times) < (
+    t_0 + 1.0
+)  # Valid jobs completed in < 1s, never blocked by 2s delay
 ```
 
 ---
@@ -890,14 +892,17 @@ assert [j["job_id"] for j in executed_jobs[1:51]] == [j["job_id"] for j in defau
 
 #### 5.13.3 Automated Pytest Parametrization
 ```python
-@pytest.mark.parametrize("role", [
-    "DEVELOPER",
-    "SCRUM_MASTER",
-    "PROJECT_MANAGER",
-    "SOLUTION_ARCHITECT",
-    "DELIVERY_DIRECTOR",
-    "TOP_MANAGEMENT",
-])
+@pytest.mark.parametrize(
+    "role",
+    [
+        "DEVELOPER",
+        "SCRUM_MASTER",
+        "PROJECT_MANAGER",
+        "SOLUTION_ARCHITECT",
+        "DELIVERY_DIRECTOR",
+        "TOP_MANAGEMENT",
+    ],
+)
 async def test_dlq_endpoints_forbidden_for_all_non_admins(auth_context, role: str):
     headers = {"Authorization": f"Bearer {mint_jwt(auth_context, TENANT_A, roles=[role])}"}
     fake_id = uuid.uuid4()
