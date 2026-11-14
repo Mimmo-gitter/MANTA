@@ -113,10 +113,14 @@ async def test_register_tenant_provisions_keycloak_user_industry_and_invites():
     app.dependency_overrides[get_db] = _override_get_db
     try:
         with (
-            mock.patch("app.tenants.router.create_user", new=mock.AsyncMock(return_value="kc-sub-99")) as m_kc,
+            mock.patch(
+                "app.tenants.router.create_user", new=mock.AsyncMock(return_value="kc-sub-99")
+            ) as m_kc,
             mock.patch("app.tenants.router.delete_user", new=mock.AsyncMock()) as m_del,
             mock.patch("app.tenants.router.get_tenant_db_context", side_effect=_tenant_ctx),
-            mock.patch("app.tenants.router.create_invitation", new=mock.AsyncMock(return_value="tok-1")) as m_inv,
+            mock.patch(
+                "app.tenants.router.create_invitation", new=mock.AsyncMock(return_value="tok-1")
+            ) as m_inv,
             mock.patch("app.tenants.router.send_invitation_email", new=mock.AsyncMock()) as m_mail,
         ):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
@@ -173,7 +177,9 @@ async def test_register_tenant_rolls_back_keycloak_user_on_db_conflict():
     app.dependency_overrides[get_db] = _override_get_db
     try:
         with (
-            mock.patch("app.tenants.router.create_user", new=mock.AsyncMock(return_value="kc-orphan-1")),
+            mock.patch(
+                "app.tenants.router.create_user", new=mock.AsyncMock(return_value="kc-orphan-1")
+            ),
             mock.patch("app.tenants.router.delete_user", new=mock.AsyncMock()) as m_del,
         ):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
@@ -207,8 +213,14 @@ async def test_auth_me_returns_live_db_roles_and_tenant_metadata(auth_fixture):
         yield s
 
     with (
-        mock.patch("app.auth.permissions.resolve_caller_roles", new=mock.AsyncMock(return_value={"TENANT_ADMIN"})),
-        mock.patch("app.auth.router.resolve_caller_roles", new=mock.AsyncMock(return_value={"TENANT_ADMIN"})),
+        mock.patch(
+            "app.auth.permissions.resolve_caller_roles",
+            new=mock.AsyncMock(return_value={"TENANT_ADMIN"}),
+        ),
+        mock.patch(
+            "app.auth.router.resolve_caller_roles",
+            new=mock.AsyncMock(return_value={"TENANT_ADMIN"}),
+        ),
         mock.patch("app.auth.router.get_tenant_db_context", side_effect=_tenant_ctx),
     ):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
@@ -242,12 +254,17 @@ async def test_workspaces_list_and_switch_workspace(auth_fixture):
         yield mock_session
 
     with (
-        mock.patch("app.auth.permissions.resolve_caller_roles", new=mock.AsyncMock(return_value={"DEVELOPER"})),
+        mock.patch(
+            "app.auth.permissions.resolve_caller_roles",
+            new=mock.AsyncMock(return_value={"DEVELOPER"}),
+        ),
         mock.patch("app.auth.router.AsyncSessionLocal", side_effect=_session_ctx),
         mock.patch("app.auth.router.switch_user_tenant_context", new=mock.AsyncMock()) as m_switch,
     ):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            r_list = await ac.get("/api/v1/auth/workspaces", headers={"Authorization": f"Bearer {token}"})
+            r_list = await ac.get(
+                "/api/v1/auth/workspaces", headers={"Authorization": f"Bearer {token}"}
+            )
             assert r_list.status_code == 200, r_list.text
             items = r_list.json()
             assert len(items) == 2
@@ -317,16 +334,23 @@ async def test_members_enrich_role_sync_and_remove_guard(auth_fixture):
         s.execute = mock.AsyncMock(side_effect=[admin_res, target_res, upd1, del1, upd2])
         yield s
 
-    with mock.patch("app.auth.permissions.resolve_caller_roles", new=mock.AsyncMock(return_value={"TENANT_ADMIN"})):
+    with mock.patch(
+        "app.auth.permissions.resolve_caller_roles",
+        new=mock.AsyncMock(return_value={"TENANT_ADMIN"}),
+    ):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             with mock.patch("app.auth.members_router.get_tenant_db_context", side_effect=_ctx_list):
-                r_list = await ac.get("/api/v1/members", headers={"Authorization": f"Bearer {token}"})
+                r_list = await ac.get(
+                    "/api/v1/members", headers={"Authorization": f"Bearer {token}"}
+                )
             assert r_list.status_code == 200
             assert r_list.json()[0]["name"] == "Solo Admin"
             assert r_list.json()[0]["status"] == "ACTIVE"
             assert r_list.json()[0]["last_active"] is not None
 
-            with mock.patch("app.auth.members_router.get_tenant_db_context", side_effect=_ctx_delete_sole):
+            with mock.patch(
+                "app.auth.members_router.get_tenant_db_context", side_effect=_ctx_delete_sole
+            ):
                 r_sole = await ac.delete(
                     f"/api/v1/members/{member_id}",
                     headers={"Authorization": f"Bearer {token}"},
@@ -334,8 +358,12 @@ async def test_members_enrich_role_sync_and_remove_guard(auth_fixture):
             assert r_sole.status_code == 409
 
             with (
-                mock.patch("app.auth.members_router.get_tenant_db_context", side_effect=_ctx_role_sync),
-                mock.patch("app.auth.members_router.sync_user_realm_role", new=mock.AsyncMock()) as m_sync_role,
+                mock.patch(
+                    "app.auth.members_router.get_tenant_db_context", side_effect=_ctx_role_sync
+                ),
+                mock.patch(
+                    "app.auth.members_router.sync_user_realm_role", new=mock.AsyncMock()
+                ) as m_sync_role,
             ):
                 r_role = await ac.patch(
                     f"/api/v1/members/{member_id}/role",
@@ -351,8 +379,12 @@ async def test_members_enrich_role_sync_and_remove_guard(auth_fixture):
             )
 
             with (
-                mock.patch("app.auth.members_router.get_tenant_db_context", side_effect=_ctx_delete_dev),
-                mock.patch("app.auth.members_router.disable_user", new=mock.AsyncMock()) as m_disable,
+                mock.patch(
+                    "app.auth.members_router.get_tenant_db_context", side_effect=_ctx_delete_dev
+                ),
+                mock.patch(
+                    "app.auth.members_router.disable_user", new=mock.AsyncMock()
+                ) as m_disable,
             ):
                 r_del = await ac.delete(
                     f"/api/v1/members/{member_id}",
@@ -375,7 +407,14 @@ async def test_invitations_list_create_update_and_delete(auth_fixture):
         r = mock.MagicMock()
         r.all.return_value = [
             (inv_future, "pending@acme.io", "DEVELOPER", now + timedelta(hours=24), now, None),
-            (inv_past, "old@acme.io", "PROJECT_MANAGER", now - timedelta(hours=2), now - timedelta(days=3), None),
+            (
+                inv_past,
+                "old@acme.io",
+                "PROJECT_MANAGER",
+                now - timedelta(hours=2),
+                now - timedelta(days=3),
+                None,
+            ),
         ]
         s.execute = mock.AsyncMock(return_value=r)
         yield s
@@ -396,19 +435,34 @@ async def test_invitations_list_create_update_and_delete(auth_fixture):
         s.execute = mock.AsyncMock(return_value=r)
         yield s
 
-    with mock.patch("app.auth.permissions.resolve_caller_roles", new=mock.AsyncMock(return_value={"TENANT_ADMIN"})):
+    with mock.patch(
+        "app.auth.permissions.resolve_caller_roles",
+        new=mock.AsyncMock(return_value={"TENANT_ADMIN"}),
+    ):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            with mock.patch("app.notifications.router.get_tenant_db_context", side_effect=_ctx_list):
-                r_list = await ac.get("/api/v1/invitations", headers={"Authorization": f"Bearer {token}"})
+            with mock.patch(
+                "app.notifications.router.get_tenant_db_context", side_effect=_ctx_list
+            ):
+                r_list = await ac.get(
+                    "/api/v1/invitations", headers={"Authorization": f"Bearer {token}"}
+                )
             assert r_list.status_code == 200
             data = r_list.json()
             assert data[0]["status"] == "INVITE_SENT"
             assert data[1]["status"] == "EXPIRED"
 
             with (
-                mock.patch("app.notifications.router.get_tenant_db_context", side_effect=_ctx_create),
-                mock.patch("app.notifications.router.find_platform_user_id", new=mock.AsyncMock(return_value=None)),
-                mock.patch("app.notifications.router.create_invitation", new=mock.AsyncMock(return_value="raw-tok-123")),
+                mock.patch(
+                    "app.notifications.router.get_tenant_db_context", side_effect=_ctx_create
+                ),
+                mock.patch(
+                    "app.notifications.router.find_platform_user_id",
+                    new=mock.AsyncMock(return_value=None),
+                ),
+                mock.patch(
+                    "app.notifications.router.create_invitation",
+                    new=mock.AsyncMock(return_value="raw-tok-123"),
+                ),
                 mock.patch("app.notifications.router.send_invitation_email", new=mock.AsyncMock()),
             ):
                 r_create = await ac.post(
@@ -421,7 +475,9 @@ async def test_invitations_list_create_update_and_delete(auth_fixture):
             assert created["id"] == str(inv_future)
             assert created["invite_url"].endswith("/accept-invite?token=raw-tok-123")
 
-            with mock.patch("app.notifications.router.get_tenant_db_context", side_effect=_ctx_patch_delete):
+            with mock.patch(
+                "app.notifications.router.get_tenant_db_context", side_effect=_ctx_patch_delete
+            ):
                 r_patch = await ac.patch(
                     f"/api/v1/invitations/{inv_future}/role",
                     json={"role": "SOLUTION_ARCHITECT"},
@@ -430,7 +486,9 @@ async def test_invitations_list_create_update_and_delete(auth_fixture):
             assert r_patch.status_code == 200
             assert r_patch.json()["role"] == "SOLUTION_ARCHITECT"
 
-            with mock.patch("app.notifications.router.get_tenant_db_context", side_effect=_ctx_patch_delete):
+            with mock.patch(
+                "app.notifications.router.get_tenant_db_context", side_effect=_ctx_patch_delete
+            ):
                 r_del = await ac.delete(
                     f"/api/v1/invitations/{inv_future}",
                     headers={"Authorization": f"Bearer {token}"},
@@ -477,10 +535,20 @@ async def test_projects_update_archive_and_incidents(auth_fixture):
     ]
 
     with (
-        mock.patch("app.auth.permissions.resolve_caller_roles", new=mock.AsyncMock(side_effect=[{"TENANT_ADMIN"}, {"DEVELOPER"}, {"TENANT_ADMIN"}, {"DEVELOPER"}])),
-        mock.patch("app.projects.router.update_project_service", new=mock.AsyncMock(return_value=fake_proj)),
+        mock.patch(
+            "app.auth.permissions.resolve_caller_roles",
+            new=mock.AsyncMock(
+                side_effect=[{"TENANT_ADMIN"}, {"DEVELOPER"}, {"TENANT_ADMIN"}, {"DEVELOPER"}]
+            ),
+        ),
+        mock.patch(
+            "app.projects.router.update_project_service", new=mock.AsyncMock(return_value=fake_proj)
+        ),
         mock.patch("app.projects.router.archive_project_service", new=mock.AsyncMock()),
-        mock.patch("app.projects.router.list_project_incidents_service", new=mock.AsyncMock(return_value=fake_inc)),
+        mock.patch(
+            "app.projects.router.list_project_incidents_service",
+            new=mock.AsyncMock(return_value=fake_inc),
+        ),
     ):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             r_patch = await ac.patch(
@@ -530,9 +598,15 @@ async def test_integration_reconnect_and_obsolete_tenants_users_removed(auth_fix
         "updated_at": now,
     }
 
-    with mock.patch("app.auth.permissions.resolve_caller_roles", new=mock.AsyncMock(return_value={"TENANT_ADMIN"})):
+    with mock.patch(
+        "app.auth.permissions.resolve_caller_roles",
+        new=mock.AsyncMock(return_value={"TENANT_ADMIN"}),
+    ):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            with mock.patch("app.integrations.router.reconnect_tenant_integration", new=mock.AsyncMock(return_value=fake_int)):
+            with mock.patch(
+                "app.integrations.router.reconnect_tenant_integration",
+                new=mock.AsyncMock(return_value=fake_int),
+            ):
                 r_ok = await ac.post(
                     f"/api/v1/integrations/{iid}/reconnect",
                     headers={"Authorization": f"Bearer {token}"},
@@ -581,17 +655,29 @@ async def test_contributors_router_endpoints(auth_fixture):
         yield s
 
     with (
-        mock.patch("app.auth.permissions.resolve_caller_roles", new=mock.AsyncMock(return_value={"TENANT_ADMIN"})),
+        mock.patch(
+            "app.auth.permissions.resolve_caller_roles",
+            new=mock.AsyncMock(return_value={"TENANT_ADMIN"}),
+        ),
         mock.patch("app.contributors.router.get_tenant_db_context", side_effect=_ctx_contrib),
-        mock.patch("app.contributors.router.get_decrypted_contributor", new=mock.AsyncMock(return_value=sample)),
-        mock.patch("app.contributors.router.erase_contributor_pii", new=mock.AsyncMock(return_value=True)),
+        mock.patch(
+            "app.contributors.router.get_decrypted_contributor",
+            new=mock.AsyncMock(return_value=sample),
+        ),
+        mock.patch(
+            "app.contributors.router.erase_contributor_pii", new=mock.AsyncMock(return_value=True)
+        ),
     ):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            r_list = await ac.get("/api/v1/contributors", headers={"Authorization": f"Bearer {token}"})
+            r_list = await ac.get(
+                "/api/v1/contributors", headers={"Authorization": f"Bearer {token}"}
+            )
             assert r_list.status_code == 200
             assert r_list.json()[0]["raw_handle"] == "dev1"
 
-            r_get = await ac.get(f"/api/v1/contributors/{'p' * 64}", headers={"Authorization": f"Bearer {token}"})
+            r_get = await ac.get(
+                f"/api/v1/contributors/{'p' * 64}", headers={"Authorization": f"Bearer {token}"}
+            )
             assert r_get.status_code == 200
 
             r_erase = await ac.delete(

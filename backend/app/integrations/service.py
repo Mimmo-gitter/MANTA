@@ -23,7 +23,6 @@ from app.integrations.schemas import (
     IntegrationSummaryResponse,
 )
 from app.integrations.validators import (
-    InvalidCredentialsError,
     validate_github_credentials,
     validate_jira_credentials,
     validate_slack_credentials,

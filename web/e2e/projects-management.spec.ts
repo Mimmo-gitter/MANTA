@@ -304,11 +304,17 @@ test.describe("Projects Directory, Repository Linking & Deployment Signal (SCRUM
     await page.getByTestId("projects-repo-filter-popover").getByRole("option", { name: /All repos/i }).click();
     await expect(page.getByTestId("project-card-search-indexer")).toBeVisible();
 
-    // Archive button stays rendered but disabled until DELETE backend exists
+    // Archive button is enabled for active projects as Tenant Administrator, and disabled once already archived
     await page.getByTestId("project-card-menu-core-payments").click();
     const archiveBtn = page.getByTestId("archive-project-action-core-payments");
     await expect(archiveBtn).toBeVisible();
-    await expect(archiveBtn).toBeDisabled();
+    await expect(archiveBtn).toBeEnabled();
+    await page.keyboard.press("Escape");
+
+    await page.getByTestId("project-card-menu-search-indexer").click();
+    const archivedItemBtn = page.getByTestId("archive-project-action-search-indexer");
+    await expect(archivedItemBtn).toBeVisible();
+    await expect(archivedItemBtn).toBeDisabled();
 
     // Developer sees Create Project rendered disabled (not removed)
     await mockAuthenticatedSession(page, {

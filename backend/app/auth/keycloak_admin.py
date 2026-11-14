@@ -95,15 +95,15 @@ async def get_admin_token(client: httpx.AsyncClient) -> str:
     raise KeycloakError("Не вдалося отримати токен сервісного акаунта Keycloak")
 
 
-async def _ensure_tenant_id_profile_attribute(
-    client: httpx.AsyncClient, token: str
-) -> None:
+async def _ensure_tenant_id_profile_attribute(client: httpx.AsyncClient, token: str) -> None:
     """Ensure Keycloak 24+ Declarative User Profile allows persisting `tenant_id`."""
     global _TENANT_PROFILE_CONFIGURED
     if _TENANT_PROFILE_CONFIGURED:
         return
 
-    profile_url = f"{settings.KEYCLOAK_URL.rstrip('/')}/admin/realms/{settings.KEYCLOAK_REALM}/users/profile"
+    profile_url = (
+        f"{settings.KEYCLOAK_URL.rstrip('/')}/admin/realms/{settings.KEYCLOAK_REALM}/users/profile"
+    )
     headers = {"Authorization": f"Bearer {token}"}
     try:
         prof_resp = await client.get(profile_url, headers=headers)
@@ -129,9 +129,7 @@ async def _ensure_tenant_id_profile_attribute(
         logger.debug("Skipping Keycloak User Profile tenant_id check: %s", exc)
 
 
-async def find_user_id_by_email(
-    client: httpx.AsyncClient, token: str, email: str
-) -> str | None:
+async def find_user_id_by_email(client: httpx.AsyncClient, token: str, email: str) -> str | None:
     response = await client.get(
         _admin_users_url(),
         headers={"Authorization": f"Bearer {token}"},
@@ -176,7 +174,9 @@ async def assign_realm_role(
         headers={"Authorization": f"Bearer {token}"},
     )
     if role_resp.status_code != 200:
-        raise KeycloakError(f"Роль '{normalized_role}' не знайдена в Keycloak ({role_resp.status_code})")
+        raise KeycloakError(
+            f"Роль '{normalized_role}' не знайдена в Keycloak ({role_resp.status_code})"
+        )
     role_rep = role_resp.json()
 
     current_resp = await client.get(
@@ -231,9 +231,7 @@ async def create_user(
     if last_name is not None:
         payload["lastName"] = last_name
     if password is not None:
-        payload["credentials"] = [
-            {"type": "password", "value": password, "temporary": False}
-        ]
+        payload["credentials"] = [{"type": "password", "value": password, "temporary": False}]
         payload["requiredActions"] = []
 
     async with httpx.AsyncClient(timeout=10) as client:

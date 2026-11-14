@@ -79,14 +79,19 @@ test.describe("Members Action Confirmation Dialogs & Disabled Unimplemented Cont
       .click();
 
     await page.getByTestId("confirm-role-btn").click();
-    await expect(page.getByRole("status")).toContainText(
-      "Не можна понизити останнього адміністратора",
-    );
+    await expect(
+      page
+        .getByRole("status")
+        .filter({ hasText: "Не можна понизити останнього адміністратора" }),
+    ).toBeVisible();
   });
 
-  test("Context menu preserves unimplemented member removal action as disabled button", async ({
+  test("Context menu enables member removal for non-self members and disables menu trigger for current user", async ({
     page,
   }) => {
+    const currentRow = page.getByTestId("member-row-m-001");
+    await expect(currentRow.getByLabel(/More actions for/i)).toBeDisabled();
+
     const row = page.getByTestId("member-row-m-002");
     await row.getByLabel(/More actions for/i).click();
 
@@ -94,7 +99,6 @@ test.describe("Members Action Confirmation Dialogs & Disabled Unimplemented Cont
       name: "Remove from workspace...",
     });
     await expect(removeItem).toBeVisible();
-    await expect(removeItem).toBeDisabled();
-    await expect(removeItem).toHaveAttribute("aria-disabled", "true");
+    await expect(removeItem).toBeEnabled();
   });
 });

@@ -109,10 +109,13 @@ function formatExpiredAgo(iso?: string | null): string {
 export async function getMembers(
   currentUserEmail?: string | null,
 ): Promise<WorkspaceMember[]> {
-  const [backendMembers, backendInvitations] = await Promise.all([
+  const [backendMembers, rawInvitations] = await Promise.all([
     apiRequest<BackendMemberRow[]>(MEMBERS_ENDPOINT),
-    apiRequest<BackendInvitationRow[]>(INVITATIONS_ENDPOINT).catch(() => []),
+    apiRequest<BackendInvitationRow[]>(INVITATIONS_ENDPOINT).catch(
+      () => [] as BackendInvitationRow[],
+    ),
   ]);
+  const backendInvitations = Array.isArray(rawInvitations) ? rawInvitations : [];
 
   const normalizedCurrentEmail = currentUserEmail?.trim().toLowerCase() ?? "";
 

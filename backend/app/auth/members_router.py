@@ -60,9 +60,7 @@ async def list_members(
         if len(row) == 3:
             # Compatibility branch for minimal unit-test mocks returning (id, email, role)
             member_id, member_email, member_role = row
-            members.append(
-                {"id": str(member_id), "email": member_email, "role": str(member_role)}
-            )
+            members.append({"id": str(member_id), "email": member_email, "role": str(member_role)})
         else:
             (
                 member_id,

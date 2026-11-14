@@ -77,11 +77,10 @@ test.describe("Integration Role Access & UI Behavior (SCRUM-324 / SCRUM-249)", (
     await expect(page).toHaveURL("/integrations");
     await expect(page.getByRole("heading", { name: "Integrations" })).toBeVisible();
 
-    // Unimplemented OAuth Reconnect remains visible and disabled per disabled-button policy
+    // Integrations needing reconnect expose an active Reconnect action
     const reconnectBtn = page.getByRole("button", { name: /Reconnect/i });
     await expect(reconnectBtn).toBeVisible();
-    await expect(reconnectBtn).toBeDisabled();
-    await expect(reconnectBtn).toHaveAttribute("aria-disabled", "true");
+    await expect(reconnectBtn).toBeEnabled();
   });
 
   test("Multi-role composition: DEVELOPER + TENANT_ADMIN grants integrations access", async ({

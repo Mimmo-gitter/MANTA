@@ -136,9 +136,7 @@ async def register_tenant(
     tenant_id, user_id, res_slug, admin_email = row
 
     invites_sent = 0
-    invite_emails = [
-        addr for addr in req.invites if addr.lower() != str(admin_email).lower()
-    ]
+    invite_emails = [addr for addr in req.invites if addr.lower() != str(admin_email).lower()]
     if invite_emails:
         created_tokens: list[tuple[str, str]] = []
         try:
