@@ -15,7 +15,7 @@
 - **Blocks / Enables:**
   - `SCRUM-393` (`Task 20.2` Write Alembic migration and SQLAlchemy models for contributors, commits and pseudonym FKs on pull_requests)
   - `SCRUM-394` (`Task 20.3` Implement per-contributor salted HMAC-SHA256 pseudonymization service isolating raw names/emails in contributors)
-  - `SCRUM-396` (`Task 20.5` Create test scenarios for contributor pseudonym isolation, salt generation, and PII erasure)
+  - `SCRUM-396` (`Task 20.5` Create test scenarios for PR open, commit push, merge and contributor pseudonym isolation, see [`docs/pr-open-commit-push-merge-and-pseudonym-isolation-test-scenarios.md`](pr-open-commit-push-merge-and-pseudonym-isolation-test-scenarios.md) / [`backend/tests/scenarios/test_us20_pr_commit_tracking_and_pseudonym_isolation_scenarios.md`](../backend/tests/scenarios/test_us20_pr_commit_tracking_and_pseudonym_isolation_scenarios.md))
   - `SCRUM-427` (`Task 25.1` Design production deployment ingestion pipeline associating deploy commits with PR authors)
   - `SCRUM-433` (`Task 26.1` Design commit-to-deployment association algorithm via pull request merge commits and git DAG reachability)
 
