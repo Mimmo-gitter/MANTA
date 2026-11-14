@@ -9,6 +9,7 @@
 - [Contributor PII Isolation & Pseudonymization](contributor-pii-isolation-and-pseudonymization.md) (Task 20.3)
 - [Deployment Signal Selection & DORA Reporting](deployment-signal-selection-persistence-and-dora-response-reporting-test-scenarios.md) (US-18)
 - [Deployment Signals, Outcomes & Staging Exclusion Test Scenarios](deployment-signals-outcomes-and-staging-exclusion-test-scenarios.md) (Task 25.5 / SCRUM-431)
+- [Poison Payload 5x Retry, DLQ Quarantine & One-Click Re-drive Test Scenarios](poison-payload-5x-retry-dlq-navigation-badge-and-redrive-test-scenarios.md) (Task 23.5 / SCRUM-419)
 
 ---
 
