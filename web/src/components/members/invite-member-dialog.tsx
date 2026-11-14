@@ -17,6 +17,8 @@ import {
 } from "lucide-react";
 import { CANONICAL_ROLES, type Role } from "@/lib/permissions";
 import { sendInvitation } from "@/lib/members-api";
+import { useAuth } from "@/providers/auth-provider";
+import type { WorkspaceMember } from "@/types/member";
 import { cn } from "@/lib/utils";
 
 export interface SrsRoleOption {
@@ -108,23 +110,6 @@ export const ROLE_CONFIGS: Record<string, { label: string; dotColor: string; des
   },
 };
 
-const EXISTING_ACTIVE_MEMBERS: Record<string, { name: string; roleLabel: string }> = {
-  "p.zhuk@acme.io": { name: "Pavlo Zhuk", roleLabel: "Tenant Administrator" },
-  "m.bielei@acme.io": { name: "Maksym Bielei", roleLabel: "Solution Architect" },
-  "v.karban@acme.io": { name: "Vadym Karban", roleLabel: "Project Manager" },
-  "d.hontarenko@acme.io": { name: "Dmytro Hontarenko", roleLabel: "Developer" },
-};
-
-const RESTRICTED_PUBLIC_DOMAINS = [
-  "gmail.com",
-  "yahoo.com",
-  "hotmail.com",
-  "outlook.com",
-  "icloud.com",
-  "mail.com",
-  "protonmail.com",
-];
-
 export function isValidEmail(email: string): boolean {
   if (!email || typeof email !== "string") return false;
   const trimmed = email.trim();
@@ -137,20 +122,18 @@ export function checkTenantPolicyError(
   email: string,
   rowIdx: number,
   allRows: MemberInviteRow[],
+  existingMembers: WorkspaceMember[] = [],
 ): string | null {
   const trimmed = email.trim().toLowerCase();
   if (!trimmed) return null;
 
-  // Tenant active member directory conflict (Figma 513:6763)
-  if (EXISTING_ACTIVE_MEMBERS[trimmed]) {
-    const existing = EXISTING_ACTIVE_MEMBERS[trimmed];
-    return `${trimmed} is already an active member (${existing.name} · ${existing.roleLabel}).`;
-  }
-
-  // Domain policy restriction (Figma 513:6776)
-  const parts = trimmed.split("@");
-  if (parts.length === 2 && RESTRICTED_PUBLIC_DOMAINS.includes(parts[1])) {
-    return `Public email domains (@${parts[1]}) are restricted by Acme Consulting SSO/OIDC policy. Use @acme.io.`;
+  // Check against real workspace members fetched from backend
+  const existing = existingMembers.find(
+    (m) => m.email.trim().toLowerCase() === trimmed,
+  );
+  if (existing) {
+    const roleLabel = ROLE_CONFIGS[existing.role as Role]?.label || existing.role;
+    return `${trimmed} is already a member (${existing.name || existing.email} · ${roleLabel}).`;
   }
 
   // Batch duplicate check
@@ -168,6 +151,7 @@ export function validateMemberEmail(
   email: string,
   rowIdx: number,
   allRows: MemberInviteRow[],
+  existingMembers: WorkspaceMember[] = [],
 ): string | null {
   const trimmed = email.trim().toLowerCase();
   if (!trimmed) {
@@ -177,7 +161,7 @@ export function validateMemberEmail(
     return "Please enter a valid email address (e.g. name@company.com)";
   }
 
-  const policyError = checkTenantPolicyError(email, rowIdx, allRows);
+  const policyError = checkTenantPolicyError(email, rowIdx, allRows, existingMembers);
   if (policyError) return policyError;
 
   return null;
@@ -194,9 +178,17 @@ interface InviteMemberDialogProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: () => void;
+  existingMembers?: WorkspaceMember[];
 }
 
-export function InviteMemberDialog({ isOpen, onClose, onSuccess }: InviteMemberDialogProps) {
+export function InviteMemberDialog({
+  isOpen,
+  onClose,
+  onSuccess,
+  existingMembers = [],
+}: InviteMemberDialogProps) {
+  const { tenantName } = useAuth();
+  const workspaceLabel = tenantName?.trim() || "your workspace";
   const [rows, setRows] = useState<MemberInviteRow[]>([
     { id: "row-1", email: "", role: "PROJECT_MANAGER", touched: false },
   ]);
@@ -205,9 +197,9 @@ export function InviteMemberDialog({ isOpen, onClose, onSuccess }: InviteMemberD
   const [focusedRowId, setFocusedRowId] = useState<string | null>("row-1");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDeliveryFailed, setIsDeliveryFailed] = useState(false);
+  const [deliveryError, setDeliveryError] = useState<string | null>(null);
   const [isSuccessView, setIsSuccessView] = useState(false);
   const [submittedRows, setSubmittedRows] = useState<MemberInviteRow[]>([]);
-  const [copiedLink, setCopiedLink] = useState(false);
 
   const dialogRef = useRef<HTMLDivElement>(null);
   const firstInputRef = useRef<HTMLInputElement>(null);
@@ -222,9 +214,9 @@ export function InviteMemberDialog({ isOpen, onClose, onSuccess }: InviteMemberD
       setFocusedRowId("row-1");
       setIsSubmitting(false);
       setIsDeliveryFailed(false);
+      setDeliveryError(null);
       setIsSuccessView(false);
       setSubmittedRows([]);
-      setCopiedLink(false);
 
       const timer = setTimeout(() => {
         firstInputRef.current?.focus();
@@ -284,8 +276,12 @@ export function InviteMemberDialog({ isOpen, onClose, onSuccess }: InviteMemberD
   if (!isOpen) return null;
 
   // Row validation errors
-  const rowErrors = rows.map((r, idx) => validateMemberEmail(r.email, idx, rows));
-  const tenantErrors = rows.map((r, idx) => checkTenantPolicyError(r.email, idx, rows));
+  const rowErrors = rows.map((r, idx) =>
+    validateMemberEmail(r.email, idx, rows, existingMembers),
+  );
+  const tenantErrors = rows.map((r, idx) =>
+    checkTenantPolicyError(r.email, idx, rows, existingMembers),
+  );
   const hasTenantErrors = tenantErrors.some(
     (err, idx) => (rows[idx].touched || rows[idx].email.trim().length > 0) && err !== null,
   );
@@ -368,6 +364,7 @@ export function InviteMemberDialog({ isOpen, onClose, onSuccess }: InviteMemberD
     );
     if (isDeliveryFailed) {
       setIsDeliveryFailed(false);
+      setDeliveryError(null);
     }
   };
 
@@ -395,23 +392,11 @@ export function InviteMemberDialog({ isOpen, onClose, onSuccess }: InviteMemberD
       return;
     }
 
-    // Special trigger: test 503 error if user puts timeout / fail email
-    const hasTimeoutTrigger = rows.some(
-      (r) =>
-        r.email.includes("timeout") ||
-        r.email.includes("fail") ||
-        r.email.includes("503"),
-    );
-
     setIsSubmitting(true);
     setIsDeliveryFailed(false);
+    setDeliveryError(null);
 
     try {
-      if (hasTimeoutTrigger) {
-        await new Promise((res) => setTimeout(res, 350));
-        throw new Error("ERR_SMTP_RELAY_TIMEOUT: 503 Mail Gateway Timeout");
-      }
-
       for (const row of rows) {
         await sendInvitation({
           email: row.email.trim().toLowerCase(),
@@ -423,27 +408,20 @@ export function InviteMemberDialog({ isOpen, onClose, onSuccess }: InviteMemberD
       setIsSuccessView(true);
       onSuccess();
     } catch (err: unknown) {
+      setDeliveryError(
+        err instanceof Error ? err.message : "Unable to dispatch invitation email.",
+      );
       setIsDeliveryFailed(true);
+    } finally {
       setIsSubmitting(false);
     }
-  };
-
-  const handleCopyLink = () => {
-    const primary = submittedRows[0] || singleRow;
-    const shareUrl = `https://app.manta.io/invite/tkn_01J9XK7M4Q8R9V2P${encodeURIComponent(
-      primary.email || "v.dziubin@acme.io",
-    )}`;
-    navigator.clipboard?.writeText(shareUrl);
-    setCopiedLink(true);
-    setTimeout(() => {
-      setCopiedLink(false);
-    }, 2000);
   };
 
   const handleResetForAnother = () => {
     setRows([{ id: "row-1", email: "", role: "PROJECT_MANAGER", touched: false }]);
     setIsSuccessView(false);
     setIsDeliveryFailed(false);
+    setDeliveryError(null);
     setIsRoleDropdownOpen(false);
     setOpenBatchRowId(null);
     setFocusedRowId("row-1");
@@ -490,7 +468,7 @@ export function InviteMemberDialog({ isOpen, onClose, onSuccess }: InviteMemberD
               <div className="inline-flex w-fit items-center gap-[5px] rounded-[99px] border border-[rgba(255,77,77,0.35)] bg-[rgba(255,77,77,0.12)] px-[7px] py-[2px]">
                 <span className="size-[5px] rounded-full bg-[#ff4d4d]" aria-hidden="true" />
                 <span className="font-mono text-[9.5px] font-bold tracking-[0.5px] text-[#ff4d4d]">
-                  DELIVERY FAILED · HTTP 503
+                  DELIVERY FAILED
                 </span>
               </div>
             ) : isCurrentState5Blocked ? (
@@ -542,7 +520,7 @@ export function InviteMemberDialog({ isOpen, onClose, onSuccess }: InviteMemberD
             <p className="font-sans text-[12px] leading-[15px] text-[#94a3b8]">
               {isCurrentState4Sent ? (
                 `An onboarding email with a single-use magic token was dispatched to ${
-                  submittedRows[0]?.email ? submittedRows[0].email : "Volodymyr Dziubin"
+                  submittedRows[0]?.email ? submittedRows[0].email : "the recipient"
                 }.`
               ) : isCurrentState6DeliveryFailed ? (
                 "Mail gateway timed out before confirmation. Your form data is preserved."
@@ -553,7 +531,7 @@ export function InviteMemberDialog({ isOpen, onClose, onSuccess }: InviteMemberD
               ) : isCurrentState2SelectRole ? (
                 "Choose the least-privilege system role defined in M.A.N.T.A."
               ) : (
-                "Send a single-use onboarding invitation to join Acme Consulting."
+                `Send a single-use onboarding invitation to join ${workspaceLabel}.`
               )}
             </p>
           </div>
@@ -590,7 +568,7 @@ export function InviteMemberDialog({ isOpen, onClose, onSuccess }: InviteMemberD
                 </div>
                 <div className="flex flex-col gap-0.5">
                   <span className="font-sans text-[13px] font-bold text-[#f8fafc]">
-                    {submittedRows[0]?.email || "v.dziubin@acme.io"}
+                    {submittedRows[0]?.email || ""}
                   </span>
                   <span className="font-sans text-[11px] font-medium text-[#00c2cb]">
                     Role: {ROLE_CONFIGS[submittedRows[0]?.role || "PROJECT_MANAGER"]?.label || "Project Manager / Scrum Master"}
@@ -604,32 +582,25 @@ export function InviteMemberDialog({ isOpen, onClose, onSuccess }: InviteMemberD
               </div>
             </div>
 
-            {/* Direct One-Time Invite Link Box */}
+            {/* Direct One-Time Invite Link Notice (token is emailed by backend) */}
             <div className="flex items-center justify-between gap-2.5 rounded-[4px] border border-[#262a35] bg-[#0a0e18] px-[14px] py-[8px]">
               <div className="flex min-w-0 flex-1 flex-col gap-1">
                 <span className="font-sans text-[10px] text-[#94a3b8]">
-                  One-time invitation URL (optional direct share via Slack)
+                  One-time invitation delivery
                 </span>
-                <span className="truncate font-mono text-[12.5px] text-[#dfe2f1]">
-                  https://app.manta.io/invite/tkn_01J9XK7M4Q8R9V2P...
+                <span className="truncate font-sans text-[12px] text-[#cbd5e1]">
+                  Single-use activation link sent directly to recipient inbox.
                 </span>
               </div>
               <button
                 type="button"
-                onClick={handleCopyLink}
-                className="flex h-[34px] shrink-0 items-center gap-[5px] rounded-[8px] border border-[rgba(0,229,153,0.45)] bg-[rgba(0,229,153,0.14)] px-[10px] font-sans text-[11.5px] font-medium text-[#00e599] transition-colors hover:bg-[rgba(0,229,153,0.22)] cursor-pointer"
+                disabled
+                aria-disabled="true"
+                title="Invitation tokens are sent via email and not exposed by POST /api/v1/invitations"
+                className="flex h-[34px] shrink-0 items-center gap-[5px] rounded-[8px] border border-[#262d3d] bg-[#111622] px-[10px] font-sans text-[11.5px] font-medium text-[#64748b] opacity-60 cursor-not-allowed"
               >
-                {copiedLink ? (
-                  <>
-                    <Check className="size-3 stroke-[2.5]" aria-hidden="true" />
-                    <span>Copied!</span>
-                  </>
-                ) : (
-                  <>
-                    <Copy className="size-3 stroke-[2]" aria-hidden="true" />
-                    <span>Copy Link</span>
-                  </>
-                )}
+                <Copy className="size-3 stroke-[2]" aria-hidden="true" />
+                <span>Copy Link</span>
               </button>
             </div>
 
@@ -639,7 +610,7 @@ export function InviteMemberDialog({ isOpen, onClose, onSuccess }: InviteMemberD
               <p className="font-sans text-[11px] leading-[15px] text-[#94a3b8]">
                 This link is cryptographically bound to{" "}
                 <span className="font-mono text-[#f8fafc]">
-                  {submittedRows[0]?.email || "v.dziubin@acme.io"}
+                  {submittedRows[0]?.email || ""}
                 </span>{" "}
                 and invalidates immediately after account creation or 48h timeout.
               </p>
@@ -694,15 +665,12 @@ export function InviteMemberDialog({ isOpen, onClose, onSuccess }: InviteMemberD
                 <div className="flex items-center gap-[8px]">
                   <AlertTriangle className="size-4 shrink-0 text-[#ff4d4d]" aria-hidden="true" />
                   <span className="font-sans text-[12px] font-semibold text-[#fca5a5]">
-                    Unable to dispatch invitation email (503 Mail Gateway Timeout)
+                    {deliveryError || "Unable to dispatch invitation email."}
                   </span>
                 </div>
                 <p className="font-sans text-[11px] leading-[14px] text-[#cbd5e1]">
-                  Transactional mail relay did not respond within 5,000ms. Atomic rollback completed — no orphaned invite token was committed.
+                  The invitation service could not complete this request. Verify recipient details or SMTP delivery and retry.
                 </p>
-                <span className="font-mono text-[10.5px] text-[#ff7878]">
-                  ERR_SMTP_RELAY_TIMEOUT · TRACE: req_44b91e0c
-                </span>
               </div>
             )}
 
@@ -727,7 +695,12 @@ export function InviteMemberDialog({ isOpen, onClose, onSuccess }: InviteMemberD
             {isBatchMode ? (
               <div className="flex flex-col gap-2.5">
                 {rows.map((row, index) => {
-                  const errorMsg = validateMemberEmail(row.email, index, rows);
+                  const errorMsg = validateMemberEmail(
+                    row.email,
+                    index,
+                    rows,
+                    existingMembers,
+                  );
                   const isRowError = (row.touched || isCurrentState5Blocked) && Boolean(errorMsg);
                   const isRowFocused = focusedRowId === row.id;
                   const isRowRoleOpen = openBatchRowId === row.id;
@@ -777,7 +750,7 @@ export function InviteMemberDialog({ isOpen, onClose, onSuccess }: InviteMemberD
                             onFocus={() => setFocusedRowId(row.id)}
                             onChange={(e) => handleEmailChange(row.id, e.target.value)}
                             onBlur={() => handleBlur(row.id)}
-                            placeholder="colleague@acme.io"
+                            placeholder="colleague@company.com"
                             aria-invalid={isRowError ? "true" : "false"}
                             className="w-full border-0 border-none bg-transparent p-0 m-0 font-mono text-[13.5px] leading-tight text-[#dfe2f1] placeholder-[#475569] shadow-none outline-none ring-0 focus:border-none focus:outline-none focus:ring-0"
                             style={{ border: "none", outline: "none", boxShadow: "none" }}
@@ -945,7 +918,7 @@ export function InviteMemberDialog({ isOpen, onClose, onSuccess }: InviteMemberD
                       onFocus={() => setFocusedRowId(singleRow.id)}
                       onChange={(e) => handleEmailChange(singleRow.id, e.target.value)}
                       onBlur={() => handleBlur(singleRow.id)}
-                      placeholder="v.dziubin@acme.io"
+                      placeholder="name@company.com"
                       aria-invalid={
                         isCurrentState5Blocked || (singleRow.touched && Boolean(rowErrors[0]))
                           ? "true"
@@ -963,8 +936,7 @@ export function InviteMemberDialog({ isOpen, onClose, onSuccess }: InviteMemberD
                       role="alert"
                       className="font-sans text-[11px] leading-[14px] text-[#ff7878]"
                     >
-                      {rowErrors[0] ||
-                        "m.bielei@acme.io is already an active member (Maksym Bielei · Solution Architect)."}
+                      {rowErrors[0]}
                     </p>
                   )}
                 </div>

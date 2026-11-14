@@ -1,23 +1,22 @@
 import { test, expect } from "@playwright/test";
 import { canUser, type Role } from "../src/lib/permissions";
+import { mockAuthenticatedSession } from "./helpers/mock-auth";
 
 test.describe("Integration Role Access & UI Behavior (SCRUM-324 / SCRUM-249)", () => {
   test("Developer role: navigation is hidden and direct access redirects to / (UI HTTP 403 equivalent)", async ({
     page,
   }) => {
-    await page.addInitScript(() => {
-      window.localStorage.clear();
-      window.sessionStorage.setItem("manta_demo", "true");
-      window.sessionStorage.setItem("manta_demo_roles", JSON.stringify(["DEVELOPER"]));
+    await mockAuthenticatedSession(page, {
+      roles: ["DEVELOPER"],
+      name: "Dev Member",
+      email: "dev@company.com",
     });
 
     await page.goto("/");
 
-    // 1. Integrations link and administration section must be hidden from DOM
     await expect(page.getByTestId("nav-link-integrations")).not.toBeVisible();
     await expect(page.getByText("ADMINISTRATION", { exact: true })).not.toBeVisible();
 
-    // 2. Direct browser navigation to /integrations is intercepted by PortalAuthGuard and redirected to /
     await page.goto("/integrations");
     await expect(page).toHaveURL("/");
   });
@@ -35,14 +34,13 @@ test.describe("Integration Role Access & UI Behavior (SCRUM-324 / SCRUM-249)", (
     test(`Role restriction: ${role} cannot access integrations navigation or /integrations route`, async ({
       page,
     }) => {
-      // Permission matrix assertion
       expect(canUser([role], "MANAGE_WEBHOOK_INTEGRATIONS")).toBe(false);
 
-      await page.addInitScript((assignedRole) => {
-        window.localStorage.clear();
-        window.sessionStorage.setItem("manta_demo", "true");
-        window.sessionStorage.setItem("manta_demo_roles", JSON.stringify([assignedRole]));
-      }, role);
+      await mockAuthenticatedSession(page, {
+        roles: [role],
+        name: `${role} User`,
+        email: `${role.toLowerCase()}@company.com`,
+      });
 
       await page.goto("/");
       await expect(page.getByTestId("nav-link-integrations")).not.toBeVisible();
@@ -55,41 +53,46 @@ test.describe("Integration Role Access & UI Behavior (SCRUM-324 / SCRUM-249)", (
   test("Tenant Administrator: sees integrations in navigation and can access /integrations page", async ({
     page,
   }) => {
-    // Permission matrix assertion
     expect(canUser(["TENANT_ADMIN"], "MANAGE_WEBHOOK_INTEGRATIONS")).toBe(true);
 
-    await page.addInitScript(() => {
-      window.localStorage.clear();
-      window.sessionStorage.setItem("manta_demo", "true");
-      window.sessionStorage.setItem("manta_demo_roles", JSON.stringify(["TENANT_ADMIN"]));
+    await mockAuthenticatedSession(page, {
+      roles: ["TENANT_ADMIN"],
+      integrations: [
+        {
+          id: "int-1",
+          provider: "github",
+          external_account_id: "acme-org",
+          is_active: false,
+          created_at: "2026-11-10T10:00:00Z",
+        },
+      ],
     });
 
     await page.goto("/");
 
-    // 1. Navigation controls are visible
     await expect(page.getByText("ADMINISTRATION", { exact: true })).toBeVisible();
     await expect(page.getByTestId("nav-link-integrations")).toBeVisible();
 
-    // 2. Navigation to /integrations succeeds
     await page.goto("/integrations");
     await expect(page).toHaveURL("/integrations");
     await expect(page.getByRole("heading", { name: "Integrations" })).toBeVisible();
+
+    // Unimplemented OAuth Reconnect remains visible and disabled per disabled-button policy
+    const reconnectBtn = page.getByRole("button", { name: /Reconnect/i });
+    await expect(reconnectBtn).toBeVisible();
+    await expect(reconnectBtn).toBeDisabled();
+    await expect(reconnectBtn).toHaveAttribute("aria-disabled", "true");
   });
 
   test("Multi-role composition: DEVELOPER + TENANT_ADMIN grants integrations access", async ({
     page,
   }) => {
     expect(
-      canUser(["DEVELOPER", "TENANT_ADMIN"], "MANAGE_WEBHOOK_INTEGRATIONS")
+      canUser(["DEVELOPER", "TENANT_ADMIN"], "MANAGE_WEBHOOK_INTEGRATIONS"),
     ).toBe(true);
 
-    await page.addInitScript(() => {
-      window.localStorage.clear();
-      window.sessionStorage.setItem("manta_demo", "true");
-      window.sessionStorage.setItem(
-        "manta_demo_roles",
-        JSON.stringify(["DEVELOPER", "TENANT_ADMIN"])
-      );
+    await mockAuthenticatedSession(page, {
+      roles: ["DEVELOPER", "TENANT_ADMIN"],
     });
 
     await page.goto("/integrations");

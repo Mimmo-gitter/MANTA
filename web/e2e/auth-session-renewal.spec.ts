@@ -527,7 +527,7 @@ test.describe("Real Browser Silent Renewal & Revocation via Keycloak Admin API (
     }, { storageKey: initialTokenInfo!.key, expiredAt: simulatedExpiredAt });
 
     // 4. Set up event-driven network listener for the silent refresh token exchange with Keycloak
-    let renewalResponseBody: { access_token?: string; expires_in?: number } | null = null;
+    let renewalResponseBody = null as { access_token?: string; expires_in?: number } | null;
     const renewalResponsePromise = page.waitForResponse(
       async (res) => {
         if (
@@ -620,7 +620,7 @@ test.describe("Real Browser Silent Renewal & Revocation via Keycloak Admin API (
     const tokenRejectionPromise = page.waitForResponse(
       (res) =>
         res.url().includes("/realms/manta/protocol/openid-connect/token") &&
-        res.request().postData()?.includes("grant_type=refresh_token") &&
+        Boolean(res.request().postData()?.includes("grant_type=refresh_token")) &&
         res.status() === 400,
       { timeout: 30000 }
     );

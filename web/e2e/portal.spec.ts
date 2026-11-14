@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { fulfillCorsJson, mockAuthenticatedSession } from "./helpers/mock-auth";
 
 const ALL_SIDEBAR_DESTINATIONS = [
   { id: "overview", url: "/", title: "Engineering Overview" },
@@ -28,7 +29,7 @@ const ALL_SIDEBAR_DESTINATIONS = [
     title: "Workspace Settings",
   },
   { id: "integrations", url: "/integrations", title: "Integrations" },
-  { id: "access-roles", url: "/access-roles", title: "Access & Roles" },
+  { id: "access-roles", url: "/access-roles", title: "Members & Access" },
   {
     id: "privacy-erasure",
     url: "/privacy-erasure",
@@ -45,17 +46,33 @@ const ADMIN_ROUTE_IDS = [
   "adr-governance",
 ];
 
+const SAMPLE_PROJECTS = [
+  {
+    id: "11111111-1111-1111-1111-111111111101",
+    name: "Core Platform API",
+    slug: "core-platform-api",
+    tenant_id: "11111111-1111-1111-1111-111111111111",
+    created_at: "2026-11-10T10:00:00Z",
+    repositories: [],
+  },
+];
+
 test.describe("Portal Shell & Navigation (US-3 / SCRUM-270)", () => {
   test.describe("Admin User Navigation & Layout", () => {
     test.beforeEach(async ({ page }) => {
-      await page.addInitScript(() => {
-        window.localStorage.clear();
-        window.sessionStorage.setItem("manta_demo", "true");
-        window.sessionStorage.setItem(
-          "manta_demo_roles",
-          JSON.stringify(["TENANT_ADMIN"]),
-        );
+      await mockAuthenticatedSession(page, {
+        roles: ["TENANT_ADMIN"],
+        projects: SAMPLE_PROJECTS,
       });
+
+      await page.route(
+        (url) => url.pathname === "/api/v1/members",
+        async (route) => {
+          await fulfillCorsJson(route, 200, [
+            { id: "m1", email: "p.zhuk@company.com", role: "TENANT_ADMIN" },
+          ]);
+        },
+      );
     });
 
     test("1. Renders portal shell with persistent 216px sidebar and 48px header on desktop", async ({
@@ -74,15 +91,12 @@ test.describe("Portal Shell & Navigation (US-3 / SCRUM-270)", () => {
 
       await expect(sidebar.getByText("M.A.N.T.A.")).toBeVisible();
       await expect(sidebar.getByText("v2.4.0")).toBeVisible();
-      await expect(
-        sidebar.getByText("WORKSPACE", { exact: true }),
-      ).toBeVisible();
-      await expect(
-        sidebar.getByText("ENGINEERING", { exact: true }),
-      ).toBeVisible();
-      await expect(
-        sidebar.getByText("ADMINISTRATION", { exact: true }),
-      ).toBeVisible();
+      await expect(sidebar.getByText("WORKSPACE", { exact: true })).toBeVisible();
+      await expect(sidebar.getByText("ENGINEERING", { exact: true })).toBeVisible();
+      await expect(sidebar.getByText("ADMINISTRATION", { exact: true })).toBeVisible();
+
+      // Dynamic projects count badge from /api/v1/projects
+      await expect(page.getByTestId("nav-link-projects")).toContainText("1");
 
       const header = page.getByTestId("portal-header");
       await expect(header).toBeVisible();
@@ -91,7 +105,7 @@ test.describe("Portal Shell & Navigation (US-3 / SCRUM-270)", () => {
       expect(headerBox?.height).toBeCloseTo(48, 2);
       await expect(header.getByText("Console")).toBeVisible();
       await expect(page.getByTestId("environment-badge")).toContainText(
-        "PROD US-EAST-1",
+        "PRODUCTION",
       );
     });
 
@@ -109,26 +123,20 @@ test.describe("Portal Shell & Navigation (US-3 / SCRUM-270)", () => {
         await expect(page).toHaveURL(dest.url);
         await expect(link).toHaveAttribute("aria-current", "page");
 
-        if (dest.id !== "overview") {
-          await expect(
-            page.getByRole("heading", { level: 1, name: dest.title }),
-          ).toBeVisible();
+        await expect(
+          page.getByRole("heading", { level: 1, name: dest.title }),
+        ).toBeVisible();
 
-          if (dest.id === "integrations") {
-            await expect(
-              page.getByTestId("integrations-state-bar"),
-            ).toBeVisible();
-          } else if (dest.id === "access-roles") {
-            await expect(
-              page.getByTestId("members-kpi-strip"),
-            ).toBeVisible();
-          } else {
-            await expect(page.getByTestId("placeholder-page")).toBeVisible();
-          }
+        if (dest.id === "overview") {
+          await expect(page.getByTestId("overview-default-state")).toBeVisible();
+        } else if (dest.id === "projects") {
+          await expect(page.getByTestId("projects-summary-strip")).toBeVisible();
+        } else if (dest.id === "integrations") {
+          await expect(page.getByTestId("integrations-state-bar")).not.toBeAttached();
+        } else if (dest.id === "access-roles") {
+          await expect(page.getByTestId("members-kpi-strip")).toBeVisible();
         } else {
-          await expect(
-            page.getByTestId("overview-default-state"),
-          ).toBeVisible();
+          await expect(page.getByTestId("placeholder-page")).toBeVisible();
         }
 
         await expect(page.getByTestId("portal-sidebar")).toBeVisible();
@@ -146,7 +154,6 @@ test.describe("Portal Shell & Navigation (US-3 / SCRUM-270)", () => {
         page.getByRole("heading", { level: 1, name: "Projects" }),
       ).toBeVisible();
 
-      // Navigate to an unknown route
       await page.goto("/broken-route-404-simulation");
       await expect(page.getByText("404 NOT FOUND")).toBeVisible();
       await expect(
@@ -158,7 +165,6 @@ test.describe("Portal Shell & Navigation (US-3 / SCRUM-270)", () => {
         ),
       ).toBeVisible();
 
-      // Return back to Overview via 404 recovery action
       const backHomeBtn = page.getByTestId("not-found-back-home");
       await expect(backHomeBtn).toBeVisible();
       await backHomeBtn.click();
@@ -183,12 +189,10 @@ test.describe("Portal Shell & Navigation (US-3 / SCRUM-270)", () => {
       const sidebarBox = await sidebar.boundingBox();
       expect(sidebarBox?.width).toBeCloseTo(216, 2);
 
-      // Verify all section titles are fully rendered
       for (const section of ["WORKSPACE", "ENGINEERING", "ADMINISTRATION"]) {
         await expect(sidebar.getByText(section, { exact: true })).toBeVisible();
       }
 
-      // Verify zero horizontal scrollbar
       const hasHorizontalOverflow = await page.evaluate(() => {
         return (
           document.documentElement.scrollWidth >
@@ -207,60 +211,36 @@ test.describe("Portal Shell & Navigation (US-3 / SCRUM-270)", () => {
       const sidebar = page.getByTestId("portal-sidebar");
       await expect(sidebar).toBeVisible();
 
-      // Default tablet state is 72px icon-only
       await expect(sidebar).toHaveCSS("width", "72px");
       const collapsedBox = await sidebar.boundingBox();
       expect(collapsedBox?.width).toBeCloseTo(72, 1);
 
-      // Section titles should be hidden in 72px mode
-      await expect(
-        sidebar.getByText("WORKSPACE", { exact: true }),
-      ).not.toBeVisible();
-      await expect(
-        sidebar.getByText("ENGINEERING", { exact: true }),
-      ).not.toBeVisible();
-      await expect(
-        sidebar.getByText("ADMINISTRATION", { exact: true }),
-      ).not.toBeVisible();
+      await expect(sidebar.getByText("WORKSPACE", { exact: true })).not.toBeVisible();
+      await expect(sidebar.getByText("ENGINEERING", { exact: true })).not.toBeVisible();
+      await expect(sidebar.getByText("ADMINISTRATION", { exact: true })).not.toBeVisible();
 
-      // Header displays tablet breadcrumb
       const header = page.getByTestId("portal-header");
-      await expect(
-        header.getByText("Workspace", { exact: true }),
-      ).toBeVisible();
+      await expect(header.getByText("Workspace", { exact: true })).toBeVisible();
       await expect(header.getByText("Overview", { exact: true })).toBeVisible();
 
-      // Toggle expand via emblem button
       const toggleBtn = page.getByTestId("sidebar-collapse-toggle");
       await expect(toggleBtn).toBeVisible();
       await toggleBtn.click();
 
-      // Sidebar expands to 240px
       await expect(sidebar).toHaveCSS("width", "240px");
       const expandedBox = await sidebar.boundingBox();
       expect(expandedBox?.width).toBeCloseTo(240, 1);
 
-      // In expanded tablet mode, section titles and labels are visible
-      await expect(
-        sidebar.getByText("WORKSPACE", { exact: true }),
-      ).toBeVisible();
-      await expect(
-        sidebar.getByText("ENGINEERING", { exact: true }),
-      ).toBeVisible();
-      await expect(
-        sidebar.getByText("ADMINISTRATION", { exact: true }),
-      ).toBeVisible();
-      await expect(
-        sidebar.getByText("Sprint & WIP", { exact: true }),
-      ).toBeVisible();
+      await expect(sidebar.getByText("WORKSPACE", { exact: true })).toBeVisible();
+      await expect(sidebar.getByText("ENGINEERING", { exact: true })).toBeVisible();
+      await expect(sidebar.getByText("ADMINISTRATION", { exact: true })).toBeVisible();
+      await expect(sidebar.getByText("Sprint & WIP", { exact: true })).toBeVisible();
 
-      // Toggle back to collapse (72px)
       await toggleBtn.click();
       await expect(sidebar).toHaveCSS("width", "72px");
       const reCollapsedBox = await sidebar.boundingBox();
       expect(reCollapsedBox?.width).toBeCloseTo(72, 1);
 
-      // Navigation works in tablet view
       await page.getByTestId("nav-link-delivery-analytics").click();
       await expect(page).toHaveURL("/delivery-analytics");
       await expect(
@@ -271,13 +251,10 @@ test.describe("Portal Shell & Navigation (US-3 / SCRUM-270)", () => {
 
   test.describe("Non-Admin User Role Filtering & Route Protection", () => {
     test.beforeEach(async ({ page }) => {
-      await page.addInitScript(() => {
-        window.localStorage.clear();
-        window.sessionStorage.setItem("manta_demo", "true");
-        window.sessionStorage.setItem(
-          "manta_demo_roles",
-          JSON.stringify(["MEMBER"]),
-        );
+      await mockAuthenticatedSession(page, {
+        roles: ["DEVELOPER"],
+        name: "Dev Member",
+        email: "dev@company.com",
       });
     });
 
@@ -290,23 +267,16 @@ test.describe("Portal Shell & Navigation (US-3 / SCRUM-270)", () => {
       const sidebar = page.getByTestId("portal-sidebar");
       await expect(sidebar).toBeVisible();
 
-      // Administration section title must be hidden
       await expect(
         sidebar.getByText("ADMINISTRATION", { exact: true }),
       ).not.toBeVisible();
 
-      // All 5 admin entries must be completely hidden
       for (const adminId of ADMIN_ROUTE_IDS) {
         await expect(page.getByTestId(`nav-link-${adminId}`)).not.toBeVisible();
       }
 
-      // Non-admin entries must remain accessible
-      await expect(
-        sidebar.getByText("WORKSPACE", { exact: true }),
-      ).toBeVisible();
-      await expect(
-        sidebar.getByText("ENGINEERING", { exact: true }),
-      ).toBeVisible();
+      await expect(sidebar.getByText("WORKSPACE", { exact: true })).toBeVisible();
+      await expect(sidebar.getByText("ENGINEERING", { exact: true })).toBeVisible();
       await expect(page.getByTestId("nav-link-overview")).toBeVisible();
       await expect(page.getByTestId("nav-link-projects")).toBeVisible();
       await expect(page.getByTestId("nav-link-sprint-wip")).toBeVisible();
@@ -322,17 +292,14 @@ test.describe("Portal Shell & Navigation (US-3 / SCRUM-270)", () => {
       await expect(sidebar).toBeVisible();
       await expect(sidebar).toHaveCSS("width", "72px");
 
-      // In collapsed tablet, admin items are absent
       for (const adminId of ADMIN_ROUTE_IDS) {
         await expect(page.getByTestId(`nav-link-${adminId}`)).not.toBeVisible();
       }
 
-      // Expand sidebar
       const toggleBtn = page.getByTestId("sidebar-collapse-toggle");
       await toggleBtn.click();
       await expect(sidebar).toHaveCSS("width", "240px");
 
-      // In expanded tablet, administration section and items are absent
       await expect(
         sidebar.getByText("ADMINISTRATION", { exact: true }),
       ).not.toBeVisible();
@@ -341,10 +308,10 @@ test.describe("Portal Shell & Navigation (US-3 / SCRUM-270)", () => {
       }
     });
 
-    test("8. Enforces route protection: Direct navigation to any admin route redirects to /", async ({
+    test("8. Enforces route protection: Direct navigation to any restricted route redirects to /", async ({
       page,
     }) => {
-      const adminRoutes = [
+      const restrictedRoutes = [
         "/workspace-settings",
         "/integrations",
         "/access-roles",
@@ -352,7 +319,7 @@ test.describe("Portal Shell & Navigation (US-3 / SCRUM-270)", () => {
         "/adr-governance",
       ];
 
-      for (const route of adminRoutes) {
+      for (const route of restrictedRoutes) {
         await page.goto(route);
         await expect(page).toHaveURL("/");
         await expect(page.getByTestId("portal-sidebar")).toBeVisible();
