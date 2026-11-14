@@ -826,7 +826,9 @@ assert pr_count == 0
 response = await client.post(
     f"/webhooks/integrations/{integration_id}",
     content=payload_bytes,
-    headers={"X-Hub-Signature-256": "sha256=invalid0000000000000000000000000000000000000000000000000000000000"},
+    headers={
+        "X-Hub-Signature-256": "sha256=invalid0000000000000000000000000000000000000000000000000000000000"
+    },
 )
 assert response.status_code == 401
 ```
@@ -918,10 +920,18 @@ END $$;
 - **Verification Assertions:**
 ```python
 pseudo_a = await resolve_or_create_contributor_pseudonym(
-    session_a, tenant_id=tenant_a, provider="github", external_actor_id="583231", raw_email="octocat@github.com"
+    session_a,
+    tenant_id=tenant_a,
+    provider="github",
+    external_actor_id="583231",
+    raw_email="octocat@github.com",
 )
 pseudo_b = await resolve_or_create_contributor_pseudonym(
-    session_b, tenant_id=tenant_b, provider="github", external_actor_id="583231", raw_email="octocat@github.com"
+    session_b,
+    tenant_id=tenant_b,
+    provider="github",
+    external_actor_id="583231",
+    raw_email="octocat@github.com",
 )
 assert len(pseudo_a) == 64
 assert len(pseudo_b) == 64
@@ -951,7 +961,9 @@ assert decrypted["is_erased"] is True
 commit_author = await session.scalar(select(Commit.author_pseudonym_id).where(Commit.sha == sha_1))
 assert commit_author == pseudo_alice
 
-pr_author = await session.scalar(select(PullRequest.author_pseudonym_id).where(PullRequest.external_pr_number == 142))
+pr_author = await session.scalar(
+    select(PullRequest.author_pseudonym_id).where(PullRequest.external_pr_number == 142)
+)
 assert pr_author == pseudo_alice
 ```
 
@@ -977,16 +989,17 @@ SELECT count(*) FROM commits WHERE tenant_id = '22222222-2222-2222-2222-22222222
 # Launch 10 concurrent resolution coroutines for identical author
 tasks = [
     resolve_or_create_contributor_pseudonym(
-        session, tenant_id=tenant_id, provider="github",
-        external_actor_id="9999", raw_email="concurrent@acme.com"
+        session,
+        tenant_id=tenant_id,
+        provider="github",
+        external_actor_id="9999",
+        raw_email="concurrent@acme.com",
     )
     for _ in range(10)
 ]
 results = await asyncio.gather(*tasks)
 assert all(r == results[0] for r in results)
-count = await session.scalar(
-    select(func.count()).where(Contributor.external_actor_id == "9999")
-)
+count = await session.scalar(select(func.count()).where(Contributor.external_actor_id == "9999"))
 assert count == 1
 ```
 
@@ -1013,7 +1026,9 @@ from app.contributors.service import (
 
 @pytest.mark.asyncio
 class TestGitHubPRCommitTracking:
-    async def test_push_multiple_commits_and_pseudonym_isolation(self, db_session, test_tenant, test_repo):
+    async def test_push_multiple_commits_and_pseudonym_isolation(
+        self, db_session, test_tenant, test_repo
+    ):
         """TC-GIT-PUSH-001: Verifies multi-commit push, parent SHAs, and PII vault isolation."""
         ...
 
@@ -1025,11 +1040,15 @@ class TestGitHubPRCommitTracking:
         """TC-GIT-PR-001: Verifies PR opened normalization, initial version, and pseudonym."""
         ...
 
-    async def test_pr_synchronize_advances_head_sha_and_version(self, db_session, test_tenant, test_repo):
+    async def test_pr_synchronize_advances_head_sha_and_version(
+        self, db_session, test_tenant, test_repo
+    ):
         """TC-GIT-PR-003: Verifies PR synchronize advances head_sha and increments entity_version."""
         ...
 
-    async def test_pr_optimistic_fencing_rejects_stale_event(self, db_session, test_tenant, test_repo):
+    async def test_pr_optimistic_fencing_rejects_stale_event(
+        self, db_session, test_tenant, test_repo
+    ):
         """TC-GIT-PR-004: Verifies out-of-order synchronize delivery rejection via fencing token."""
         ...
 
@@ -1041,11 +1060,15 @@ class TestGitHubPRCommitTracking:
         """TC-GIT-UNL-001 & TC-GIT-UNL-002: Verifies unlinked repo webhooks execute as safe NOOPs."""
         ...
 
-    async def test_full_database_scan_zero_raw_pii_outside_contributors(self, db_session, test_tenant):
+    async def test_full_database_scan_zero_raw_pii_outside_contributors(
+        self, db_session, test_tenant
+    ):
         """TC-GIT-PRIV-001: Scans all domain tables asserting zero plain emails or raw names."""
         ...
 
-    async def test_gdpr_article_17_erasure_preserves_historical_git_metrics(self, db_session, test_tenant):
+    async def test_gdpr_article_17_erasure_preserves_historical_git_metrics(
+        self, db_session, test_tenant
+    ):
         """TC-GIT-PRIV-003: Verifies PII erasure zeroes salt while preserving PR/commit rows."""
         ...
 ```
