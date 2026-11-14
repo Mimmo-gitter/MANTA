@@ -16,6 +16,7 @@
   - `SCRUM-407` (`Task 21.4` [Create test scenarios for 100-job FIFO ordering, high-priority preemption behind 50 default jobs, and `SIGKILL` crash](./fifo-ordering-priority-preemption-and-sigkill-crash-test-scenarios.md))
   - `SCRUM-408` (`Task 21.5` Write automated `pytest` tests verifying 100-job FIFO execution, priority preemption, and `SIGKILL` in-flight recovery)
   - `SCRUM-409` (`Task 22.1` [Design monotonic `owner_token` sequence, 30s lease contract, and PostgreSQL optimistic fencing assertion](./fencing-lease-contract.md))
+  - `SCRUM-419` (`Task 23.5` [Create test scenarios for poison payload 5x retry, navigation badge increment, re-drive and Developer HTTP 403](./poison-payload-5x-retry-dlq-navigation-badge-and-redrive-test-scenarios.md))
 
 ---
 
