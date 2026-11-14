@@ -20,6 +20,7 @@ export interface ProjectItem {
   tenant_id: string;
   name: string;
   slug: string;
+  description?: string | null;
   tier_sla_hours: number;
   authoritative_cd_signal: string;
   authoritative_deployment_signal: DeploymentSignalType | string | null;
@@ -36,12 +37,35 @@ export interface ProjectItem {
 export interface ProjectCreatePayload {
   name: string;
   slug?: string;
+  description?: string;
   tier_sla_hours?: number;
   authoritative_cd_signal?: DeploymentSignalType;
   authoritative_deployment_signal?: DeploymentSignalType;
   lead_time_first_commit_strategy?: string;
   wip_limit_per_dev?: number;
   pr_stale_threshold_hours?: number;
+}
+
+export interface ProjectUpdatePayload {
+  name?: string;
+  slug?: string;
+  description?: string | null;
+  tier_sla_hours?: number;
+  wip_limit_per_dev?: number;
+  pr_stale_threshold_hours?: number;
+  lead_time_first_commit_strategy?: string;
+  is_active?: boolean;
+}
+
+export interface ProjectIncidentItem {
+  id: string;
+  project_id: string;
+  deployment_id: string | null;
+  severity: string;
+  started_at: string;
+  resolved_at: string | null;
+  recovery_time_seconds: number | null;
+  created_at: string;
 }
 
 export interface RepositoryLinkPayload {
@@ -61,8 +85,4 @@ export interface DeploymentSignalConfig {
 
 export interface DeploymentSignalUpdatePayload {
   authoritative_deployment_signal: DeploymentSignalType;
-}
-
-export interface ProjectUiMeta {
-  description?: string;
 }

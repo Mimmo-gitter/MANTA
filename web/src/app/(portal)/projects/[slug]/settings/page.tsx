@@ -1,18 +1,25 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import {
   AlertCircle,
   ArrowLeft,
-  Clock,
+  CheckCircle2,
+  Loader2,
   Plus,
   RefreshCw,
 } from "lucide-react";
 import { usePermissions } from "@/hooks/use-permissions";
-import { useProjectQuery, useProjectsQuery } from "@/hooks/use-projects";
-import { getProjectUiMeta, isUuid } from "@/lib/projects-api";
+import {
+  useDeleteProjectMutation,
+  useProjectIncidentsQuery,
+  useProjectQuery,
+  useProjectsQuery,
+  useUpdateProjectMutation,
+} from "@/hooks/use-projects";
+import { isUuid } from "@/lib/projects-api";
 import { LinkedRepositoriesTab } from "@/components/projects/linked-repositories-tab";
 import { DeploymentSignalTab } from "@/components/projects/deployment-signal-tab";
 
@@ -27,6 +34,7 @@ const TAB_LABELS: Record<SettingsTabId, string> = {
 
 export default function ProjectSettingsPage() {
   const params = useParams<{ slug: string }>();
+  const router = useRouter();
   const slugParam = params?.slug ?? "";
   const { can } = usePermissions();
   const isTenantAdmin = can("MANAGE_WEBHOOK_INTEGRATIONS");
@@ -45,6 +53,42 @@ export default function ProjectSettingsPage() {
   );
 
   const project = projectFromList || directQuery.data;
+  const updateProjectMutation = useUpdateProjectMutation(project?.id ?? "");
+  const deleteProjectMutation = useDeleteProjectMutation();
+  const incidentsQuery = useProjectIncidentsQuery(
+    project?.id,
+    activeTab === "health-sources",
+  );
+
+  const [formName, setFormName] = useState("");
+  const [formSlug, setFormSlug] = useState("");
+  const [formDescription, setFormDescription] = useState("");
+  const [formSlaHours, setFormSlaHours] = useState("24");
+  const [formWipLimit, setFormWipLimit] = useState("5");
+  const [formPrStaleHours, setFormPrStaleHours] = useState("48");
+  const [formLeadTimeStrategy, setFormLeadTimeStrategy] = useState("feature_branch_root");
+  const [saveFeedback, setSaveFeedback] = useState<{
+    type: "success" | "error";
+    message: string;
+  } | null>(null);
+
+  const lastSyncedKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!project) return;
+    const syncKey = `${project.id}:${project.updated_at}`;
+    if (lastSyncedKeyRef.current === syncKey) return;
+    lastSyncedKeyRef.current = syncKey;
+    setFormName(project.name);
+    setFormSlug(project.slug);
+    setFormDescription(project.description ?? "");
+    setFormSlaHours(String(project.tier_sla_hours));
+    setFormWipLimit(String(project.wip_limit_per_dev));
+    setFormPrStaleHours(String(project.pr_stale_threshold_hours));
+    setFormLeadTimeStrategy(project.lead_time_first_commit_strategy);
+    setSaveFeedback(null);
+  }, [project]);
+
   const isLoading =
     projectsQuery.isLoading || (!projectFromList && directQuery.isLoading);
   const error =
@@ -127,9 +171,84 @@ export default function ProjectSettingsPage() {
     );
   }
 
-  const uiDescription =
-    getProjectUiMeta(project.id).description ||
-    getProjectUiMeta(project.slug).description;
+  const handleSaveGeneral = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!project || !isTenantAdmin) return;
+    setSaveFeedback(null);
+
+    const trimmedName = formName.trim();
+    const trimmedSlug = formSlug.trim();
+    const parsedSla = Number.parseInt(formSlaHours, 10);
+    const parsedWip = Number.parseInt(formWipLimit, 10);
+    const parsedStale = Number.parseInt(formPrStaleHours, 10);
+
+    if (!trimmedName || !trimmedSlug) {
+      setSaveFeedback({
+        type: "error",
+        message: "Project name and slug are required.",
+      });
+      return;
+    }
+
+    if (
+      Number.isNaN(parsedSla) ||
+      parsedSla < 1 ||
+      parsedSla > 720 ||
+      Number.isNaN(parsedWip) ||
+      parsedWip < 1 ||
+      parsedWip > 50 ||
+      Number.isNaN(parsedStale) ||
+      parsedStale < 1 ||
+      parsedStale > 720
+    ) {
+      setSaveFeedback({
+        type: "error",
+        message: "Thresholds must stay within valid ranges (SLA 1-720h, WIP 1-50, PR stale 1-720h).",
+      });
+      return;
+    }
+
+    try {
+      const updated = await updateProjectMutation.mutateAsync({
+        name: trimmedName,
+        slug: trimmedSlug,
+        description: formDescription.trim() || null,
+        tier_sla_hours: parsedSla,
+        wip_limit_per_dev: parsedWip,
+        pr_stale_threshold_hours: parsedStale,
+        lead_time_first_commit_strategy:
+          formLeadTimeStrategy.trim() || "feature_branch_root",
+      });
+      setSaveFeedback({
+        type: "success",
+        message: "Project metadata and engineering thresholds saved.",
+      });
+      if (updated.slug !== slugParam) {
+        router.replace(`/projects/${updated.slug}/settings`);
+      }
+    } catch (err: unknown) {
+      setSaveFeedback({
+        type: "error",
+        message:
+          err instanceof Error ? err.message : "Failed to save project settings.",
+      });
+    }
+  };
+
+  const handleArchiveProject = async () => {
+    if (!project || !isTenantAdmin || !project.is_active) return;
+    setSaveFeedback(null);
+    try {
+      await deleteProjectMutation.mutateAsync(project.id);
+      router.push("/projects");
+    } catch (err: unknown) {
+      setSaveFeedback({
+        type: "error",
+        message:
+          err instanceof Error ? err.message : "Failed to archive project.",
+      });
+    }
+  };
 
   return (
     <div className="flex w-full flex-col gap-[10px] px-[24px] py-[14px]">
@@ -247,28 +366,106 @@ export default function ProjectSettingsPage() {
 
       {activeTab === "health-sources" && (
         <div
-          data-testid="health-sources-coming-soon"
-          className="flex flex-col items-center justify-center rounded-[12px] border border-[#1e293b] bg-[#0d121f] px-[24px] py-[56px] text-center"
+          data-testid="health-sources-panel"
+          className="space-y-[14px] rounded-[12px] border border-[#1e293b] bg-[#0d121f] p-[20px]"
         >
-          <div className="flex size-[44px] items-center justify-center rounded-full border border-[#60a5fa]/30 bg-[#60a5fa]/10 text-[#60a5fa]">
-            <Clock className="size-[20px]" aria-hidden="true" />
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="text-[16px] font-semibold text-[#f8fafc]">
+                Project Health &amp; Production Incidents
+              </h2>
+              <p className="mt-[4px] text-[12px] text-[#94a3b8]">
+                Recent production incidents and recovery times tracked for MTTR &amp; Change Failure Rate.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => void incidentsQuery.refetch()}
+              disabled={incidentsQuery.isFetching}
+              className="inline-flex h-[32px] items-center gap-1.5 rounded-[8px] border border-[#1e293b] bg-[#0a0e18] px-[12px] text-[12px] font-medium text-[#cbd5e1] transition-colors hover:border-[#00e599]/50 hover:text-[#f8fafc] disabled:opacity-60"
+            >
+              <RefreshCw
+                className={`size-[13px] ${incidentsQuery.isFetching ? "animate-spin" : ""}`}
+                aria-hidden="true"
+              />
+              <span>Refresh</span>
+            </button>
           </div>
-          <div className="mt-[12px] inline-flex items-center rounded-[4px] border border-[#60a5fa]/35 bg-[#60a5fa]/10 px-[8px] py-[2px] font-mono text-[10px] font-semibold uppercase tracking-[0.5px] text-[#60a5fa]">
-            Coming Soon
-          </div>
-          <h2 className="mt-[10px] text-[16px] font-semibold text-[#f8fafc]">
-            Project Health Sources
-          </h2>
-          <p className="mt-[6px] max-w-[460px] text-[12px] leading-[19px] text-[#94a3b8]">
-            Automated Jira/Linear sprint health connectors and custom SLO alert
-            thresholds will be configurable here once backend health-source APIs
-            are released.
-          </p>
+
+          {incidentsQuery.isLoading ? (
+            <div className="flex h-[160px] items-center justify-center rounded-[10px] border border-[#1e293b] bg-[#0a0e18] text-[12px] text-[#94a3b8]">
+              <Loader2 className="mr-2 size-4 animate-spin text-[#00e599]" aria-hidden="true" />
+              Loading production incidents...
+            </div>
+          ) : incidentsQuery.error ? (
+            <div
+              role="alert"
+              className="rounded-[10px] border border-[#ef4444]/35 bg-[#ef4444]/10 p-[14px] text-[12px] text-[#fca5a5]"
+            >
+              {incidentsQuery.error instanceof Error
+                ? incidentsQuery.error.message
+                : "Failed to load project incidents."}
+            </div>
+          ) : (incidentsQuery.data?.length ?? 0) === 0 ? (
+            <div className="flex flex-col items-center justify-center rounded-[10px] border border-[#1e293b] bg-[#0a0e18] px-[20px] py-[40px] text-center">
+              <CheckCircle2 className="size-[22px] text-[#00e599]" aria-hidden="true" />
+              <p className="mt-[8px] text-[13px] font-medium text-[#f8fafc]">
+                No production incidents recorded
+              </p>
+              <p className="mt-[4px] max-w-[420px] text-[12px] text-[#94a3b8]">
+                No production failures have been ingested for this project yet. Tier SLA target is {project.tier_sla_hours}h.
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto rounded-[10px] border border-[#1e293b] bg-[#0a0e18]">
+              <table className="w-full border-collapse text-left text-[12px]">
+                <thead>
+                  <tr className="border-b border-[#1e293b] font-mono text-[10px] uppercase tracking-[0.6px] text-[#64748b]">
+                    <th className="px-[12px] py-[10px]">Severity</th>
+                    <th className="px-[12px] py-[10px]">Started</th>
+                    <th className="px-[12px] py-[10px]">Resolved</th>
+                    <th className="px-[12px] py-[10px]">Recovery Time</th>
+                    <th className="px-[12px] py-[10px]">Deployment ID</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {incidentsQuery.data!.map((incident) => {
+                    const recoveryMins =
+                      incident.recovery_time_seconds != null
+                        ? Math.round(incident.recovery_time_seconds / 60)
+                        : null;
+                    return (
+                      <tr key={incident.id} className="border-b border-[#1e293b]/70 last:border-b-0">
+                        <td className="px-[12px] py-[10px] font-mono text-[11px] uppercase text-[#f8fafc]">
+                          {incident.severity}
+                        </td>
+                        <td className="px-[12px] py-[10px] text-[#cbd5e1]">
+                          {new Date(incident.started_at).toLocaleString()}
+                        </td>
+                        <td className="px-[12px] py-[10px] text-[#cbd5e1]">
+                          {incident.resolved_at
+                            ? new Date(incident.resolved_at).toLocaleString()
+                            : "Open"}
+                        </td>
+                        <td className="px-[12px] py-[10px] font-mono text-[#e2e8f0]">
+                          {recoveryMins != null ? `${recoveryMins}m` : "—"}
+                        </td>
+                        <td className="px-[12px] py-[10px] font-mono text-[11px] text-[#64748b]">
+                          {incident.deployment_id ? incident.deployment_id.slice(0, 8) : "—"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 
       {activeTab === "general" && (
-        <div
+        <form
+          onSubmit={handleSaveGeneral}
           data-testid="general-settings-panel"
           className="space-y-[16px] rounded-[12px] border border-[#1e293b] bg-[#0d121f] p-[20px]"
         >
@@ -281,105 +478,164 @@ export default function ProjectSettingsPage() {
             </p>
           </div>
 
-          <dl className="grid grid-cols-1 gap-[12px] sm:grid-cols-2 lg:grid-cols-3">
-            <div className="rounded-[8px] border border-[#1e293b] bg-[#0a0e18] p-[12px]">
-              <dt className="font-mono text-[10px] uppercase tracking-[0.6px] text-[#64748b]">
+          {saveFeedback && (
+            <div
+              role={saveFeedback.type === "error" ? "alert" : "status"}
+              className={`rounded-[8px] border px-[12px] py-[9px] text-[12px] ${
+                saveFeedback.type === "error"
+                  ? "border-[#ef4444]/40 bg-[#ef4444]/10 text-[#fca5a5]"
+                  : "border-[#00e599]/40 bg-[#00e599]/10 text-[#00e599]"
+              }`}
+            >
+              {saveFeedback.message}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 gap-[12px] sm:grid-cols-2 lg:grid-cols-3">
+            <label className="block rounded-[8px] border border-[#1e293b] bg-[#0a0e18] p-[12px]">
+              <span className="font-mono text-[10px] uppercase tracking-[0.6px] text-[#64748b]">
                 Project Name
-              </dt>
-              <dd className="mt-[4px] text-[13px] font-medium text-[#f8fafc]">
-                {project.name}
-              </dd>
-            </div>
-            <div className="rounded-[8px] border border-[#1e293b] bg-[#0a0e18] p-[12px]">
-              <dt className="font-mono text-[10px] uppercase tracking-[0.6px] text-[#64748b]">
+              </span>
+              <input
+                type="text"
+                value={formName}
+                onChange={(e) => setFormName(e.target.value)}
+                disabled={!isTenantAdmin}
+                className="mt-[6px] w-full rounded-[6px] border border-[#1e293b] bg-[#111622] px-[10px] py-[6px] text-[13px] font-medium text-[#f8fafc] outline-none focus:border-[#00e599] disabled:opacity-60"
+              />
+            </label>
+
+            <label className="block rounded-[8px] border border-[#1e293b] bg-[#0a0e18] p-[12px]">
+              <span className="font-mono text-[10px] uppercase tracking-[0.6px] text-[#64748b]">
                 URL Slug
-              </dt>
-              <dd className="mt-[4px] font-mono text-[12px] text-[#00e599]">
-                {project.slug}
-              </dd>
-            </div>
-            <div className="rounded-[8px] border border-[#1e293b] bg-[#0a0e18] p-[12px]">
-              <dt className="font-mono text-[10px] uppercase tracking-[0.6px] text-[#64748b]">
+              </span>
+              <input
+                type="text"
+                value={formSlug}
+                onChange={(e) => setFormSlug(e.target.value)}
+                disabled={!isTenantAdmin}
+                className="mt-[6px] w-full rounded-[6px] border border-[#1e293b] bg-[#111622] px-[10px] py-[6px] font-mono text-[12px] text-[#00e599] outline-none focus:border-[#00e599] disabled:opacity-60"
+              />
+            </label>
+
+            <label className="block rounded-[8px] border border-[#1e293b] bg-[#0a0e18] p-[12px]">
+              <span className="font-mono text-[10px] uppercase tracking-[0.6px] text-[#64748b]">
                 Tier SLA Hours
-              </dt>
-              <dd className="mt-[4px] font-mono text-[12px] text-[#e2e8f0]">
-                {project.tier_sla_hours}h
-              </dd>
-            </div>
-            <div className="rounded-[8px] border border-[#1e293b] bg-[#0a0e18] p-[12px]">
-              <dt className="font-mono text-[10px] uppercase tracking-[0.6px] text-[#64748b]">
+              </span>
+              <input
+                type="number"
+                min={1}
+                max={720}
+                value={formSlaHours}
+                onChange={(e) => setFormSlaHours(e.target.value)}
+                disabled={!isTenantAdmin}
+                className="mt-[6px] w-full rounded-[6px] border border-[#1e293b] bg-[#111622] px-[10px] py-[6px] font-mono text-[12px] text-[#e2e8f0] outline-none focus:border-[#00e599] disabled:opacity-60"
+              />
+            </label>
+
+            <label className="block rounded-[8px] border border-[#1e293b] bg-[#0a0e18] p-[12px]">
+              <span className="font-mono text-[10px] uppercase tracking-[0.6px] text-[#64748b]">
                 WIP Limit / Developer
-              </dt>
-              <dd className="mt-[4px] font-mono text-[12px] text-[#e2e8f0]">
-                {project.wip_limit_per_dev}
-              </dd>
-            </div>
-            <div className="rounded-[8px] border border-[#1e293b] bg-[#0a0e18] p-[12px]">
-              <dt className="font-mono text-[10px] uppercase tracking-[0.6px] text-[#64748b]">
-                PR Stale Threshold
-              </dt>
-              <dd className="mt-[4px] font-mono text-[12px] text-[#e2e8f0]">
-                {project.pr_stale_threshold_hours}h
-              </dd>
-            </div>
-            <div className="rounded-[8px] border border-[#1e293b] bg-[#0a0e18] p-[12px]">
-              <dt className="font-mono text-[10px] uppercase tracking-[0.6px] text-[#64748b]">
+              </span>
+              <input
+                type="number"
+                min={1}
+                max={50}
+                value={formWipLimit}
+                onChange={(e) => setFormWipLimit(e.target.value)}
+                disabled={!isTenantAdmin}
+                className="mt-[6px] w-full rounded-[6px] border border-[#1e293b] bg-[#111622] px-[10px] py-[6px] font-mono text-[12px] text-[#e2e8f0] outline-none focus:border-[#00e599] disabled:opacity-60"
+              />
+            </label>
+
+            <label className="block rounded-[8px] border border-[#1e293b] bg-[#0a0e18] p-[12px]">
+              <span className="font-mono text-[10px] uppercase tracking-[0.6px] text-[#64748b]">
+                PR Stale Threshold (Hours)
+              </span>
+              <input
+                type="number"
+                min={1}
+                max={720}
+                value={formPrStaleHours}
+                onChange={(e) => setFormPrStaleHours(e.target.value)}
+                disabled={!isTenantAdmin}
+                className="mt-[6px] w-full rounded-[6px] border border-[#1e293b] bg-[#111622] px-[10px] py-[6px] font-mono text-[12px] text-[#e2e8f0] outline-none focus:border-[#00e599] disabled:opacity-60"
+              />
+            </label>
+
+            <label className="block rounded-[8px] border border-[#1e293b] bg-[#0a0e18] p-[12px]">
+              <span className="font-mono text-[10px] uppercase tracking-[0.6px] text-[#64748b]">
                 Lead Time First-Commit Strategy
-              </dt>
-              <dd className="mt-[4px] font-mono text-[12px] text-[#e2e8f0]">
-                {project.lead_time_first_commit_strategy}
-              </dd>
-            </div>
+              </span>
+              <input
+                type="text"
+                value={formLeadTimeStrategy}
+                onChange={(e) => setFormLeadTimeStrategy(e.target.value)}
+                disabled={!isTenantAdmin}
+                className="mt-[6px] w-full rounded-[6px] border border-[#1e293b] bg-[#111622] px-[10px] py-[6px] font-mono text-[12px] text-[#e2e8f0] outline-none focus:border-[#00e599] disabled:opacity-60"
+              />
+            </label>
+
+            <label className="block rounded-[8px] border border-[#1e293b] bg-[#0a0e18] p-[12px] sm:col-span-2 lg:col-span-3">
+              <span className="font-mono text-[10px] uppercase tracking-[0.6px] text-[#64748b]">
+                Description
+              </span>
+              <textarea
+                rows={2}
+                value={formDescription}
+                onChange={(e) => setFormDescription(e.target.value)}
+                disabled={!isTenantAdmin}
+                placeholder="Describe this project's service ownership, delivery scope, and SLA expectations..."
+                className="mt-[6px] w-full rounded-[6px] border border-[#1e293b] bg-[#111622] px-[10px] py-[6px] text-[12px] text-[#cbd5e1] outline-none focus:border-[#00e599] disabled:opacity-60"
+              />
+            </label>
+
             <div className="rounded-[8px] border border-[#1e293b] bg-[#0a0e18] p-[12px] sm:col-span-2 lg:col-span-3">
-              <dt className="font-mono text-[10px] uppercase tracking-[0.6px] text-[#64748b]">
+              <div className="font-mono text-[10px] uppercase tracking-[0.6px] text-[#64748b]">
                 Project UUID
-              </dt>
-              <dd className="mt-[4px] font-mono text-[12px] text-[#94a3b8]">
-                {project.id}
-              </dd>
-            </div>
-            {uiDescription && (
-              <div className="rounded-[8px] border border-[#1e293b] bg-[#0a0e18] p-[12px] sm:col-span-2 lg:col-span-3">
-                <dt className="font-mono text-[10px] uppercase tracking-[0.6px] text-[#64748b]">
-                  Notes (Local UI)
-                </dt>
-                <dd className="mt-[4px] text-[12px] text-[#cbd5e1]">
-                  {uiDescription}
-                </dd>
               </div>
-            )}
-          </dl>
+              <div className="mt-[4px] font-mono text-[12px] text-[#94a3b8]">
+                {project.id}
+              </div>
+            </div>
+          </div>
 
           <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[#1e293b] pt-[14px]">
             <span className="text-[11px] text-[#64748b]">
-              Updating general metadata or archiving projects requires PATCH /
-              DELETE /api/v1/projects/{"{id}"} backend support.
+              {isTenantAdmin
+                ? "Changes are saved directly to PostgreSQL."
+                : "Only Tenant Administrators can edit or archive projects."}
             </span>
 
             <div className="flex items-center gap-[8px]">
               <button
-                type="button"
-                disabled
-                aria-disabled="true"
-                title="Updating project settings awaits PATCH /api/v1/projects/{id} backend support"
-                data-testid="general-save-disabled-button"
-                className="h-[34px] cursor-not-allowed rounded-[8px] border border-[#252b3b] bg-[#161b26] px-[14px] text-[12px] font-medium text-[#64748b] opacity-60"
+                type="submit"
+                disabled={!isTenantAdmin || updateProjectMutation.isPending}
+                data-testid="general-save-button"
+                className="h-[34px] rounded-[8px] bg-[#00e599] px-[14px] text-[12px] font-semibold text-[#05080f] transition-colors hover:bg-[#2df0b0] disabled:cursor-not-allowed disabled:opacity-55"
               >
-                Save Changes
+                {updateProjectMutation.isPending ? "Saving..." : "Save Changes"}
               </button>
               <button
                 type="button"
-                disabled
-                aria-disabled="true"
-                title="Archiving projects awaits DELETE /api/v1/projects/{id} backend support"
-                data-testid="general-archive-disabled-button"
-                className="h-[34px] cursor-not-allowed rounded-[8px] border border-[#ef4444]/30 bg-[#ef4444]/10 px-[14px] text-[12px] font-medium text-[#fca5a5] opacity-55"
+                disabled={
+                  !isTenantAdmin ||
+                  !project.is_active ||
+                  deleteProjectMutation.isPending
+                }
+                onClick={() => void handleArchiveProject()}
+                data-testid="general-archive-button"
+                className="h-[34px] rounded-[8px] border border-[#ef4444]/40 bg-[#ef4444]/15 px-[14px] text-[12px] font-medium text-[#fca5a5] transition-colors hover:bg-[#ef4444]/25 disabled:cursor-not-allowed disabled:opacity-55"
               >
-                Archive Project
+                {!project.is_active
+                  ? "Archived"
+                  : deleteProjectMutation.isPending
+                    ? "Archiving..."
+                    : "Archive Project"}
               </button>
             </div>
           </div>
-        </div>
+        </form>
       )}
     </div>
   );

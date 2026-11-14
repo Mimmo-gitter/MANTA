@@ -885,9 +885,9 @@ async def test_cross_tenant_auth_profile_and_permission_matrix_isolation(auth_co
             assert data_me_b["email"] == "admin@beta-sec.com"
 
             # 2. Permission matrix enforcement: Developer role lacking admin permissions -> 403
-            # Tenants user management stub
+            # Member management
             r_users = await ac.get(
-                "/api/v1/tenants/users",
+                "/api/v1/members",
                 headers={"Authorization": f"Bearer {token_a_dev}"},
             )
             assert r_users.status_code == 403

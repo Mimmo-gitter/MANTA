@@ -23,7 +23,11 @@ import { cn } from "@/lib/utils";
 import { GitHubConnectDialog } from "@/components/integrations/github-connect-dialog";
 import { JiraConnectDialog } from "@/components/integrations/jira-connect-dialog";
 import { SlackConnectDialog } from "@/components/integrations/slack-connect-dialog";
-import { getIntegrations, deleteIntegration } from "@/lib/integrations-api";
+import {
+  getIntegrations,
+  deleteIntegration,
+  reconnectIntegration,
+} from "@/lib/integrations-api";
 import type { Integration as ApiIntegration } from "@/types/integration";
 
 /* -------------------------------------------------------------------------- */
@@ -405,10 +409,12 @@ function IntegrationRow({
   integration,
   onConfigure,
   onReconnect,
+  reconnecting,
 }: {
   integration: Integration;
   onConfigure: (i: Integration) => void;
   onReconnect: (i: Integration) => void;
+  reconnecting?: boolean;
 }) {
   const needsReconnect = integration.status === "needs_reconnect";
 
@@ -449,13 +455,13 @@ function IntegrationRow({
         {needsReconnect ? (
           <button
             type="button"
-            disabled
-            aria-disabled="true"
-            title="OAuth token reconnect awaits backend POST /api/v1/integrations/{id}/reconnect support"
+            disabled={reconnecting}
+            onClick={() => onReconnect(integration)}
+            title="Reconnect and re-validate credentials"
             aria-label={`Reconnect ${integration.name}`}
-            className="inline-flex h-[28px] min-w-[84px] items-center justify-center rounded-[6px] border border-[#fbbf24]/40 bg-[#fbbf24]/10 px-3 text-[11px] font-medium text-[#fbbf24]/60 opacity-60 cursor-not-allowed"
+            className="inline-flex h-[28px] min-w-[84px] items-center justify-center rounded-[6px] border border-[#fbbf24]/50 bg-[#fbbf24]/15 px-3 text-[11px] font-medium text-[#fbbf24] transition-colors hover:border-[#fbbf24] hover:bg-[#fbbf24] hover:text-[#0f131d] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#fbbf24] disabled:cursor-wait disabled:opacity-60"
           >
-            Reconnect
+            {reconnecting ? "Reconnecting..." : "Reconnect"}
           </button>
         ) : (
           <button
@@ -480,6 +486,7 @@ function ConnectedToolsPanel({
   counts,
   onConfigure,
   onReconnect,
+  reconnectingId,
 }: {
   items: Integration[];
   allCount: number;
@@ -488,6 +495,7 @@ function ConnectedToolsPanel({
   counts: Record<StatusFilter, number>;
   onConfigure: (i: Integration) => void;
   onReconnect: (i: Integration) => void;
+  reconnectingId: string | null;
 }) {
   return (
     <section
@@ -516,6 +524,7 @@ function ConnectedToolsPanel({
               integration={integration}
               onConfigure={onConfigure}
               onReconnect={onReconnect}
+              reconnecting={reconnectingId === integration.id}
             />
           ))}
         </ul>
@@ -995,6 +1004,7 @@ export default function IntegrationsPage() {
   const [disconnecting, setDisconnecting] = useState(false);
   const [disconnectError, setDisconnectError] = useState("");
   const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+  const [reconnectingId, setReconnectingId] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoadState("loading");
@@ -1111,8 +1121,22 @@ export default function IntegrationsPage() {
       setDisconnecting(false);
     }
   };
-  const handleReconnect = (_integration: Integration) => {
-    // Disabled in UI until backend reconnect endpoint exists.
+  const handleReconnect = async (integration: Integration) => {
+    setReconnectingId(integration.id);
+    try {
+      await reconnectIntegration(integration.id);
+      await load();
+    } catch {
+      if (integration.provider === "github") {
+        setGithubOpen(true);
+      } else if (integration.provider === "jira") {
+        setJiraOpen(true);
+      } else if (integration.provider === "slack") {
+        setSlackOpen(true);
+      }
+    } finally {
+      setReconnectingId(null);
+    }
   };
 
   const showConnectAction = view === "ready";
@@ -1160,6 +1184,7 @@ export default function IntegrationsPage() {
             counts={counts}
             onConfigure={handleConfigure}
             onReconnect={handleReconnect}
+            reconnectingId={reconnectingId}
           />
         </>
       )}

@@ -175,7 +175,9 @@ async def test_admin_can_create_valid_invitation(auth_fixture):
             )
 
         assert resp.status_code == 201
-        assert resp.json() == {"status": "sent"}
+        body = resp.json()
+        assert body["status"] == "sent"
+        assert body["invite_url"].endswith("token=raw_secret_token_123")
         mock_create.assert_awaited_once()
         mock_send_email.assert_awaited_once_with("new.member@acme.io", "raw_secret_token_123")
 
@@ -213,7 +215,11 @@ async def test_valid_invitation_acceptance_provisions_user(mock_db_session):
 
         assert resp.status_code == 200
         assert resp.json() == {"status": "created"}
-        mock_kc_prov.assert_awaited_once_with("invited.engineer@acme.io", str(TENANT_ALPHA_UUID))
+        mock_kc_prov.assert_awaited_once_with(
+            "invited.engineer@acme.io",
+            str(TENANT_ALPHA_UUID),
+            role="SOLUTION_ARCHITECT",
+        )
         assert mock_db_session.add.called
         assert mock_db_session.commit.called
 

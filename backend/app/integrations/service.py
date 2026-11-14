@@ -22,6 +22,12 @@ from app.integrations.schemas import (
     IntegrationConnectResponse,
     IntegrationSummaryResponse,
 )
+from app.integrations.validators import (
+    InvalidCredentialsError,
+    validate_github_credentials,
+    validate_jira_credentials,
+    validate_slack_credentials,
+)
 
 logger = logging.getLogger("app.integrations.service")
 
@@ -206,3 +212,63 @@ async def delete_tenant_integration(
         res = await session.execute(stmt)
         await session.flush()
         return (res.rowcount or 0) > 0
+
+
+async def reconnect_tenant_integration(
+    tenant_id: uuid.UUID,
+    integration_id: uuid.UUID,
+    base_url: str,
+) -> Optional[IntegrationSummaryResponse]:
+    """Re-validates stored credentials (when present) and marks the integration active."""
+    async with get_tenant_db_context(tenant_id) as session:
+        stmt = select(Integration).where(
+            Integration.id == integration_id,
+            Integration.tenant_id == tenant_id,
+        )
+        res = await session.execute(stmt)
+        integ = res.scalars().first()
+        if not integ:
+            return None
+
+        if integ.api_credentials_vault_ref:
+            raw_json = encryption_service.decrypt(integ.api_credentials_vault_ref)
+            creds = json.loads(raw_json) if raw_json else {}
+            if integ.provider == "github" and creds.get("access_token"):
+                integ.external_account_id = await validate_github_credentials(creds["access_token"])
+            elif (
+                integ.provider == "jira"
+                and creds.get("base_url")
+                and creds.get("email")
+                and creds.get("api_token")
+            ):
+                integ.external_account_id = await validate_jira_credentials(
+                    base_url=creds["base_url"],
+                    email=creds["email"],
+                    api_token=creds["api_token"],
+                )
+            elif integ.provider == "slack" and creds.get("bot_token"):
+                integ.external_account_id = await validate_slack_credentials(creds["bot_token"])
+
+        integ.is_active = True
+        integ.updated_at = datetime.now(timezone.utc)
+        await session.flush()
+
+        masked = "********"
+        if integ.webhook_secret_hash:
+            try:
+                masked = mask_secret(encryption_service.decrypt(integ.webhook_secret_hash))
+            except Exception:
+                masked = "********"
+
+        return IntegrationSummaryResponse(
+            id=integ.id,
+            tenant_id=integ.tenant_id,
+            provider=integ.provider,
+            external_account_id=integ.external_account_id,
+            status="connected",
+            webhook_url=build_webhook_url(base_url, integ.id),
+            webhook_secret_masked=masked,
+            is_active=integ.is_active,
+            created_at=integ.created_at,
+            updated_at=integ.updated_at,
+        )

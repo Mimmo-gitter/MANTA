@@ -45,6 +45,9 @@ class Settings(BaseSettings):
 
     KC_SERVICE_CLIENT_ID: str = "manta-backend"
     KC_SERVICE_CLIENT_SECRET: str = ""
+    KEYCLOAK_ADMIN: str = "admin"
+    KEYCLOAK_ADMIN_PASSWORD: str = "admin"
+    KEYCLOAK_ADMIN_REALM: str = "master"
 
     # Recovery Sweeper Settings (SCRUM-388)
     SWEEP_INTERVAL_SECONDS: float = 5.0

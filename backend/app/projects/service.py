@@ -17,13 +17,15 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 
 from app.auth.schemas import TokenClaims
-from app.db.models.models import Integration, Project, ProjectLink, Repository, User
+from app.db.models.models import Incident, Integration, Project, ProjectLink, Repository, User
 from app.db.session import get_tenant_db_context
 from app.projects.schemas import (
     DeploymentSignalResponse,
     DeploymentSignalUpdateRequest,
     ProjectCreateRequest,
+    ProjectIncidentResponse,
     ProjectResponse,
+    ProjectUpdateRequest,
     RepositoryLinkRequest,
     RepositoryResponse,
 )
@@ -73,12 +75,14 @@ async def create_project(
             else str(data.authoritative_cd_signal)
         )
         now = datetime.now(timezone.utc)
+        clean_desc = data.description.strip() if data.description else None
         project = Project(
             id=uuid.uuid4(),
             tenant_id=tenant_id,
             created_by=creator_id,
             name=data.name.strip(),
             slug=slug,
+            description=clean_desc or None,
             tier_sla_hours=data.tier_sla_hours,
             authoritative_cd_signal=signal_val,
             lead_time_first_commit_strategy=data.lead_time_first_commit_strategy,
@@ -381,3 +385,122 @@ async def update_deployment_signal(
             authoritative_deployment_signal=project.authoritative_cd_signal,
             updated_at=project.updated_at,
         )
+
+
+async def update_project(
+    tenant_id: uuid.UUID,
+    project_id: uuid.UUID,
+    data: ProjectUpdateRequest,
+) -> ProjectResponse:
+    """Updates project metadata and engineering thresholds under tenant RLS."""
+    async with get_tenant_db_context(tenant_id) as session:
+        stmt = (
+            select(Project)
+            .options(selectinload(Project.repositories))
+            .where(
+                Project.id == project_id,
+                Project.tenant_id == tenant_id,
+                Project.deleted_at.is_(None),
+            )
+        )
+        res = await session.execute(stmt)
+        project = res.scalars().first()
+        if not project:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Project '{project_id}' not found.",
+            )
+
+        fields = data.model_fields_set
+        if "name" in fields and data.name is not None:
+            project.name = data.name.strip()
+        if "slug" in fields and data.slug is not None:
+            cleaned_slug = slugify(data.slug)
+            project.slug = cleaned_slug
+        if "description" in fields:
+            project.description = data.description.strip() if data.description else None
+        if "tier_sla_hours" in fields and data.tier_sla_hours is not None:
+            project.tier_sla_hours = data.tier_sla_hours
+        if "wip_limit_per_dev" in fields and data.wip_limit_per_dev is not None:
+            project.wip_limit_per_dev = data.wip_limit_per_dev
+        if "pr_stale_threshold_hours" in fields and data.pr_stale_threshold_hours is not None:
+            project.pr_stale_threshold_hours = data.pr_stale_threshold_hours
+        if (
+            "lead_time_first_commit_strategy" in fields
+            and data.lead_time_first_commit_strategy is not None
+        ):
+            project.lead_time_first_commit_strategy = data.lead_time_first_commit_strategy
+        if "is_active" in fields and data.is_active is not None:
+            project.is_active = data.is_active
+
+        project.updated_at = datetime.now(timezone.utc)
+
+        try:
+            await session.flush()
+        except IntegrityError as exc:
+            err_msg = str(exc.orig) if exc.orig else str(exc)
+            if "uq_projects_tenant_slug" in err_msg or "slug" in err_msg.lower():
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Project with slug '{project.slug}' already exists in this organization.",
+                ) from exc
+            raise
+
+        return ProjectResponse.model_validate(project)
+
+
+async def archive_project(
+    tenant_id: uuid.UUID,
+    project_id: uuid.UUID,
+) -> None:
+    """Soft-archives a project by marking it inactive and setting deleted_at."""
+    async with get_tenant_db_context(tenant_id) as session:
+        stmt = select(Project).where(
+            Project.id == project_id,
+            Project.tenant_id == tenant_id,
+            Project.deleted_at.is_(None),
+        )
+        res = await session.execute(stmt)
+        project = res.scalars().first()
+        if not project:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Project '{project_id}' not found.",
+            )
+
+        now = datetime.now(timezone.utc)
+        project.is_active = False
+        project.deleted_at = now
+        project.updated_at = now
+        await session.flush()
+
+
+async def list_project_incidents(
+    tenant_id: uuid.UUID,
+    project_id: uuid.UUID,
+) -> list[ProjectIncidentResponse]:
+    """Lists production failure incidents linked to a project."""
+    async with get_tenant_db_context(tenant_id) as session:
+        proj_res = await session.execute(
+            select(Project.id).where(
+                Project.id == project_id,
+                Project.tenant_id == tenant_id,
+                Project.deleted_at.is_(None),
+            )
+        )
+        if proj_res.first() is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Project '{project_id}' not found.",
+            )
+
+        inc_res = await session.execute(
+            select(Incident)
+            .where(
+                Incident.tenant_id == tenant_id,
+                Incident.project_id == project_id,
+            )
+            .order_by(Incident.started_at.desc())
+            .limit(100)
+        )
+        return [ProjectIncidentResponse.model_validate(i) for i in inc_res.scalars().all()]

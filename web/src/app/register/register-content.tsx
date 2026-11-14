@@ -48,13 +48,19 @@ export function RegisterContent() {
     setDuplicateError(null);
 
     const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    const cleanInvites = teamInvites
+      .map((email) => email.trim().toLowerCase())
+      .filter((email) => email.length > 0);
 
     const payload = {
       name: formData.organizationName.trim(),
       slug: formData.tenantSlug.trim(),
+      industry: formData.industry.trim() || undefined,
       admin_name: formData.adminName.trim(),
       admin_email: formData.adminEmail.trim().toLowerCase(),
+      password: formData.password,
       allowed_domain: formData.adminEmail.split("@")[1] || undefined,
+      invites: cleanInvites,
     };
 
     try {

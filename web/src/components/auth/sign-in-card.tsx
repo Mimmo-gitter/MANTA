@@ -3,8 +3,9 @@
 import React, { useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
-import { initiateLogin } from "@/lib/auth";
+import { initiateLogin, loginWithCredentials } from "@/lib/auth";
 import { SsoShieldIcon, AlertErrorIcon } from "@/components/icons/auth-icons";
 
 interface SignInCardProps {
@@ -22,9 +23,11 @@ export function SignInCard({
   isRegistered = false,
   sessionExpired = false,
 }: SignInCardProps) {
+  const router = useRouter();
   const [email, setEmail] = useState(defaultEmail);
   const [password, setPassword] = useState("");
   const [isLoadingSso, setIsLoadingSso] = useState(false);
+  const [isLoadingCredentials, setIsLoadingCredentials] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(initialError);
   const [emailError, setEmailError] = useState<string | null>(null);
   const [passwordError, setPasswordError] = useState<string | null>(null);
@@ -62,7 +65,7 @@ export function SignInCard({
     }
   };
 
-  const handleCredentialsSubmit = (e: React.FormEvent) => {
+  const handleCredentialsSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const emailErr = validateEmail(email);
     const passErr = validatePassword(password);
@@ -74,8 +77,35 @@ export function SignInCard({
       setErrorMessage(
         "Authentication failed\nInvalid credentials or SSO sign-in was cancelled. Verify your email and password."
       );
-    } else {
+      return;
+    }
+
+    try {
+      setIsLoadingCredentials(true);
       setErrorMessage(null);
+      await loginWithCredentials(email, password);
+
+      let destination = "/";
+      if (typeof window !== "undefined") {
+        const storedReturnTo = window.sessionStorage.getItem("manta_auth_return_to");
+        window.sessionStorage.removeItem("manta_auth_return_to");
+        if (
+          storedReturnTo &&
+          storedReturnTo.startsWith("/") &&
+          !storedReturnTo.startsWith("//") &&
+          storedReturnTo !== "/login"
+        ) {
+          destination = storedReturnTo;
+        }
+      }
+      router.replace(destination);
+    } catch (err: unknown) {
+      setIsLoadingCredentials(false);
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : "Invalid credentials or SSO sign-in was cancelled. Verify your email and password.";
+      setErrorMessage(`Authentication failed\n${msg}`);
     }
   };
 
@@ -331,24 +361,34 @@ export function SignInCard({
         {/* Credentials Submit Button */}
         <button
           type="submit"
-          className="flex h-[44px] min-h-[44px] w-full items-center justify-center gap-1.5 rounded-[12px] bg-[#00E599] font-semibold text-[14px] leading-5 text-black transition-all hover:bg-[#00f5a0] active:scale-[0.99] mt-0 shadow-[0px_2px_10px_rgba(0,245,160,0.15)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00E599] focus-visible:ring-offset-2 focus-visible:ring-offset-[#171B26]"
+          disabled={isLoadingCredentials || isLoadingSso}
+          className="flex h-[44px] min-h-[44px] w-full items-center justify-center gap-1.5 rounded-[12px] bg-[#00E599] font-semibold text-[14px] leading-5 text-black transition-all hover:bg-[#00f5a0] active:scale-[0.99] mt-0 shadow-[0px_2px_10px_rgba(0,245,160,0.15)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00E599] focus-visible:ring-offset-2 focus-visible:ring-offset-[#171B26] disabled:opacity-70 disabled:cursor-not-allowed"
         >
-          <span>Sign In</span>
-          <svg
-            className="w-3.5 h-3.5"
-            viewBox="0 0 14 14"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-            aria-hidden="true"
-          >
-            <path
-              d="M2.5 7H11.5M11.5 7L7.5 3M11.5 7L7.5 11"
-              stroke="#006B43"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
+          {isLoadingCredentials ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+              <span>Signing in...</span>
+            </>
+          ) : (
+            <>
+              <span>Sign In</span>
+              <svg
+                className="w-3.5 h-3.5"
+                viewBox="0 0 14 14"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+                aria-hidden="true"
+              >
+                <path
+                  d="M2.5 7H11.5M11.5 7L7.5 3M11.5 7L7.5 11"
+                  stroke="#006B43"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </>
+          )}
         </button>
 
         {/* Sign-Up / Organization Registration Link Row */}

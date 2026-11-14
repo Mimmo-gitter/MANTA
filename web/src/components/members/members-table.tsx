@@ -11,10 +11,19 @@ import {
 } from "lucide-react";
 import type { WorkspaceMember } from "@/types/member";
 import { CANONICAL_ROLES, type Role } from "@/lib/permissions";
-import { updateMemberRole, sendInvitation } from "@/lib/members-api";
+import {
+  getCachedInviteUrl,
+  removeMember,
+  revokeInvitation,
+  sendInvitation,
+  updateInvitationRole,
+  updateMemberRole,
+} from "@/lib/members-api";
 import {
   ReissueInviteDialog,
   ConfirmRoleChangeDialog,
+  RevokeInviteDialog,
+  RemoveMemberDialog,
 } from "@/components/members/member-action-dialogs";
 import { cn } from "@/lib/utils";
 
@@ -216,6 +225,8 @@ export function MembersTable({
   // Action Confirmation Dialog States
   const [reissueMember, setReissueMember] = useState<WorkspaceMember | null>(null);
   const [roleChangeTarget, setRoleChangeTarget] = useState<{ member: WorkspaceMember; newRole: Role } | null>(null);
+  const [revokeTarget, setRevokeTarget] = useState<WorkspaceMember | null>(null);
+  const [removeTarget, setRemoveTarget] = useState<WorkspaceMember | null>(null);
 
   const roleDropdownRef = useRef<HTMLDivElement>(null);
   const statusDropdownRef = useRef<HTMLDivElement>(null);
@@ -443,13 +454,20 @@ export function MembersTable({
 
   const handleConfirmRoleChange = async (memberId: string, newRole: Role) => {
     try {
-      await updateMemberRole(memberId, newRole);
+      const memberObj = members.find((m) => m.id === memberId);
+      const isInvitation =
+        memberObj?.recordType === "INVITATION" ||
+        (memberObj && memberObj.status !== "ACTIVE");
+      if (isInvitation) {
+        await updateInvitationRole(memberId, newRole);
+      } else {
+        await updateMemberRole(memberId, newRole);
+      }
       onMembersChange();
       const roleLabel = ROLE_PILL_STYLES[newRole]?.label || newRole;
-      const memberObj = members.find((m) => m.id === memberId);
-      const memberName = memberObj?.name || "Member";
+      const memberName = memberObj?.name || memberObj?.email || "Member";
       showToast({
-        title: "Member role updated",
+        title: isInvitation ? "Invited role updated" : "Member role updated",
         subtitle: `Role updated to ${roleLabel} · ${memberName} → ${roleLabel}`,
         variant: "blue",
       });
@@ -461,6 +479,83 @@ export function MembersTable({
         subtitle: isRateLimit
           ? "Rate limit reached. Please retry in 30s."
           : msg || "Failed to update role.",
+        variant: "red",
+      });
+    }
+  };
+
+  const handleCopyInviteLink = async (member: WorkspaceMember) => {
+    try {
+      let url = member.inviteUrl || getCachedInviteUrl(member.email, member.id);
+      if (!url) {
+        const res = await sendInvitation({
+          email: member.email,
+          role: member.role,
+        });
+        url = res.invite_url ?? undefined;
+        onMembersChange();
+      }
+      if (!url) {
+        showToast({
+          title: "Invite link unavailable",
+          subtitle: `Invitation email was sent to ${member.email}, but no direct link was returned.`,
+          variant: "amber",
+        });
+        return;
+      }
+      await navigator.clipboard?.writeText(url);
+      showToast({
+        title: "One-time invite link copied",
+        subtitle: `Single-use token valid for 48 hours · ${member.email}`,
+        copyLink: url,
+        variant: "cyan",
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "";
+      showToast({
+        title: "Action failed",
+        subtitle: msg || "Failed to copy one-time invite link.",
+        variant: "red",
+      });
+    }
+  };
+
+  const handleConfirmRevokeInvite = async (invitationId: string, email: string) => {
+    try {
+      const wasExpired = revokeTarget?.status === "EXPIRED";
+      await revokeInvitation(invitationId);
+      onMembersChange();
+      showToast({
+        title: wasExpired ? "Expired invite deleted" : "Invitation revoked",
+        subtitle: wasExpired
+          ? `Expired invitation record removed for ${email}`
+          : `Single-use invite link invalidated for ${email}`,
+        variant: "amber",
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "";
+      showToast({
+        title: "Action failed",
+        subtitle: msg || "Failed to revoke invitation.",
+        variant: "red",
+      });
+    }
+  };
+
+  const handleConfirmRemoveMember = async (memberId: string, displayName: string) => {
+    try {
+      await removeMember(memberId);
+      onMembersChange();
+      showToast({
+        title: "Member removed from workspace",
+        subtitle: `${displayName} no longer has access to this workspace`,
+        variant: "amber",
+      });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "";
+      showToast({
+        title: "Action failed",
+        subtitle: msg || "Failed to remove workspace member.",
         variant: "red",
       });
     }
@@ -1426,19 +1521,43 @@ export function MembersTable({
 
                             <div className="my-px h-px w-full bg-[#262d3d]" />
 
-                            <button
-                              type="button"
-                              role="menuitem"
-                              disabled
-                              aria-disabled="true"
-                              title="Member removal awaits DELETE /api/v1/members/{id} backend support"
-                              className="flex h-[27px] w-full items-center gap-[8px] rounded-[6px] px-[8px] py-[6px] text-left font-sans text-[12px] font-semibold leading-[15px] text-[#ff6b6b]/50 opacity-50 cursor-not-allowed"
-                            >
-                              <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true" className="shrink-0">
-                                <path d="M2.4375 3.65625H3.65625M3.65625 3.65625H4.875M3.65625 3.65625L4.225 10.5625C4.225 10.778 4.3106 10.9847 4.46298 11.137C4.61535 11.2894 4.82201 11.375 5.0375 11.375H7.9625C8.17799 11.375 8.38465 11.2894 8.53702 11.137C8.6894 10.9847 8.775 10.778 8.775 10.5625L9.34375 3.65625M4.875 3.65625H8.125M4.875 3.65625V2.4375C4.875 2.22201 4.9606 2.01535 5.11298 1.86298C5.26535 1.7106 5.47201 1.625 5.6875 1.625H7.3125C7.52799 1.625 7.73465 1.7106 7.88702 1.86298C8.0394 2.01535 8.125 2.22201 8.125 2.4375V3.65625M8.125 3.65625H9.34375M9.34375 3.65625H10.5625" stroke="#FF6B6B" strokeWidth="1.05625" strokeLinecap="round" strokeLinejoin="round" />
-                              </svg>
-                              <span>Remove from workspace...</span>
-                            </button>
+                            {(() => {
+                              const isSelf = Boolean(member.isCurrentUser);
+                              const isSoleAdmin =
+                                member.role === "TENANT_ADMIN" &&
+                                roleCounts.TENANT_ADMIN <= 1;
+                              const removeDisabled = isSelf || isSoleAdmin;
+                              const disabledTitle = isSelf
+                                ? "You cannot remove your own active session account"
+                                : isSoleAdmin
+                                  ? "Cannot remove the sole workspace administrator"
+                                  : undefined;
+                              return (
+                                <button
+                                  type="button"
+                                  role="menuitem"
+                                  disabled={removeDisabled}
+                                  aria-disabled={removeDisabled || undefined}
+                                  title={disabledTitle}
+                                  onClick={() => {
+                                    if (removeDisabled) return;
+                                    setRemoveTarget(member);
+                                    setActiveMenuMemberId(null);
+                                  }}
+                                  className={cn(
+                                    "flex h-[27px] w-full items-center gap-[8px] rounded-[6px] px-[8px] py-[6px] text-left font-sans text-[12px] font-semibold leading-[15px] transition-colors",
+                                    removeDisabled
+                                      ? "text-[#ff6b6b]/50 opacity-50 cursor-not-allowed"
+                                      : "text-[#ff6b6b] hover:bg-[rgba(255,107,107,0.12)] cursor-pointer",
+                                  )}
+                                >
+                                  <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true" className="shrink-0">
+                                    <path d="M2.4375 3.65625H3.65625M3.65625 3.65625H4.875M3.65625 3.65625L4.225 10.5625C4.225 10.778 4.3106 10.9847 4.46298 11.137C4.61535 11.2894 4.82201 11.375 5.0375 11.375H7.9625C8.17799 11.375 8.38465 11.2894 8.53702 11.137C8.6894 10.9847 8.775 10.778 8.775 10.5625L9.34375 3.65625M4.875 3.65625H8.125M4.875 3.65625V2.4375C4.875 2.22201 4.9606 2.01535 5.11298 1.86298C5.26535 1.7106 5.47201 1.625 5.6875 1.625H7.3125C7.52799 1.625 7.73465 1.7106 7.88702 1.86298C8.0394 2.01535 8.125 2.22201 8.125 2.4375V3.65625M8.125 3.65625H9.34375M9.34375 3.65625H10.5625" stroke="#FF6B6B" strokeWidth="1.05625" strokeLinecap="round" strokeLinejoin="round" />
+                                  </svg>
+                                  <span>Remove from workspace...</span>
+                                </button>
+                              );
+                            })()}
                           </>
                         )}
 
@@ -1454,10 +1573,11 @@ export function MembersTable({
                             <button
                               type="button"
                               role="menuitem"
-                              disabled
-                              aria-disabled="true"
-                              title="Invitation links are emailed directly and not exposed by the API"
-                              className="flex h-[27px] w-full items-center gap-[8px] rounded-[6px] bg-[rgba(0,194,203,0.06)] px-[8px] py-[6px] text-left font-sans text-[12px] font-semibold leading-[15px] text-[#00c2cb]/50 opacity-50 cursor-not-allowed"
+                              onClick={() => {
+                                void handleCopyInviteLink(member);
+                                setActiveMenuMemberId(null);
+                              }}
+                              className="flex h-[27px] w-full items-center gap-[8px] rounded-[6px] bg-[rgba(0,194,203,0.1)] px-[8px] py-[6px] text-left font-sans text-[12px] font-semibold leading-[15px] text-[#00c2cb] transition-colors hover:bg-[rgba(0,194,203,0.16)] cursor-pointer"
                             >
                               <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true" className="shrink-0">
                                 <path d="M5.28119 7.71869L7.71869 5.28119M4.46869 6.09369L3.65619 6.90619C3.33296 7.22942 3.15137 7.66782 3.15137 8.12494C3.15137 8.58206 3.33296 9.02046 3.65619 9.34369C3.97942 9.66692 4.41782 9.84851 4.87494 9.84851C5.33206 9.84851 5.77046 9.66692 6.09369 9.34369L6.90619 8.53119M8.53119 6.90619L9.34369 6.09369C9.66692 5.77046 9.84851 5.33206 9.84851 4.87494C9.84851 4.41782 9.66692 3.97942 9.34369 3.65619C9.02046 3.33296 8.58206 3.15137 8.12494 3.15137C7.66782 3.15137 7.22942 3.33296 6.90619 3.65619L6.09369 4.46869" stroke="#00C2CB" strokeWidth="1.05625" strokeLinecap="round" />
@@ -1501,10 +1621,11 @@ export function MembersTable({
                             <button
                               type="button"
                               role="menuitem"
-                              disabled
-                              aria-disabled="true"
-                              title="Invitation revocation awaits DELETE /api/v1/invitations/{id} backend support"
-                              className="flex h-[27px] w-full items-center gap-[8px] rounded-[6px] px-[8px] py-[6px] text-left font-sans text-[12px] font-semibold leading-[15px] text-[#ff6b6b]/50 opacity-50 cursor-not-allowed"
+                              onClick={() => {
+                                setRevokeTarget(member);
+                                setActiveMenuMemberId(null);
+                              }}
+                              className="flex h-[27px] w-full items-center gap-[8px] rounded-[6px] px-[8px] py-[6px] text-left font-sans text-[12px] font-semibold leading-[15px] text-[#ff6b6b] transition-colors hover:bg-[rgba(255,107,107,0.12)] cursor-pointer"
                             >
                               <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true" className="shrink-0">
                                 <path d="M11.2126 6.5001C11.2126 9.10274 9.10274 11.2126 6.5001 11.2126C3.89746 11.2126 1.7876 9.10274 1.7876 6.5001C1.7876 3.89746 3.89746 1.7876 6.5001 1.7876C9.10274 1.7876 11.2126 3.89746 11.2126 6.5001Z" stroke="#FF6B6B" strokeWidth="1.05625" />
@@ -1576,10 +1697,11 @@ export function MembersTable({
                             <button
                               type="button"
                               role="menuitem"
-                              disabled
-                              aria-disabled="true"
-                              title="Invitation revocation awaits DELETE /api/v1/invitations/{id} backend support"
-                              className="flex h-[27px] w-full items-center gap-[8px] rounded-[6px] px-[8px] py-[6px] text-left font-sans text-[12px] font-semibold leading-[15px] text-[#ff6b6b]/50 opacity-50 cursor-not-allowed"
+                              onClick={() => {
+                                setRevokeTarget(member);
+                                setActiveMenuMemberId(null);
+                              }}
+                              className="flex h-[27px] w-full items-center gap-[8px] rounded-[6px] px-[8px] py-[6px] text-left font-sans text-[12px] font-semibold leading-[15px] text-[#ff6b6b] transition-colors hover:bg-[rgba(255,107,107,0.12)] cursor-pointer"
                             >
                               <svg width="13" height="13" viewBox="0 0 13 13" fill="none" aria-hidden="true" className="shrink-0">
                                 <path d="M2.4375 3.65625H3.65625M3.65625 3.65625H4.875M3.65625 3.65625L4.225 10.5625C4.225 10.778 4.3106 10.9847 4.46298 11.137C4.61535 11.2894 4.82201 11.375 5.0375 11.375H7.9625C8.17799 11.375 8.38465 11.2894 8.53702 11.137C8.6894 10.9847 8.775 10.778 8.775 10.5625L9.34375 3.65625M4.875 3.65625H8.125M4.875 3.65625V2.4375C4.875 2.22201 4.9606 2.01535 5.11298 1.86298C5.26535 1.7106 5.47201 1.625 5.6875 1.625H7.3125C7.52799 1.625 7.73465 1.7106 7.88702 1.86298C8.0394 2.01535 8.125 2.22201 8.125 2.4375V3.65625M8.125 3.65625H9.34375M9.34375 3.65625H10.5625" stroke="#FF6B6B" strokeWidth="1.05625" strokeLinecap="round" strokeLinejoin="round" />
@@ -1672,6 +1794,20 @@ export function MembersTable({
         newRole={roleChangeTarget?.newRole || "DEVELOPER"}
         onClose={() => setRoleChangeTarget(null)}
         onConfirm={handleConfirmRoleChange}
+      />
+
+      <RevokeInviteDialog
+        isOpen={Boolean(revokeTarget)}
+        member={revokeTarget}
+        onClose={() => setRevokeTarget(null)}
+        onConfirm={handleConfirmRevokeInvite}
+      />
+
+      <RemoveMemberDialog
+        isOpen={Boolean(removeTarget)}
+        member={removeTarget}
+        onClose={() => setRemoveTarget(null)}
+        onConfirm={handleConfirmRemoveMember}
       />
     </div>
   );

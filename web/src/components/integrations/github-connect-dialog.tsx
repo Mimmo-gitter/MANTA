@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
-import { getCurrentUser } from "@/lib/auth";
+import { connectGitHub as connectGitHubApi } from "@/lib/integrations-api";
 import {
   ArrowRight,
   Check,
@@ -44,65 +44,26 @@ interface GitHubConnectDialogProps {
   onConnected?: (connection: GitHubConnection) => void;
 }
 
-/**
- * TODO: replace with the real flow.
- * Send the token (and optional webhook secret) to your backend over HTTPS.
- * The backend validates the token against the GitHub API, stores it encrypted,
- * and returns the account, a masked token and the webhook URL.
- *
- * This mock resolves after a delay. Add `?githubError=1` to the URL to see the
- * failure state.
- */
 async function connectGitHub(
   token: string,
   webhookSecret: string,
   signal: AbortSignal,
 ): Promise<GitHubConnection> {
-  // Get the current authenticated M.A.N.T.A. user
-  const user = await getCurrentUser();
-
-  if (!user?.access_token) {
-    throw new Error("Your session has expired. Please sign in again.");
-  }
-
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
-
-  const response = await fetch(
-    `${API_URL}/api/v1/integrations/github/connect`,
+  const data = await connectGitHubApi(
     {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${user.access_token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        access_token: token,
-        ...(webhookSecret.trim()
-          ? { webhook_secret: webhookSecret.trim() }
-          : {}),
-      }),
-      signal,
+      access_token: token,
+      ...(webhookSecret.trim()
+        ? { webhook_secret: webhookSecret.trim() }
+        : {}),
     },
+    { signal },
   );
 
-  const data = await response.json().catch(() => null);
-
-  if (!response.ok) {
-    const message =
-      typeof data?.detail === "string"
-        ? data.detail
-        : response.status === 400
-          ? "Invalid GitHub access token. Please check your token."
-          : `GitHub connection failed (${response.status}).`;
-
-    throw new Error(message);
-  }
-
   return {
-    account: data.external_account_id,
+    account: data.external_account_id ?? "GitHub",
     tokenMask: `ghp_•••${token.slice(-4)}`,
     webhookUrl: data.webhook_url,
-    webhookVerified: Boolean(webhookSecret.trim()),
+    webhookVerified: Boolean(webhookSecret.trim() || data.webhook_secret_masked),
   };
 }
 

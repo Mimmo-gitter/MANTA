@@ -16,10 +16,12 @@ export function getIntegrations(): Promise<Integration[]> {
 
 export function connectGitHub(
   data: GitHubConnectRequest,
+  options?: { signal?: AbortSignal },
 ): Promise<Integration> {
   return apiRequest<Integration>(`${INTEGRATIONS_ENDPOINT}/github/connect`, {
     method: "POST",
     body: JSON.stringify(data),
+    signal: options?.signal,
   });
 }
 
@@ -35,6 +37,15 @@ export function connectSlack(data: SlackConnectRequest): Promise<Integration> {
     method: "POST",
     body: JSON.stringify(data),
   });
+}
+
+export function reconnectIntegration(id: string): Promise<Integration> {
+  return apiRequest<Integration>(
+    `${INTEGRATIONS_ENDPOINT}/${encodeURIComponent(id)}/reconnect`,
+    {
+      method: "POST",
+    },
+  );
 }
 
 export function deleteIntegration(id: string): Promise<void> {

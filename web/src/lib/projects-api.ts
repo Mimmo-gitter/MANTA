@@ -3,13 +3,13 @@ import type {
   DeploymentSignalConfig,
   DeploymentSignalUpdatePayload,
   ProjectCreatePayload,
+  ProjectIncidentItem,
   ProjectItem,
-  ProjectUiMeta,
+  ProjectUpdatePayload,
   RepositoryItem,
   RepositoryLinkPayload,
 } from "@/types/project";
 
-const PROJECT_UI_META_STORAGE_KEY = "manta.project_ui_meta.v1";
 const PROJECT_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const OWNER_PATTERN = /^[a-zA-Z0-9_](?:[a-zA-Z0-9_-]*[a-zA-Z0-9_])?$/;
 const REPO_PATTERN = /^[a-zA-Z0-9_.-]+$/;
@@ -31,6 +31,30 @@ export async function createProject(
     method: "POST",
     body: JSON.stringify(payload),
   });
+}
+
+export async function updateProject(
+  projectId: string,
+  payload: ProjectUpdatePayload,
+): Promise<ProjectItem> {
+  return apiRequest<ProjectItem>(`/api/v1/projects/${projectId}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function deleteProject(projectId: string): Promise<void> {
+  return apiRequest<void>(`/api/v1/projects/${projectId}`, {
+    method: "DELETE",
+  });
+}
+
+export async function listProjectIncidents(
+  projectId: string,
+): Promise<ProjectIncidentItem[]> {
+  return apiRequest<ProjectIncidentItem[]>(
+    `/api/v1/projects/${projectId}/incidents`,
+  );
 }
 
 export async function linkRepository(
@@ -203,44 +227,4 @@ export function normalizeGitHubRepoInput(
     fullName,
     repositoryUrl: `https://github.com/${fullName}`,
   };
-}
-
-function readUiMetaStore(): Record<string, ProjectUiMeta> {
-  if (typeof window === "undefined") {
-    return {};
-  }
-  try {
-    const raw = window.localStorage.getItem(PROJECT_UI_META_STORAGE_KEY);
-    return raw ? (JSON.parse(raw) as Record<string, ProjectUiMeta>) : {};
-  } catch {
-    return {};
-  }
-}
-
-export function getProjectUiMeta(slugOrId: string): ProjectUiMeta {
-  const store = readUiMetaStore();
-  return store[slugOrId] ?? {};
-}
-
-export function saveProjectUiMeta(
-  project: Pick<ProjectItem, "id" | "slug">,
-  meta: ProjectUiMeta,
-): void {
-  if (typeof window === "undefined") {
-    return;
-  }
-  const trimmed = meta.description?.trim();
-  const store = readUiMetaStore();
-  if (!trimmed) {
-    delete store[project.id];
-    delete store[project.slug];
-  } else {
-    store[project.id] = { description: trimmed };
-    store[project.slug] = { description: trimmed };
-  }
-  try {
-    window.localStorage.setItem(PROJECT_UI_META_STORAGE_KEY, JSON.stringify(store));
-  } catch {
-    // Ignore storage quota errors cleanly.
-  }
 }

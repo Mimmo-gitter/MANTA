@@ -349,10 +349,6 @@ export function canAccessPortalRoute(
   pathname: string,
   can: (action: ActionId) => boolean,
 ): boolean {
-  if (pathname === "/members" || pathname.startsWith("/members/")) {
-    return can("MANAGE_TENANT_USERS_AND_ROLES");
-  }
-
   const matchedItem = getNavItemByPathname(pathname);
   if (matchedItem?.requiredAction) {
     return can(matchedItem.requiredAction);

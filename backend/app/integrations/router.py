@@ -28,6 +28,7 @@ from app.integrations.service import (
     generate_webhook_secret,
     get_tenant_integration,
     list_tenant_integrations,
+    reconnect_tenant_integration,
     save_or_update_integration,
 )
 from app.integrations.validators import (
@@ -187,6 +188,35 @@ async def get_integration(
 ) -> IntegrationSummaryResponse:
     """Retrieves an integration for the tenant by ID."""
     res = await get_tenant_integration(user.tenant_uuid, integration_id, str(request.base_url))
+    if not res:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Integration '{integration_id}' not found",
+        )
+    return res
+
+
+@router.post(
+    "/{integration_id}/reconnect",
+    response_model=IntegrationSummaryResponse,
+    summary="Reconnect and re-validate an existing integration",
+)
+async def reconnect_integration(
+    integration_id: uuid.UUID,
+    request: Request,
+    user: TokenClaims = Depends(require_tenant_admin),
+) -> IntegrationSummaryResponse:
+    """Re-validates stored provider credentials and transitions an integration back to connected."""
+    try:
+        res = await reconnect_tenant_integration(
+            user.tenant_uuid, integration_id, str(request.base_url)
+        )
+    except InvalidCredentialsError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
+
     if not res:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
