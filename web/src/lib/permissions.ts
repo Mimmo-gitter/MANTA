@@ -134,3 +134,49 @@ export function cannotUser(
 ): boolean {
   return !canUser(roles, action);
 }
+
+const ROLE_DISPLAY_LABELS: Record<Role, string> = {
+  TENANT_ADMIN: "Tenant Admin",
+  DELIVERY_DIRECTOR: "Delivery Director",
+  TOP_MANAGEMENT: "Top Management",
+  SOLUTION_ARCHITECT: "Solution Architect",
+  PROJECT_MANAGER: "Project Manager",
+  SCRUM_MASTER: "Scrum Master",
+  DEVELOPER: "Developer",
+};
+
+const ROLE_PRECEDENCE: readonly Role[] = [
+  "TENANT_ADMIN",
+  "DELIVERY_DIRECTOR",
+  "TOP_MANAGEMENT",
+  "SOLUTION_ARCHITECT",
+  "PROJECT_MANAGER",
+  "SCRUM_MASTER",
+  "DEVELOPER",
+];
+
+export function getRoleLabel(role: string): string {
+  const canonical = normalizeRole(role) as Role;
+  if (canonical in ROLE_DISPLAY_LABELS) {
+    return ROLE_DISPLAY_LABELS[canonical];
+  }
+  return canonical
+    .split("_")
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1).toLowerCase())
+    .join(" ");
+}
+
+export function getPrimaryRoleLabel(roles: string[] | null | undefined): string {
+  if (!roles || !Array.isArray(roles) || roles.length === 0) {
+    return "Member";
+  }
+
+  for (const preferred of ROLE_PRECEDENCE) {
+    if (hasRole(roles, preferred)) {
+      return ROLE_DISPLAY_LABELS[preferred];
+    }
+  }
+
+  return getRoleLabel(roles[0]);
+}

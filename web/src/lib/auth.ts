@@ -43,62 +43,8 @@ export function getTenantDisplayName(tenantId?: string | null): string {
   return `Tenant: ${tenantId}`;
 }
 
-export const DEMO_BACKEND_USER: BackendUserClaims = {
-  sub: "demo-user-id",
-  name: "Pavlo Zhuk",
-  preferred_username: "pzhuk",
-  email: "director@manta.ai",
-  tenant_id: "",
-  roles: ["TENANT_ADMIN"],
-};
-
-export function getDemoBackendUser(): BackendUserClaims | null {
-  if (typeof window === "undefined") return null;
-
-  // Persist demo mode if passed via query param
-  if (window.location.search.includes("demo=true")) {
-    try {
-      window.sessionStorage.setItem("manta_demo", "true");
-      window.localStorage.setItem("manta_demo", "true");
-    } catch {
-      // ignore
-    }
-  }
-
-  if (window.sessionStorage.getItem("user_signed_out") === "true") {
-    return null;
-  }
-
-  const isDemo =
-    window.location.search.includes("state=") ||
-    window.location.search.includes("demo=true") ||
-    window.sessionStorage.getItem("manta_demo") === "true" ||
-    window.localStorage.getItem("manta_demo") === "true" ||
-    window.location.hostname === "localhost" ||
-    window.location.hostname === "127.0.0.1";
-
-  if (!isDemo) {
-    return null;
-  }
-
-  let roles = ["TENANT_ADMIN"];
-  try {
-    const customRoles = window.sessionStorage.getItem("manta_demo_roles");
-    if (customRoles) {
-      roles = JSON.parse(customRoles);
-    }
-  } catch {
-    // fallback to default
-  }
-
-  return {
-    ...DEMO_BACKEND_USER,
-    roles,
-  };
-}
-
 export const ACCESS_TOKEN_EXPIRING_NOTIFICATION_TIME_SECONDS = 15;
-export const RENEW_SKIP_THRESHOLD_SECONDS = 120;
+export const RENEW_SKIP_THRESHOLD_SECONDS = 45;
 
 export function getOidcSettings(): UserManagerSettings {
   const redirectUri =
@@ -405,8 +351,8 @@ export async function initiateLogin(args?: SigninRedirectArgs): Promise<void> {
 
 /**
  * Completes standard Authorization Code Flow with PKCE callback.
- * Validates state against sessionStorage, exchanges code with verifier,
- * validates nonce and ID token claims, and stores User in sessionStorage.
+ * Validates state, exchanges code with verifier,
+ * validates nonce and ID token claims, and persists the User in localStorage.
  */
 export async function handleSigninCallback(url?: string): Promise<User> {
   const manager = getUserManager();
@@ -438,7 +384,7 @@ export async function handleSigninCallback(url?: string): Promise<User> {
 }
 
 /**
- * Retrieves the currently active authenticated User from sessionStorage.
+ * Retrieves the currently active authenticated User from localStorage.
  */
 export async function getCurrentUser(): Promise<User | null> {
   if (typeof window === "undefined") return null;
@@ -448,7 +394,7 @@ export async function getCurrentUser(): Promise<User | null> {
 
 /**
  * Initiates standard OIDC RP-Initiated Logout (RFC 7636 / OpenID Connect RP-Initiated Logout 1.0).
- * Purges tokens and state from sessionStorage, removes user from UserManager store,
+ * Purges tokens and state from localStorage, removes user from UserManager store,
  * and redirects the browser to Keycloak end_session_endpoint with id_token_hint and post_logout_redirect_uri.
  */
 export async function logoutUser(

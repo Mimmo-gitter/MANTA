@@ -109,7 +109,9 @@ test.describe("Tenant / Organization Registration Flow (SCRUM-243 / US-7)", () =
 
     let capturedPayload: any = null;
     await page.route("**/tenants/register", async (route) => {
-      capturedPayload = JSON.parse(route.request().postData() || "{}");
+      if (route.request().method() === "POST") {
+        capturedPayload = JSON.parse(route.request().postData() || "{}");
+      }
       await route.fulfill({
         status: 201,
         contentType: "application/json",
@@ -213,7 +215,7 @@ test.describe("Tenant / Organization Registration Flow (SCRUM-243 / US-7)", () =
     await submitBtn.click();
 
     // Verify backend received exact contract
-    expect(capturedPayload).not.toBeNull();
+    await expect.poll(() => capturedPayload, { timeout: 10000 }).not.toBeNull();
     expect(capturedPayload.name).toBe(orgName);
     expect(capturedPayload.slug).toBe(orgSlug);
     expect(capturedPayload.admin_name).toBe(adminName);
@@ -250,7 +252,9 @@ test.describe("Tenant / Organization Registration Flow (SCRUM-243 / US-7)", () =
 
     let capturedPayload: any = null;
     await page.route("**/tenants/register", async (route) => {
-      capturedPayload = JSON.parse(route.request().postData() || "{}");
+      if (route.request().method() === "POST") {
+        capturedPayload = JSON.parse(route.request().postData() || "{}");
+      }
       await route.fulfill({
         status: 201,
         contentType: "application/json",
@@ -282,7 +286,7 @@ test.describe("Tenant / Organization Registration Flow (SCRUM-243 / US-7)", () =
     await skipBtn.click();
 
     // Verify submission still fired
-    expect(capturedPayload).not.toBeNull();
+    await expect.poll(() => capturedPayload, { timeout: 10000 }).not.toBeNull();
     expect(capturedPayload.slug).toBe(orgSlug);
 
     // Verify Success screen

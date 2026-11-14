@@ -71,7 +71,6 @@ export const NAVIGATION_SECTIONS: NavSectionConfig[] = [
         tabletExpandedActiveIcon: "/icons/shell/78357-active.svg",
         tabletExpandedWidth: 24,
         tabletExpandedHeight: 13.333,
-        badge: "12",
         description:
           "Directory of connected engineering repositories, delivery streams, and project workspaces.",
       },
@@ -110,7 +109,6 @@ export const NAVIGATION_SECTIONS: NavSectionConfig[] = [
         tabletExpandedActiveIcon: "/icons/shell/02f24-active.svg",
         tabletExpandedWidth: 24,
         tabletExpandedHeight: 15.833,
-        hasAlertDot: true,
         description:
           "Early-warning signals, delivery bottlenecks, and automated SLA risk notifications.",
       },
@@ -312,7 +310,6 @@ export const NAVIGATION_SECTIONS: NavSectionConfig[] = [
         href: "/adr-governance",
         section: "ADMINISTRATION",
         requiredAction: "PUBLISH_GLOBAL_ADR",
-        requiredRole: "TENANT_ADMIN",
         icon: "/icons/shell/00a87.svg",
         activeIcon: "/icons/shell/00a87-active.svg",
         tabletCollapsedIcon: "/icons/shell/7167b.svg",
@@ -342,4 +339,24 @@ export function getNavItemByPathname(pathname: string): NavItemConfig | undefine
       ? pathname === "/"
       : pathname === item.href || pathname.startsWith(`${item.href}/`),
   );
+}
+
+/**
+ * Single source of truth for portal route authorization shared between
+ * PortalAuthGuard and navigation visibility.
+ */
+export function canAccessPortalRoute(
+  pathname: string,
+  can: (action: ActionId) => boolean,
+): boolean {
+  if (pathname === "/members" || pathname.startsWith("/members/")) {
+    return can("MANAGE_TENANT_USERS_AND_ROLES");
+  }
+
+  const matchedItem = getNavItemByPathname(pathname);
+  if (matchedItem?.requiredAction) {
+    return can(matchedItem.requiredAction);
+  }
+
+  return true;
 }

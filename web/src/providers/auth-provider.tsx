@@ -19,7 +19,6 @@ import {
   fetchCurrentUserFromBackend,
   setIsLoggingOut,
   getIsLoggingOut,
-  getDemoBackendUser,
   purgeAllAuthTokens,
   type BackendUserClaims,
 } from "@/lib/auth";
@@ -33,6 +32,7 @@ interface AuthContextValue {
   tenantId: string | null;
   tenantName: string;
   displayName: string;
+  email: string;
   login: () => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
@@ -42,9 +42,7 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
-  const [backendUser, setBackendUser] = useState<BackendUserClaims | null>(() =>
-    getDemoBackendUser(),
-  );
+  const [backendUser, setBackendUser] = useState<BackendUserClaims | null>(null);
   const [isLoading, setIsLoading] = useState(true);
 
   const syncRequestId = useRef(0);
@@ -59,7 +57,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(activeUser);
 
     if (!activeUser) {
-      setBackendUser(getDemoBackendUser());
+      setBackendUser(null);
       setIsLoading(false);
       return;
     }
@@ -119,7 +117,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       currentPath === "/signed-out" ||
       currentPath.startsWith("/signed-out/") ||
       currentPath === "/auth/callback" ||
-      currentPath.startsWith("/auth/callback/")
+      currentPath.startsWith("/auth/callback/") ||
+      currentPath === "/accept-invite" ||
+      currentPath.startsWith("/accept-invite/")
     ) {
       return;
     }
@@ -183,7 +183,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const onUserUnloaded = () => {
       syncRequestId.current += 1;
       setUser(null);
-      setBackendUser(getDemoBackendUser());
+      setBackendUser(null);
       if (!getIsLoggingOut()) {
         setIsLoading(false);
       }
@@ -192,7 +192,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const onUserSignedOut = () => {
       syncRequestId.current += 1;
       setUser(null);
-      setBackendUser(getDemoBackendUser());
+      setBackendUser(null);
       if (!getIsLoggingOut()) {
         setIsLoading(false);
       }
@@ -239,13 +239,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  // Compute authoritative display name
+  // Compute authoritative display name and email
+  const email =
+    backendUser?.email || (user?.profile?.email as string) || "";
+
   const displayName =
     backendUser?.name ||
     (user?.profile?.name as string) ||
     (user?.profile?.preferred_username as string) ||
     backendUser?.preferred_username ||
-    (user?.profile?.email as string) ||
+    email ||
     "User";
 
   // Compute authoritative tenant ID and friendly name
@@ -265,6 +268,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     tenantId,
     tenantName,
     displayName,
+    email,
     login,
     logout,
     refresh,

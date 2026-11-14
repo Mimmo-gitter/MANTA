@@ -326,7 +326,7 @@ export function ReissueInviteDialog({
         <div className="mt-3.5 flex items-start gap-[10px] rounded-[8px] border border-[#262d3d] bg-[#0a0e18] p-[10px_12px]">
           <Shield className="mt-0.5 size-4 shrink-0 text-[#00c2cb]" aria-hidden="true" />
           <p className="font-sans text-[11px] leading-[14px] text-[#94a3b8]">
-            Previous expired token (tkn_01J98A...) is permanently invalidated. A new single-use 48-hour cryptographic link will be dispatched.
+            Previous expired invitation token is permanently invalidated. A new single-use 48-hour cryptographic link will be dispatched.
           </p>
         </div>
 
@@ -793,7 +793,7 @@ export function RemoveMemberDialog({
             </h2>
 
             <p className="font-sans text-[12px] leading-[15px] text-[#94a3b8]">
-              Immediately terminate Acme Consulting access for {member.name || member.email}.
+              Immediately terminate workspace access for {member.name || member.email}.
             </p>
           </div>
 

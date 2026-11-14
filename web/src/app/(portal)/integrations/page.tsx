@@ -8,7 +8,6 @@ import {
   useRef,
   useState,
 } from "react";
-import { useSearchParams } from "next/navigation";
 import {
   AlertTriangle,
   ChevronDown,
@@ -20,10 +19,6 @@ import {
   RefreshCw,
   X,
 } from "lucide-react";
-import {
-  useShellState,
-  type ShellState,
-} from "@/components/layout/shell-context";
 import { cn } from "@/lib/utils";
 import { GitHubConnectDialog } from "@/components/integrations/github-connect-dialog";
 import { JiraConnectDialog } from "@/components/integrations/jira-connect-dialog";
@@ -454,9 +449,11 @@ function IntegrationRow({
         {needsReconnect ? (
           <button
             type="button"
-            onClick={() => onReconnect(integration)}
+            disabled
+            aria-disabled="true"
+            title="OAuth token reconnect awaits backend POST /api/v1/integrations/{id}/reconnect support"
             aria-label={`Reconnect ${integration.name}`}
-            className="inline-flex h-[28px] min-w-[84px] items-center justify-center rounded-[6px] border border-[#fbbf24]/60 bg-[#fbbf24]/10 px-3 text-[11px] font-medium text-[#fbbf24] transition-colors hover:bg-[#fbbf24]/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#fbbf24]"
+            className="inline-flex h-[28px] min-w-[84px] items-center justify-center rounded-[6px] border border-[#fbbf24]/40 bg-[#fbbf24]/10 px-3 text-[11px] font-medium text-[#fbbf24]/60 opacity-60 cursor-not-allowed"
           >
             Reconnect
           </button>
@@ -983,19 +980,6 @@ function ConfigureIntegrationDialog({
 }
 
 export default function IntegrationsPage() {
-  const { shellState, setShellState } = useShellState();
-  const searchParams = useSearchParams();
-  const stateParam = searchParams.get("state") as ShellState | null;
-
-  useEffect(() => {
-    if (
-      stateParam &&
-      ["default", "empty", "error", "loading"].includes(stateParam)
-    ) {
-      setShellState(stateParam);
-    }
-  }, [stateParam, setShellState]);
-
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [integrations, setIntegrations] = useState<Integration[]>([]);
   const [errorMessage, setErrorMessage] = useState("");
@@ -1033,17 +1017,10 @@ export default function IntegrationsPage() {
     void load();
   }, [load]);
 
-  /*
-   * ShellState lets designers/QA force a view (loading / empty / error)
-   * from the shell. In "default" the real request state is used.
-   */
   const view: LoadState | "empty" = useMemo(() => {
-    if (shellState === "loading") return "loading";
-    if (shellState === "error") return "error";
-    if (shellState === "empty") return "empty";
     if (loadState === "ready" && integrations.length === 0) return "empty";
     return loadState;
-  }, [shellState, loadState, integrations.length]);
+  }, [loadState, integrations.length]);
 
   const counts = useMemo<Record<StatusFilter, number>>(
     () => ({
@@ -1134,9 +1111,8 @@ export default function IntegrationsPage() {
       setDisconnecting(false);
     }
   };
-  // TODO: start the provider's OAuth re-auth flow
-  const handleReconnect = (integration: Integration) => {
-    console.info("Reconnect integration", integration.id);
+  const handleReconnect = (_integration: Integration) => {
+    // Disabled in UI until backend reconnect endpoint exists.
   };
 
   const showConnectAction = view === "ready";
@@ -1163,7 +1139,7 @@ export default function IntegrationsPage() {
           onRetry={load}
           retrying={loadState === "loading"}
           message={
-            errorMessage || "Request failed: GET /api/integrations (500)"
+            errorMessage || "Request failed: GET /api/v1/integrations (500)"
           }
         />
       )}
@@ -1187,40 +1163,6 @@ export default function IntegrationsPage() {
           />
         </>
       )}
-
-      {/* Compact Floating State Switcher for QA & Figma Frame Switching */}
-      <div
-        data-testid="integrations-state-bar"
-        role="radiogroup"
-        aria-label="Integrations Viewport State Selector"
-        className="fixed bottom-3 right-3 z-40 flex items-center gap-[2px] rounded-[8px] border border-[#1f2433] bg-[#161b26]/95 p-[3px] shadow-lg backdrop-blur-sm"
-      >
-        {(
-          [
-            { id: "default", label: "Default" },
-            { id: "empty", label: "Empty" },
-            { id: "error", label: "Error" },
-            { id: "loading", label: "Skeleton" },
-          ] as const
-        ).map((item) => (
-          <button
-            key={item.id}
-            type="button"
-            role="radio"
-            aria-checked={shellState === item.id}
-            data-testid={`state-toggle-${item.id}`}
-            onClick={() => setShellState(item.id)}
-            className={cn(
-              "rounded-[5px] px-[8px] py-[4px] font-mono text-[10px] leading-[14px] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#00e599]",
-              shellState === item.id
-                ? "bg-[rgba(0,229,153,0.15)] text-[#00e599] font-semibold border border-[rgba(0,229,153,0.3)]"
-                : "text-[#7c839b] hover:text-[#e2e8f0]",
-            )}
-          >
-            {item.label}
-          </button>
-        ))}
-      </div>
 
       <ConnectDialog
         open={dialogOpen}

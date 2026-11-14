@@ -1,12 +1,10 @@
-import { PlaceholderPage } from "@/components/ui/placeholder-page";
+import { Suspense } from "react";
+import { ProjectsDirectory } from "@/components/projects/projects-directory";
 
-export default function Page() {
+export default function ProjectsPage() {
   return (
-    <PlaceholderPage
-      title="Projects"
-      section="WORKSPACE"
-      iconSrc="/icons/shell/2bfb7.svg"
-      description="Directory of connected engineering repositories, delivery streams, and project workspaces. Coming soon."
-    />
+    <Suspense fallback={null}>
+      <ProjectsDirectory />
+    </Suspense>
   );
 }

@@ -9,6 +9,7 @@ import { useShellState } from "@/components/layout/shell-context";
 import { cn } from "@/lib/utils";
 import { useAuth } from "@/providers/auth-provider";
 import { usePermissions } from "@/hooks/use-permissions";
+import { useProjectsQuery } from "@/hooks/use-projects";
 import {
   FigmaOverviewIcon,
   FigmaProjectsIcon,
@@ -61,8 +62,9 @@ export function Sidebar({
 }: SidebarProps) {
   const pathname = usePathname();
   const { shellState } = useShellState();
-  const { backendUser } = useAuth();
+  const { isAuthenticated, backendUser } = useAuth();
   const { can } = usePermissions();
+  const { data: projects } = useProjectsQuery(isAuthenticated);
 
   const visibleNavigationSections = NAVIGATION_SECTIONS.map((section) => ({
     ...section,
@@ -91,7 +93,7 @@ export function Sidebar({
   const projectsBadge =
     pathname === "/" && (shellState === "empty" || shellState === "error" || shellState === "loading")
       ? "0"
-      : "12";
+      : String(projects?.length ?? 0);
 
   // ---------------------------------------------------------------------------
   // 1. TABLET COLLAPSED SIDEBAR (72px wide — Figma 338:12871)
@@ -395,9 +397,7 @@ export function Sidebar({
                     const IconComponent = FIGMA_NAV_ICONS[item.id] || FigmaOverviewIcon;
                     const showOverviewErrorDot =
                       item.id === "overview" && pathname === "/" && shellState === "error";
-                    const showRisksAlertDot =
-                      item.id === "risks-alerts" &&
-                      !(pathname === "/" && (shellState === "empty" || shellState === "error" || shellState === "loading"));
+                    const showRisksAlertDot = Boolean(item.hasAlertDot);
 
                     return (
                       <Link
