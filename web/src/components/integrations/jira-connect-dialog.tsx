@@ -68,8 +68,9 @@ const PERMISSIONS: {
 ];
 
 /**
- * Atlassian Cloud sites live on https://<name>.atlassian.net.
- * Returns the normalised origin, or an error message for the field.
+ * Validates Atlassian Cloud (https://*.atlassian.net) and Self-Hosted / Data Center
+ * Jira URLs (http:// or https:// with a valid hostname).
+ * Returns the normalized origin, or an error message for the field.
  */
 function validateSiteUrl(
   raw: string,
@@ -83,22 +84,22 @@ function validateSiteUrl(
   } catch {
     return {
       ok: false,
-      message: "Enter a valid URL, e.g. https://instance.atlassian.net",
+      message:
+        "Enter a valid URL, e.g. https://instance.atlassian.net or https://jira.company.com",
     };
   }
 
   const host = parsed.hostname.toLowerCase();
-  if (
-    parsed.protocol !== "https:" ||
-    !/^[a-z0-9-]+\.atlassian\.net$/.test(host)
-  ) {
+  const isAllowedProtocol =
+    parsed.protocol === "https:" || parsed.protocol === "http:";
+  if (!isAllowedProtocol || !host || !host.includes(".")) {
     return {
       ok: false,
       message:
-        "Use your Atlassian Cloud URL, e.g. https://instance.atlassian.net",
+        "Enter a valid Jira URL, e.g. https://instance.atlassian.net or https://jira.company.com",
     };
   }
-  return { ok: true, url: `https://${host}` };
+  return { ok: true, url: `${parsed.protocol}//${parsed.host}` };
 }
 
 async function connectJira(

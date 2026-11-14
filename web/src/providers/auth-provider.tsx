@@ -232,12 +232,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setBackendUser(null);
     try {
-      await logoutUser();
+      await logoutUser(undefined, backendUser?.tenant_name);
     } finally {
       setIsLoading(false);
       setIsLoggingOut(false);
     }
-  }, []);
+  }, [backendUser?.tenant_name]);
 
   // Compute authoritative display name and email
   const email =
@@ -258,7 +258,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const tenantName =
     backendUser?.tenant_name ||
     (user?.profile?.tenant_name as string) ||
-    getTenantDisplayName(tenantId);
+    getTenantDisplayName(tenantId, backendUser?.tenant_name);
 
   const value: AuthContextValue = {
     user,

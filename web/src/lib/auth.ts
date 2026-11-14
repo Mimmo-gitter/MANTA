@@ -32,7 +32,13 @@ export const KNOWN_TENANTS: Record<string, string> = {
   "22222222-2222-2222-2222-222222222222": "Tenant Beta",
 };
 
-export function getTenantDisplayName(tenantId?: string | null): string {
+export function getTenantDisplayName(
+  tenantId?: string | null,
+  tenantName?: string | null
+): string {
+  if (tenantName && tenantName.trim().length > 0) {
+    return tenantName.trim();
+  }
   if (!tenantId) return "Unknown Tenant";
   if (KNOWN_TENANTS[tenantId]) {
     return KNOWN_TENANTS[tenantId];
@@ -392,6 +398,107 @@ export async function getCurrentUser(): Promise<User | null> {
   return await manager.getUser();
 }
 
+function decodeJwtPayload(token?: string): Record<string, unknown> {
+  if (!token) return {};
+  try {
+    const parts = token.split(".");
+    if (parts.length < 2) return {};
+    const base64 = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const padded = base64.padEnd(base64.length + ((4 - (base64.length % 4)) % 4), "=");
+    const json =
+      typeof window !== "undefined"
+        ? decodeURIComponent(
+            Array.from(window.atob(padded))
+              .map((c) => `%${c.charCodeAt(0).toString(16).padStart(2, "0")}`)
+              .join("")
+          )
+        : Buffer.from(padded, "base64").toString("utf-8");
+    const parsed = JSON.parse(json);
+    return typeof parsed === "object" && parsed !== null
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Authenticates directly with email/password against Keycloak OIDC token endpoint
+ * using Direct Access Grants (grant_type=password), persists the resulting User
+ * in oidc-client-ts UserManager store, and broadcasts LOGIN_COMPLETED across tabs.
+ */
+export async function loginWithCredentials(
+  email: string,
+  password: string
+): Promise<User> {
+  const normalizedEmail = email.trim().toLowerCase();
+  const body = new URLSearchParams({
+    grant_type: "password",
+    client_id: CLIENT_ID,
+    username: normalizedEmail,
+    password,
+    scope: "openid profile email",
+  });
+
+  const response = await fetch(`${AUTHORITY}/protocol/openid-connect/token`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: body.toString(),
+  });
+
+  const data = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!response.ok || typeof data.access_token !== "string") {
+    const errorCode = typeof data.error === "string" ? data.error : "";
+    const description =
+      typeof data.error_description === "string"
+        ? data.error_description
+        : "Invalid email or password.";
+    if (errorCode === "invalid_grant") {
+      throw new Error("Invalid email or password.");
+    }
+    throw new Error(description);
+  }
+
+  const expiresIn = Number(data.expires_in ?? 300);
+  const accessClaims = decodeJwtPayload(data.access_token);
+  const idClaims = decodeJwtPayload(
+    typeof data.id_token === "string" ? data.id_token : undefined
+  );
+  const profile = {
+    ...accessClaims,
+    ...idClaims,
+  };
+
+  const user = new User({
+    access_token: data.access_token,
+    token_type: typeof data.token_type === "string" ? data.token_type : "Bearer",
+    id_token: typeof data.id_token === "string" ? data.id_token : undefined,
+    refresh_token:
+      typeof data.refresh_token === "string" ? data.refresh_token : undefined,
+    scope:
+      typeof data.scope === "string" ? data.scope : "openid profile email",
+    expires_at: Math.floor(Date.now() / 1000) + (Number.isFinite(expiresIn) ? expiresIn : 300),
+    profile: profile as never,
+  });
+
+  if (typeof window !== "undefined") {
+    window.sessionStorage.removeItem("user_signed_out");
+  }
+
+  const manager = getUserManager();
+  await manager.storeUser(user);
+  manager.events.load(user);
+
+  broadcastAuthMessage({
+    type: "LOGIN_COMPLETED",
+    tabId: getTabId(),
+  });
+
+  return user;
+}
+
 /**
  * Initiates standard OIDC RP-Initiated Logout (RFC 7636 / OpenID Connect RP-Initiated Logout 1.0).
  * Purges tokens and state from localStorage, removes user from UserManager store,
@@ -399,6 +506,7 @@ export async function getCurrentUser(): Promise<User | null> {
  */
 export async function logoutUser(
   postLogoutRedirectUri?: string,
+  tenantName?: string | null
 ): Promise<void> {
   setIsLoggingOut(true);
   if (typeof window !== "undefined") {
@@ -414,10 +522,13 @@ export async function logoutUser(
   });
 
   const tenantId = (user?.profile?.tenant_id as string) || undefined;
-  const workspaceQuery =
-    tenantId && KNOWN_TENANTS[tenantId]
-      ? `?workspace=${encodeURIComponent(KNOWN_TENANTS[tenantId])}`
-      : "";
+  const resolvedWorkspaceName =
+    tenantName?.trim() ||
+    (user?.profile?.tenant_name as string | undefined)?.trim() ||
+    (tenantId ? KNOWN_TENANTS[tenantId] : undefined);
+  const workspaceQuery = resolvedWorkspaceName
+    ? `?workspace=${encodeURIComponent(resolvedWorkspaceName)}`
+    : "";
 
   const defaultRedirectUri =
     typeof window !== "undefined"
@@ -462,6 +573,146 @@ export async function logoutUser(
       window.location.href = targetRedirectUri;
     }
   }
+}
+
+export interface WorkspaceItem {
+  tenant_id: string;
+  tenant_name: string;
+  tenant_slug: string;
+  role: string;
+  is_current: boolean;
+}
+
+/**
+ * Lists all active tenant workspaces the authenticated user belongs to.
+ */
+export async function listWorkspaces(): Promise<WorkspaceItem[]> {
+  const manager = getUserManager();
+  let user = await manager.getUser();
+  if (!user?.access_token) return [];
+  if (user.expired) {
+    try {
+      user = await manager.signinSilent();
+    } catch {
+      return [];
+    }
+  }
+  if (!user?.access_token) return [];
+
+  const response = await fetch(`${BACKEND_API_URL}/api/v1/auth/workspaces`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${user.access_token}`,
+      "Content-Type": "application/json",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Failed to load workspaces: ${response.status}`);
+  }
+
+  return (await response.json()) as WorkspaceItem[];
+}
+
+/**
+ * Switches the caller's active Keycloak tenant_id attribute and realm role via
+ * POST /api/v1/auth/switch-workspace, then mints a fresh token carrying the new tenant_id.
+ */
+export async function switchWorkspace(tenantId: string): Promise<WorkspaceItem> {
+  const manager = getUserManager();
+  const user = await manager.getUser();
+  if (!user?.access_token) {
+    throw new Error("You must be signed in to switch workspaces.");
+  }
+
+  const response = await fetch(
+    `${BACKEND_API_URL}/api/v1/auth/switch-workspace`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${user.access_token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ tenant_id: tenantId }),
+    },
+  );
+
+  const payload = (await response.json().catch(() => ({}))) as Record<
+    string,
+    unknown
+  >;
+  if (!response.ok) {
+    throw new Error(
+      typeof payload.detail === "string"
+        ? payload.detail
+        : `Failed to switch workspace (${response.status})`,
+    );
+  }
+
+  // Refresh OIDC tokens so the client carries the updated tenant_id and role claims.
+  if (user.refresh_token) {
+    const tokenBody = new URLSearchParams({
+      grant_type: "refresh_token",
+      client_id: CLIENT_ID,
+      refresh_token: user.refresh_token,
+    });
+    const tokenResp = await fetch(`${AUTHORITY}/protocol/openid-connect/token`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: tokenBody.toString(),
+    });
+    const tokenData = (await tokenResp.json().catch(() => ({}))) as Record<
+      string,
+      unknown
+    >;
+    if (tokenResp.ok && typeof tokenData.access_token === "string") {
+      const expiresIn = Number(tokenData.expires_in ?? 300);
+      const accessClaims = decodeJwtPayload(tokenData.access_token);
+      const idClaims = decodeJwtPayload(
+        typeof tokenData.id_token === "string" ? tokenData.id_token : undefined,
+      );
+      const refreshedUser = new User({
+        access_token: tokenData.access_token,
+        token_type:
+          typeof tokenData.token_type === "string"
+            ? tokenData.token_type
+            : "Bearer",
+        id_token:
+          typeof tokenData.id_token === "string"
+            ? tokenData.id_token
+            : user.id_token,
+        refresh_token:
+          typeof tokenData.refresh_token === "string"
+            ? tokenData.refresh_token
+            : user.refresh_token,
+        scope:
+          typeof tokenData.scope === "string"
+            ? tokenData.scope
+            : user.scope || "openid profile email",
+        expires_at:
+          Math.floor(Date.now() / 1000) +
+          (Number.isFinite(expiresIn) ? expiresIn : 300),
+        profile: { ...accessClaims, ...idClaims } as never,
+      });
+      await manager.storeUser(refreshedUser);
+      manager.events.load(refreshedUser);
+      broadcastAuthMessage({
+        type: "LOGIN_COMPLETED",
+        tabId: getTabId(),
+      });
+      return payload as unknown as WorkspaceItem;
+    }
+  }
+
+  try {
+    await manager.signinSilent();
+  } catch {
+    await initiateLogin();
+  }
+
+  return payload as unknown as WorkspaceItem;
 }
 
 /**

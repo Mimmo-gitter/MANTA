@@ -13,7 +13,6 @@ import { isApiHttpError } from "@/lib/api-client";
 import { useCreateProjectMutation } from "@/hooks/use-projects";
 import {
   isValidProjectSlug,
-  saveProjectUiMeta,
   slugifyProjectName,
 } from "@/lib/projects-api";
 import type { DeploymentSignalType, ProjectItem } from "@/types/project";
@@ -187,9 +186,11 @@ export function CreateProjectModal({
     }
 
     try {
+      const trimmedDescription = description.trim();
       const created = await createMutation.mutateAsync({
         name: trimmedName,
         slug: normalizedSlug,
+        description: trimmedDescription || undefined,
         tier_sla_hours: parsedSla,
         wip_limit_per_dev: parsedWip,
         pr_stale_threshold_hours: parsedStale,
@@ -197,10 +198,6 @@ export function CreateProjectModal({
         authoritative_cd_signal: deploymentSignal,
         lead_time_first_commit_strategy: "feature_branch_root",
       });
-
-      if (description.trim()) {
-        saveProjectUiMeta(created, { description: description.trim() });
-      }
 
       resetForm();
       onClose();

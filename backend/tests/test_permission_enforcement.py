@@ -140,7 +140,7 @@ ACTION_ROUTE_MAP: dict[Permission, tuple[str, str]] = {
     Permission.APPROVE_ADR_TENANT_PRIVATE: ("POST", "/api/v1/adrs/adr-1/approve"),
     Permission.PUBLISH_GLOBAL_ADR: ("POST", "/api/v1/adrs/adr-1/publish-global"),
     Permission.MANAGE_WEBHOOK_INTEGRATIONS: ("GET", "/api/v1/integrations"),
-    Permission.MANAGE_TENANT_USERS_AND_ROLES: ("GET", "/api/v1/tenants/users"),
+    Permission.MANAGE_TENANT_USERS_AND_ROLES: ("GET", "/api/v1/members"),
 }
 
 
@@ -204,6 +204,7 @@ async def test_all_12_stub_endpoints_in_openapi_schema():
     real_permissions = {
         Permission.MANAGE_WEBHOOK_INTEGRATIONS,
         Permission.INGEST_PROJECT_DEPLOYMENTS,
+        Permission.MANAGE_TENANT_USERS_AND_ROLES,
     }
     stub_permissions = {p for p in Permission if p not in real_permissions}
     found_stubs: set[str] = set()
@@ -233,7 +234,7 @@ async def test_all_12_stub_endpoints_in_openapi_schema():
 
         found_stubs.add(perm.value)
 
-    assert len(found_stubs) == 12, f"Expected 12 stub endpoints, found {len(found_stubs)}"
+    assert len(found_stubs) == 11, f"Expected 11 stub endpoints, found {len(found_stubs)}"
 
 
 @pytest.mark.asyncio
@@ -244,6 +245,7 @@ async def test_stub_endpoints_unauthenticated_returns_401():
             if perm in {
                 Permission.MANAGE_WEBHOOK_INTEGRATIONS,
                 Permission.INGEST_PROJECT_DEPLOYMENTS,
+                Permission.MANAGE_TENANT_USERS_AND_ROLES,
             }:
                 continue
             resp = await ac.request(method, url)
@@ -305,7 +307,16 @@ async def test_all_91_matrix_decisions_enforced(auth_fixture):
     async def _noop_tenant_db():
         yield object()
 
+    from contextlib import asynccontextmanager
     from app.db.session import get_tenant_db
+
+    @asynccontextmanager
+    async def _empty_members_db(_tenant_id):
+        sess = mock.AsyncMock()
+        res = mock.MagicMock()
+        res.all.return_value = []
+        sess.execute = mock.AsyncMock(return_value=res)
+        yield sess
 
     app.dependency_overrides[get_tenant_db] = _noop_tenant_db
     try:
@@ -317,6 +328,10 @@ async def test_all_91_matrix_decisions_enforced(auth_fixture):
             mock.patch(
                 "app.deployments.router.ingest_direct_deployment",
                 mock.AsyncMock(return_value=mock_deploy_resp),
+            ),
+            mock.patch(
+                "app.auth.members_router.get_tenant_db_context",
+                side_effect=_empty_members_db,
             ),
         ):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
@@ -341,7 +356,10 @@ async def test_all_91_matrix_decisions_enforced(auth_fixture):
                         resp = await ac.request(method, url, **req_kwargs)
 
                         if expected_decision == "ALLOW":
-                            if perm_action == Permission.MANAGE_WEBHOOK_INTEGRATIONS:
+                            if perm_action in (
+                                Permission.MANAGE_WEBHOOK_INTEGRATIONS,
+                                Permission.MANAGE_TENANT_USERS_AND_ROLES,
+                            ):
                                 assert resp.status_code == 200, (
                                     f"Expected 200 for [{role_id}][{action_id}], got {resp.status_code}: {resp.text}"
                                 )

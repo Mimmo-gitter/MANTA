@@ -39,6 +39,7 @@ class Tenant(Base):
     slug: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     allowed_domain: Mapped[Optional[str]] = mapped_column(String(255))
+    industry: Mapped[Optional[str]] = mapped_column(String(255))
     tier: Mapped[str] = mapped_column(String(32), default="starter", nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="active", nullable=False)
     max_projects: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
@@ -234,6 +235,7 @@ class Project(Base):
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     slug: Mapped[str] = mapped_column(String(64), nullable=False)
+    description: Mapped[Optional[str]] = mapped_column(Text)
     tier_sla_hours: Mapped[int] = mapped_column(Integer, default=48, nullable=False)
     authoritative_cd_signal: Mapped[str] = mapped_column(
         String(64), default="github_deployments_api", nullable=False

@@ -277,6 +277,10 @@ export async function mockMembersEndpoints(
         await fulfillCorsJson(route, 204);
         return;
       }
+      if (route.request().method() === "GET") {
+        await fulfillCorsJson(route, 200, []);
+        return;
+      }
       const payload = route.request().postDataJSON() as {
         email: string;
         role: string;

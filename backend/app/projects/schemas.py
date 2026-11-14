@@ -64,6 +64,11 @@ class ProjectCreateRequest(BaseModel):
         max_length=64,
         description="URL-friendly unique slug. If omitted, auto-generated from name.",
     )
+    description: Optional[str] = Field(
+        None,
+        max_length=2000,
+        description="Optional project summary / description",
+    )
     tier_sla_hours: int = Field(default=48, ge=1, le=720, description="Target SLA in hours")
     authoritative_cd_signal: Optional[DeploymentSignalType] = Field(
         None,
@@ -171,6 +176,36 @@ class RepositoryResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class ProjectUpdateRequest(BaseModel):
+    """Payload to update project metadata or engineering thresholds."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: Optional[str] = Field(None, min_length=1, max_length=255)
+    slug: Optional[str] = Field(None, min_length=1, max_length=64)
+    description: Optional[str] = Field(None, max_length=2000)
+    tier_sla_hours: Optional[int] = Field(None, ge=1, le=720)
+    wip_limit_per_dev: Optional[int] = Field(None, ge=1, le=50)
+    pr_stale_threshold_hours: Optional[int] = Field(None, ge=1, le=720)
+    lead_time_first_commit_strategy: Optional[str] = Field(None, max_length=32)
+    is_active: Optional[bool] = None
+
+
+class ProjectIncidentResponse(BaseModel):
+    """Production incident summary linked to a project."""
+
+    id: uuid.UUID
+    project_id: uuid.UUID
+    deployment_id: Optional[uuid.UUID] = None
+    severity: str
+    started_at: datetime
+    resolved_at: Optional[datetime] = None
+    recovery_time_seconds: Optional[float] = None
+    created_at: datetime
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class ProjectResponse(BaseModel):
     """Detailed project response including linked repositories."""
 
@@ -178,6 +213,7 @@ class ProjectResponse(BaseModel):
     tenant_id: uuid.UUID
     name: str
     slug: str
+    description: Optional[str] = None
     tier_sla_hours: int
     authoritative_cd_signal: str
     authoritative_deployment_signal: Optional[str] = None

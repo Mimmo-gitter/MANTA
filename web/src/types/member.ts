@@ -8,11 +8,13 @@ export interface WorkspaceMember {
   email: string;
   role: Role | string;
   status: MemberStatus;
+  recordType?: "MEMBER" | "INVITATION";
   isCurrentUser?: boolean;
   lastActive?: string;
   expiresIn?: string;
   expiredAgo?: string;
   invitedBy?: string;
+  inviteUrl?: string;
   avatarColor?: string;
 }
 
@@ -23,6 +25,9 @@ export interface InviteMemberRequest {
 
 export interface InviteMemberResponse {
   status: string;
+  id?: string | null;
+  expires_at?: string | null;
+  invite_url?: string | null;
 }
 
 export interface UpdateMemberRoleRequest {

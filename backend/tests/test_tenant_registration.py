@@ -317,8 +317,8 @@ async def test_security_definer_function_attributes():
                 text(
                     """
                     SELECT
-                        has_function_privilege('public', 'provision_tenant(varchar,varchar,varchar,varchar,varchar,varchar,varchar,varchar,uuid,uuid)', 'EXECUTE') AS public_exec,
-                        has_function_privilege('eng_app_user', 'provision_tenant(varchar,varchar,varchar,varchar,varchar,varchar,varchar,varchar,uuid,uuid)', 'EXECUTE') AS app_user_exec;
+                        has_function_privilege('public', 'provision_tenant(varchar,varchar,varchar,varchar,varchar,varchar,varchar,varchar,uuid,uuid,varchar)', 'EXECUTE') AS public_exec,
+                        has_function_privilege('eng_app_user', 'provision_tenant(varchar,varchar,varchar,varchar,varchar,varchar,varchar,varchar,uuid,uuid,varchar)', 'EXECUTE') AS app_user_exec;
                     """
                 )
             )

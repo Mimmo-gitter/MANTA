@@ -8,7 +8,12 @@ import { Menu } from "lucide-react";
 import { useAuth } from "@/providers/auth-provider";
 import { usePermissions } from "@/hooks/use-permissions";
 import { getPrimaryRoleLabel } from "@/lib/permissions";
-import { setIsLoggingOut } from "@/lib/auth";
+import {
+  listWorkspaces,
+  setIsLoggingOut,
+  switchWorkspace,
+  type WorkspaceItem,
+} from "@/lib/auth";
 import { sidebarSections } from "@/config/navigation";
 import { cn } from "@/lib/utils";
 
@@ -24,9 +29,20 @@ export function PortalHeader({
   onMobileMenuToggle,
   isTablet = false,
 }: PortalHeaderProps) {
-  const { isAuthenticated, displayName, email, tenantName, logout } = useAuth();
+  const {
+    isAuthenticated,
+    displayName,
+    email,
+    tenantId,
+    tenantName,
+    logout,
+    refresh,
+  } = useAuth();
   const { roles } = usePermissions();
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
+  const [workspaces, setWorkspaces] = useState<WorkspaceItem[]>([]);
+  const [switchingTenantId, setSwitchingTenantId] = useState<string | null>(null);
+  const [switchError, setSwitchError] = useState<string | null>(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
   const [projectSearch, setProjectSearch] = useState("");
   const pathname = usePathname();
@@ -62,6 +78,47 @@ export function PortalHeader({
   }, [pathname]);
 
   const showProfile = isAuthenticated && !isSignedOut;
+
+  useEffect(() => {
+    if (!showProfile) {
+      setWorkspaces([]);
+      return;
+    }
+    let cancelled = false;
+    void listWorkspaces()
+      .then((items) => {
+        if (!cancelled) {
+          setWorkspaces(items);
+          setSwitchError(null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setWorkspaces([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [showProfile, tenantId]);
+
+  const handleSwitchWorkspace = async (targetTenantId: string) => {
+    if (switchingTenantId) return;
+    setSwitchingTenantId(targetTenantId);
+    setSwitchError(null);
+    try {
+      await switchWorkspace(targetTenantId);
+      await refresh();
+      setWorkspaceMenuOpen(false);
+      router.refresh();
+    } catch (err: unknown) {
+      setSwitchError(
+        err instanceof Error ? err.message : "Failed to switch workspace.",
+      );
+    } finally {
+      setSwitchingTenantId(null);
+    }
+  };
 
   // Close dropdowns when clicking outside or pressing Escape
   useEffect(() => {
@@ -157,8 +214,23 @@ export function PortalHeader({
   /* ------------------------------------------------------------------ */
   /*Workspace Dropdown Content (Figma 334:5977 - 1-to-1)                 */
   /* ------------------------------------------------------------------ */
-  const renderWorkspaceDropdown = () =>
-    workspaceMenuOpen && (
+  const renderWorkspaceDropdown = () => {
+    if (!workspaceMenuOpen) return null;
+
+    const displayedWorkspaces: WorkspaceItem[] =
+      workspaces.length > 0
+        ? workspaces
+        : [
+            {
+              tenant_id: tenantId || "active",
+              tenant_name: currentWorkspaceName,
+              tenant_slug: "",
+              role: roleLabel,
+              is_current: true,
+            },
+          ];
+
+    return (
       <div
         data-testid="workspace-dropdown-menu"
         role="menu"
@@ -168,49 +240,95 @@ export function PortalHeader({
         {/* Header */}
         <div className="border-b border-[#1f2433] px-[14px] py-[10px]">
           <div className="font-mono text-[10px] leading-[15px] text-[#7c839b] tracking-[0.5px] uppercase">
-            Active Workspace
+            {displayedWorkspaces.length > 1
+              ? "Switch Workspace"
+              : "Active Workspace"}
           </div>
         </div>
 
-        {/* Current Tenant Workspace */}
+        {/* Workspace List */}
         <div className="p-[6px] flex flex-col gap-[6px]" role="none">
-          <button
-            type="button"
-            role="menuitem"
-            onClick={() => setWorkspaceMenuOpen(false)}
-            className="flex w-full items-center justify-between rounded-[8px] text-left bg-[rgba(0,229,153,0.1)] border border-[rgba(0,229,153,0.2)] px-[11px] py-[9px] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#00e599]"
-          >
-            <div className="flex items-center gap-[10px] min-w-0">
-              <div className="bg-[rgba(0,229,153,0.2)] flex size-[28px] shrink-0 items-center justify-center rounded-[4px]">
-                <img
-                  src="/icons/shell/lightning-emerald.svg"
-                  alt=""
-                  aria-hidden="true"
-                  className="h-[14px] w-[8px]"
-                />
-              </div>
-              <div className="flex flex-col min-w-0">
-                <span className="text-[12px] font-medium leading-[16px] text-[#e2e8f0] truncate">
-                  {currentWorkspaceName}
-                </span>
-                <span className="font-mono text-[10px] leading-[15px] text-[#00e599]">
-                  Active
-                </span>
-              </div>
-            </div>
+          {displayedWorkspaces.map((ws) => {
+            const isCurrent = ws.is_current || (tenantId ? ws.tenant_id === tenantId : false);
+            const isSwitching = switchingTenantId === ws.tenant_id;
 
-            <div
-              className="bg-[#00e599] rounded-full size-[6px] shadow-[0px_0px_6px_0px_#00e599] shrink-0"
-              aria-hidden="true"
-            />
-          </button>
+            return (
+              <button
+                key={ws.tenant_id}
+                type="button"
+                role="menuitem"
+                disabled={Boolean(switchingTenantId)}
+                onClick={() => {
+                  if (isCurrent) {
+                    setWorkspaceMenuOpen(false);
+                  } else {
+                    void handleSwitchWorkspace(ws.tenant_id);
+                  }
+                }}
+                className={cn(
+                  "flex w-full items-center justify-between rounded-[8px] text-left px-[11px] py-[9px] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#00e599]",
+                  isCurrent
+                    ? "bg-[rgba(0,229,153,0.1)] border border-[rgba(0,229,153,0.2)]"
+                    : "border border-transparent hover:bg-[rgba(255,255,255,0.04)] hover:border-[#262d3d] cursor-pointer",
+                )}
+              >
+                <div className="flex items-center gap-[10px] min-w-0">
+                  <div
+                    className={cn(
+                      "flex size-[28px] shrink-0 items-center justify-center rounded-[4px]",
+                      isCurrent
+                        ? "bg-[rgba(0,229,153,0.2)]"
+                        : "bg-[#0f131d] border border-[#252b3b]",
+                    )}
+                  >
+                    <img
+                      src="/icons/shell/lightning-emerald.svg"
+                      alt=""
+                      aria-hidden="true"
+                      className="h-[14px] w-[8px]"
+                    />
+                  </div>
+                  <div className="flex flex-col min-w-0">
+                    <span className="text-[12px] font-medium leading-[16px] text-[#e2e8f0] truncate">
+                      {ws.tenant_name}
+                    </span>
+                    <span
+                      className={cn(
+                        "font-mono text-[10px] leading-[15px]",
+                        isCurrent ? "text-[#00e599]" : "text-[#7c839b]",
+                      )}
+                    >
+                      {isSwitching
+                        ? "Switching..."
+                        : isCurrent
+                          ? "Active"
+                          : ws.role}
+                    </span>
+                  </div>
+                </div>
 
-          <p className="px-[8px] pb-[4px] font-sans text-[11px] leading-[15px] text-[#7c839b]">
-            Multi-workspace switching requires cross-tenant session support.
-          </p>
+                {isCurrent && (
+                  <div
+                    className="bg-[#00e599] rounded-full size-[6px] shadow-[0px_0px_6px_0px_#00e599] shrink-0"
+                    aria-hidden="true"
+                  />
+                )}
+              </button>
+            );
+          })}
+
+          {switchError && (
+            <p
+              role="alert"
+              className="px-[8px] pb-[4px] font-sans text-[11px] leading-[15px] text-[#fca5a5]"
+            >
+              {switchError}
+            </p>
+          )}
         </div>
       </div>
     );
+  };
 
   /* ------------------------------------------------------------------ */
   /* User Profile Dropdown Content (Figma 321:1453 - 1-to-1)             */

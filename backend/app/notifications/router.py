@@ -1,11 +1,13 @@
+from datetime import datetime, timezone
+import inspect
 import logging
 from email.message import EmailMessage
 from uuid import UUID, uuid4
 
 import aiosmtplib
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel
-from sqlalchemy import or_, select, text
+from sqlalchemy import delete, or_, select, text, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,12 +17,13 @@ from app.auth.keycloak_admin import (
     delete_user,
     provision_user,
 )
-from app.auth.permissions import Permission, require_permission
+from app.auth.permissions import Permission, Role, require_permission
 from app.auth.schemas import TokenClaims
 from app.config import settings
-from app.db.models.models import User
+from app.db.models.models import Invitation, User
 from app.db.session import get_db, get_tenant_db_context
 from app.notifications.service import (
+    ALLOWED_ROLES,
     INVITATION_TTL_HOURS,
     InvitationError,
     consume_invitation,
@@ -33,6 +36,10 @@ router = APIRouter(prefix="/api/v1")
 
 class InviteRequest(BaseModel):
     email: str
+    role: str
+
+
+class InvitationRoleUpdateRequest(BaseModel):
     role: str
 
 
@@ -70,6 +77,50 @@ async def find_platform_user_id(session: AsyncSession, claims: TokenClaims) -> U
     return result.scalar_one_or_none()
 
 
+@router.get("/invitations")
+async def list_invitations(
+    current_user: TokenClaims = Depends(
+        require_permission(Permission.MANAGE_TENANT_USERS_AND_ROLES)
+    ),
+):
+    """List pending (INVITE_SENT) and expired (EXPIRED) invitations for the caller's tenant."""
+    now = datetime.now(timezone.utc)
+    async with get_tenant_db_context(current_user.tenant_uuid) as session:
+        result = await session.execute(
+            select(
+                Invitation.id,
+                Invitation.email,
+                Invitation.role,
+                Invitation.expires_at,
+                Invitation.created_at,
+                Invitation.invited_by,
+            )
+            .where(
+                Invitation.tenant_id == current_user.tenant_uuid,
+                Invitation.used_at.is_(None),
+            )
+            .order_by(Invitation.created_at.desc())
+        )
+        rows = result.all()
+
+    items = []
+    for inv_id, inv_email, inv_role, expires_at, created_at, invited_by in rows:
+        exp_aware = expires_at if expires_at.tzinfo else expires_at.replace(tzinfo=timezone.utc)
+        inv_status = "INVITE_SENT" if exp_aware > now else "EXPIRED"
+        items.append(
+            {
+                "id": str(inv_id),
+                "email": inv_email,
+                "role": str(inv_role),
+                "status": inv_status,
+                "expires_at": exp_aware.isoformat(),
+                "created_at": created_at.isoformat() if created_at else None,
+                "invited_by": str(invited_by) if invited_by else None,
+            }
+        )
+    return items
+
+
 @router.post("/invitations", status_code=201)
 async def invite_member(
     body: InviteRequest,
@@ -84,6 +135,22 @@ async def invite_member(
             raw_token = await create_invitation(
                 session, current_user.tenant_uuid, inviter_id, body.email, body.role
             )
+            inv_res = await session.execute(
+                select(Invitation.id, Invitation.expires_at)
+                .where(
+                    Invitation.tenant_id == current_user.tenant_uuid,
+                    Invitation.email == body.email.strip().lower(),
+                    Invitation.used_at.is_(None),
+                )
+                .order_by(Invitation.created_at.desc())
+                .limit(1)
+            )
+            raw_first = inv_res.first() if inv_res is not None else None
+            if inspect.iscoroutine(raw_first):
+                raw_first.close()
+                inv_row = None
+            else:
+                inv_row = raw_first
     except InvitationError as error:
         raise HTTPException(error.status_code, error.message)
 
@@ -93,7 +160,90 @@ async def invite_member(
         logger.exception("Не вдалося надіслати лист із запрошенням")  # токен не логуємо
         raise HTTPException(502, "Запрошення створено, але лист надіслати не вдалося")
 
-    return {"status": "sent"}
+    invite_url = f"{settings.WEB_BASE_URL}/accept-invite?token={raw_token}"
+    response_payload: dict[str, str | None] = {
+        "status": "sent",
+        "invite_url": invite_url,
+    }
+    if inv_row is not None and isinstance(inv_row[0], UUID):
+        response_payload["id"] = str(inv_row[0])
+        response_payload["expires_at"] = (
+            inv_row[1].isoformat() if len(inv_row) > 1 and inv_row[1] is not None else None
+        )
+    return response_payload
+
+
+@router.patch("/invitations/{invitation_id}/role")
+async def update_invitation_role(
+    invitation_id: UUID,
+    body: InvitationRoleUpdateRequest,
+    current_user: TokenClaims = Depends(
+        require_permission(Permission.MANAGE_TENANT_USERS_AND_ROLES)
+    ),
+):
+    """Update the target role of an unused workspace invitation."""
+    try:
+        new_role = Role(body.role.strip().upper()).value
+    except ValueError:
+        raise HTTPException(422, "Невідома роль")
+
+    if new_role not in ALLOWED_ROLES:
+        raise HTTPException(422, "Невідома роль")
+
+    async with get_tenant_db_context(current_user.tenant_uuid) as session:
+        existing = (
+            await session.execute(
+                select(Invitation.id).where(
+                    Invitation.id == invitation_id,
+                    Invitation.tenant_id == current_user.tenant_uuid,
+                    Invitation.used_at.is_(None),
+                )
+            )
+        ).first()
+        if existing is None:
+            raise HTTPException(404, "Запрошення не знайдено")
+
+        await session.execute(
+            update(Invitation)
+            .where(
+                Invitation.id == invitation_id,
+                Invitation.tenant_id == current_user.tenant_uuid,
+            )
+            .values(role=new_role)
+        )
+
+    return {"id": str(invitation_id), "role": new_role}
+
+
+@router.delete("/invitations/{invitation_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_or_delete_invitation(
+    invitation_id: UUID,
+    current_user: TokenClaims = Depends(
+        require_permission(Permission.MANAGE_TENANT_USERS_AND_ROLES)
+    ),
+) -> Response:
+    """Revoke a pending invitation or delete an expired invitation."""
+    async with get_tenant_db_context(current_user.tenant_uuid) as session:
+        existing = (
+            await session.execute(
+                select(Invitation.id).where(
+                    Invitation.id == invitation_id,
+                    Invitation.tenant_id == current_user.tenant_uuid,
+                    Invitation.used_at.is_(None),
+                )
+            )
+        ).first()
+        if existing is None:
+            raise HTTPException(404, "Запрошення не знайдено")
+
+        await session.execute(
+            delete(Invitation).where(
+                Invitation.id == invitation_id,
+                Invitation.tenant_id == current_user.tenant_uuid,
+            )
+        )
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/invitations/accept")
@@ -103,21 +253,26 @@ async def accept_invitation(body: AcceptRequest, session: AsyncSession = Depends
     try:
         invitation = await consume_invitation(session, body.token)
 
-        # set_config(..., true) діє до кінця поточної транзакції
         await session.execute(
             text("SELECT set_config('app.current_tenant_id', :tenant_id, true)"),
             {"tenant_id": str(invitation["tenant_id"])},
         )
 
         # 1. Спочатку Keycloak (зовнішню систему транзакцією БД не відкотити)
-        keycloak_user_id = await provision_user(invitation["email"], str(invitation["tenant_id"]))
+        keycloak_user_id = await provision_user(
+            invitation["email"],
+            str(invitation["tenant_id"]),
+            role=invitation["role"],
+        )
 
         # 2. Потім наша БД, в одній транзакції разом із used_at
+        email_prefix = invitation["email"].split("@")[0]
         session.add(
             User(
                 id=uuid4(),
                 tenant_id=invitation["tenant_id"],
                 email=invitation["email"],
+                full_name=email_prefix,
                 role=invitation["role"],
                 google_sub=keycloak_user_id,
                 is_active=True,

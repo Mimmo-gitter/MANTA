@@ -13,18 +13,23 @@ from app.projects.schemas import (
     DeploymentSignalResponse,
     DeploymentSignalUpdateRequest,
     ProjectCreateRequest,
+    ProjectIncidentResponse,
     ProjectResponse,
+    ProjectUpdateRequest,
     RepositoryLinkRequest,
     RepositoryResponse,
 )
 from app.projects.service import (
+    archive_project as archive_project_service,
     create_project as create_project_service,
     get_deployment_signal as get_deployment_signal_service,
     get_project as get_project_service,
     link_repository as link_repository_service,
+    list_project_incidents as list_project_incidents_service,
     list_projects as list_projects_service,
     unlink_repository as unlink_repository_service,
     update_deployment_signal as update_deployment_signal_service,
+    update_project as update_project_service,
 )
 
 router = APIRouter(
@@ -85,6 +90,50 @@ async def get_project(
 ) -> ProjectResponse:
     """Retrieves project details. Returns HTTP 404 if project is missing or cross-tenant."""
     return await get_project_service(user.tenant_uuid, project_id)
+
+
+@router.patch(
+    "/{project_id}",
+    response_model=ProjectResponse,
+    summary="Update project metadata and thresholds",
+    description="Updates project name, slug, description, or DORA/WIP thresholds. Requires TENANT_ADMIN.",
+)
+async def update_project(
+    project_id: uuid.UUID,
+    payload: ProjectUpdateRequest,
+    user: TokenClaims = Depends(require_tenant_admin),
+) -> ProjectResponse:
+    """Updates an existing project under caller's tenant context."""
+    return await update_project_service(user.tenant_uuid, project_id, payload)
+
+
+@router.delete(
+    "/{project_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Archive a project",
+    description="Soft-archives a project and removes it from active listings. Requires TENANT_ADMIN.",
+)
+async def archive_project(
+    project_id: uuid.UUID,
+    user: TokenClaims = Depends(require_tenant_admin),
+) -> Response:
+    """Archives an active project under caller's tenant context."""
+    await archive_project_service(user.tenant_uuid, project_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get(
+    "/{project_id}/incidents",
+    response_model=list[ProjectIncidentResponse],
+    summary="List production failure incidents for a project",
+    description="Lists incidents recorded against the project for Change Failure Rate and MTTR tracking.",
+)
+async def list_project_incidents(
+    project_id: uuid.UUID,
+    user: TokenClaims = Depends(require_project_view),
+) -> list[ProjectIncidentResponse]:
+    """Lists incidents recorded for a project under tenant RLS."""
+    return await list_project_incidents_service(user.tenant_uuid, project_id)
 
 
 @router.post(

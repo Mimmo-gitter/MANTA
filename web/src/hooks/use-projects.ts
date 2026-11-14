@@ -3,16 +3,20 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   createProject,
+  deleteProject,
   getDeploymentSignal,
   getProject,
   linkRepository,
+  listProjectIncidents,
   listProjects,
   unlinkRepository,
   updateDeploymentSignal,
+  updateProject,
 } from "@/lib/projects-api";
 import type {
   DeploymentSignalUpdatePayload,
   ProjectCreatePayload,
+  ProjectUpdatePayload,
   RepositoryLinkPayload,
 } from "@/types/project";
 
@@ -21,6 +25,8 @@ export const projectQueryKeys = {
   detail: (projectId: string) => ["projects", projectId] as const,
   deploymentSignal: (projectId: string) =>
     ["projects", projectId, "deployment-signal"] as const,
+  incidents: (projectId: string) =>
+    ["projects", projectId, "incidents"] as const,
 };
 
 export function useProjectsQuery(enabled = true) {
@@ -113,5 +119,48 @@ export function useUpdateDeploymentSignalMutation(projectId: string) {
         queryKey: projectQueryKeys.detail(projectId),
       });
     },
+  });
+}
+
+export function useUpdateProjectMutation(projectId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (payload: ProjectUpdatePayload) =>
+      updateProject(projectId, payload),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(projectQueryKeys.detail(projectId), updated);
+      queryClient.invalidateQueries({ queryKey: projectQueryKeys.all });
+      queryClient.invalidateQueries({
+        queryKey: projectQueryKeys.detail(projectId),
+      });
+    },
+  });
+}
+
+export function useDeleteProjectMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (projectId: string) => deleteProject(projectId),
+    onSuccess: (_data, projectId) => {
+      queryClient.invalidateQueries({ queryKey: projectQueryKeys.all });
+      queryClient.invalidateQueries({
+        queryKey: projectQueryKeys.detail(projectId),
+      });
+    },
+  });
+}
+
+export function useProjectIncidentsQuery(
+  projectId: string | undefined,
+  enabled = true,
+) {
+  return useQuery({
+    queryKey: projectQueryKeys.incidents(projectId ?? ""),
+    queryFn: () => listProjectIncidents(projectId!),
+    enabled: Boolean(projectId) && enabled,
+    staleTime: 30_000,
+    retry: 1,
   });
 }

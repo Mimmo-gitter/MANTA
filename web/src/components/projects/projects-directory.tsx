@@ -17,8 +17,7 @@ import {
 } from "lucide-react";
 import { useAuth } from "@/providers/auth-provider";
 import { usePermissions } from "@/hooks/use-permissions";
-import { useProjectsQuery } from "@/hooks/use-projects";
-import { getProjectUiMeta } from "@/lib/projects-api";
+import { useDeleteProjectMutation, useProjectsQuery } from "@/hooks/use-projects";
 import type { ProjectItem } from "@/types/project";
 import { CreateProjectModal } from "@/components/projects/create-project-modal";
 import {
@@ -79,6 +78,7 @@ export function ProjectsDirectory() {
   const isTenantAdmin = can("MANAGE_WEBHOOK_INTEGRATIONS");
 
   const projectsQuery = useProjectsQuery();
+  const deleteProjectMutation = useDeleteProjectMutation();
   const initialQuery = searchParams.get("q") ?? "";
 
   const [searchTerm, setSearchTerm] = useState(initialQuery);
@@ -556,12 +556,8 @@ export function ProjectsDirectory() {
                       project.authoritative_cd_signal;
                     const signalShort =
                       SIGNAL_SHORT_LABELS[signalKey] || signalKey;
-                    const uiMeta =
-                      getProjectUiMeta(project.id) ||
-                      getProjectUiMeta(project.slug);
                     const summaryCopy =
-                      uiMeta.description ||
-                      getProjectUiMeta(project.slug).description ||
+                      project.description?.trim() ||
                       `SLA ${project.tier_sla_hours}h · WIP limit ${project.wip_limit_per_dev}/dev · PR stale ${project.pr_stale_threshold_hours}h`;
 
                     const cardBorder =
@@ -645,21 +641,61 @@ export function ProjectsDirectory() {
                                     />
                                     <span>Copy Project Slug</span>
                                   </button>
-                                  <button
-                                    type="button"
-                                    role="menuitem"
-                                    disabled
-                                    aria-disabled="true"
-                                    title="Archiving projects requires PATCH/DELETE /api/v1/projects/{id} backend support"
-                                    data-testid={`archive-project-action-${project.slug}`}
-                                    className="flex w-full cursor-not-allowed items-center gap-2 rounded-[6px] px-[8px] py-[7px] text-left text-[12px] text-[#64748b] opacity-55"
-                                  >
-                                    <Trash2
-                                      className="size-[13px]"
-                                      aria-hidden="true"
-                                    />
-                                    <span>Archive Project</span>
-                                  </button>
+                                  {(() => {
+                                    const archiveDisabled =
+                                      !isTenantAdmin ||
+                                      !project.is_active ||
+                                      deleteProjectMutation.isPending;
+                                    const archiveTitle = !isTenantAdmin
+                                      ? "Only Tenant Administrators can archive projects"
+                                      : !project.is_active
+                                        ? "Project is already archived"
+                                        : "Archive this project";
+                                    return (
+                                      <button
+                                        type="button"
+                                        role="menuitem"
+                                        disabled={archiveDisabled}
+                                        aria-disabled={archiveDisabled || undefined}
+                                        title={archiveTitle}
+                                        data-testid={`archive-project-action-${project.slug}`}
+                                        onClick={async () => {
+                                          if (archiveDisabled) return;
+                                          setOpenMenuId(null);
+                                          try {
+                                            await deleteProjectMutation.mutateAsync(
+                                              project.id,
+                                            );
+                                            setCopiedNotice(
+                                              `Archived project "${project.name}".`,
+                                            );
+                                          } catch (err: unknown) {
+                                            setCopiedNotice(
+                                              err instanceof Error
+                                                ? err.message
+                                                : "Failed to archive project.",
+                                            );
+                                          }
+                                        }}
+                                        className={cn(
+                                          "flex w-full items-center gap-2 rounded-[6px] px-[8px] py-[7px] text-left text-[12px] transition-colors",
+                                          archiveDisabled
+                                            ? "cursor-not-allowed text-[#64748b] opacity-55"
+                                            : "cursor-pointer text-[#fca5a5] hover:bg-[#ef4444]/15",
+                                        )}
+                                      >
+                                        <Trash2
+                                          className="size-[13px]"
+                                          aria-hidden="true"
+                                        />
+                                        <span>
+                                          {project.is_active
+                                            ? "Archive Project"
+                                            : "Archived"}
+                                        </span>
+                                      </button>
+                                    );
+                                  })()}
                                 </div>
                               )}
                             </div>
