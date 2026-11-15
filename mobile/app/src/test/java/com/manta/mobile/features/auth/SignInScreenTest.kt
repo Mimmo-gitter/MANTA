@@ -39,6 +39,10 @@ class SignInScreenTest {
         composeTestRule.onNodeWithText("Password").assertIsDisplayed()
         composeTestRule.onNodeWithText("Remember this device").performScrollTo().assertIsDisplayed()
         composeTestRule.onNodeWithText(
+            "Sign In with Credentials"
+        ).performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText("OR").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithText(
             "Sign In with Organization SSO"
         ).performScrollTo().assertIsDisplayed()
         composeTestRule.onNodeWithText(

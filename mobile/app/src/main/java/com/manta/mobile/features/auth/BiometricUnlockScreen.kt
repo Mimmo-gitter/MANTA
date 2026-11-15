@@ -243,7 +243,6 @@ fun BiometricUnlockScreen(
                         backgroundColor = PrimaryTransparent,
                         textColor = Primary
                     )
-                    Spacer(modifier = Modifier.height(12.dp))
                     Text(
                         text = "Tap sensor or glance at camera for Face ID",
                         style = MaterialTheme.typography.bodySmall,
@@ -256,7 +255,6 @@ fun BiometricUnlockScreen(
                         backgroundColor = Color(0xFF1B2E28),
                         textColor = Primary
                     )
-                    Spacer(modifier = Modifier.height(24.dp))
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.End
@@ -295,7 +293,6 @@ fun BiometricUnlockScreen(
                         backgroundColor = Color(0x33FF383C),
                         textColor = Danger
                     )
-                    Spacer(modifier = Modifier.height(12.dp))
                     Text(
                         text = "Clean sensor surface or position finger squarely on the reader. " +
                             "Keep still during the scan cycle.",
@@ -343,7 +340,6 @@ fun BiometricUnlockScreen(
                         backgroundColor = DarkSurface,
                         textColor = Alert
                     )
-                    Spacer(modifier = Modifier.height(12.dp))
                     Text(
                         text = "Biometric is disabled. Re-verify identity using Organization SSO.",
                         style = MaterialTheme.typography.bodySmall,
@@ -380,4 +376,5 @@ private fun StatusChip(text: String, backgroundColor: Color, textColor: Color) {
             fontWeight = FontWeight.Bold
         )
     }
+    Spacer(modifier = Modifier.height(20.dp))
 }

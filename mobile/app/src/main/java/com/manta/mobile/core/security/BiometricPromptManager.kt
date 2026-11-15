@@ -1,6 +1,7 @@
 package com.manta.mobile.core.security
 
 import android.os.Build
+import android.util.Log
 import androidx.biometric.BiometricManager
 import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_STRONG
 import androidx.biometric.BiometricManager.Authenticators.BIOMETRIC_WEAK
@@ -63,6 +64,8 @@ class BiometricPromptManager(private val activity: FragmentActivity) {
                 BiometricStatus.NotEnrolled
             }
         }
+
+        // Fallback for Knox / vendor framework returning -1: attempt BiometricPrompt launch
         if (result == -1) {
             return BiometricStatus.Ready
         }
@@ -90,6 +93,7 @@ class BiometricPromptManager(private val activity: FragmentActivity) {
                 BIOMETRIC_STRONG or BIOMETRIC_WEAK or DEVICE_CREDENTIAL
             )
         } else {
+            promptInfoBuilder.setAllowedAuthenticators(BIOMETRIC_STRONG or BIOMETRIC_WEAK)
             promptInfoBuilder.setNegativeButtonText(negativeButtonText)
         }
 
@@ -99,8 +103,9 @@ class BiometricPromptManager(private val activity: FragmentActivity) {
             object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
                     super.onAuthenticationError(errorCode, errString)
+                    Log.d(TAG, "onAuthenticationError: $errorCode - $errString")
                     resultChannel.trySend(
-                        BiometricResult.AuthenticationError(errString.toString())
+                        BiometricResult.AuthenticationError(errorCode, errString.toString())
                     )
                 }
 
@@ -108,11 +113,13 @@ class BiometricPromptManager(private val activity: FragmentActivity) {
                     result: BiometricPrompt.AuthenticationResult
                 ) {
                     super.onAuthenticationSucceeded(result)
+                    Log.d(TAG, "onAuthenticationSucceeded")
                     resultChannel.trySend(BiometricResult.AuthenticationSuccess)
                 }
 
                 override fun onAuthenticationFailed() {
                     super.onAuthenticationFailed()
+                    Log.d(TAG, "onAuthenticationFailed")
                     resultChannel.trySend(BiometricResult.AuthenticationFailed)
                 }
             }
@@ -121,8 +128,12 @@ class BiometricPromptManager(private val activity: FragmentActivity) {
         prompt.authenticate(promptInfoBuilder.build())
     }
 
+    companion object {
+        private const val TAG = "BiometricPromptManager"
+    }
+
     sealed interface BiometricResult {
-        data class AuthenticationError(val error: String) : BiometricResult
+        data class AuthenticationError(val errorCode: Int, val error: String) : BiometricResult
         data object AuthenticationSuccess : BiometricResult
         data object AuthenticationFailed : BiometricResult
     }

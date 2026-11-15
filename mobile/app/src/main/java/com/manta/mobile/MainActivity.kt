@@ -7,6 +7,7 @@ import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.biometric.BiometricPrompt
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -70,18 +71,27 @@ class MainActivity : FragmentActivity() {
                         authRepository.unlockSession()
                     }
                     is BiometricPromptManager.BiometricResult.AuthenticationError -> {
-                        failedAttemptCount++
-                        val attemptsLeft = (3 - failedAttemptCount).coerceAtLeast(0)
-                        if (attemptsLeft == 0 ||
-                            result.error.contains("lockout", ignoreCase = true)
-                        ) {
-                            authRepository.updateBiometricSubState(
-                                BiometricUnlockSubState.Unavailable
-                            )
-                        } else {
-                            authRepository.updateBiometricSubState(
-                                BiometricUnlockSubState.Failed(attemptsLeft)
-                            )
+                        when (result.errorCode) {
+                            BiometricPrompt.ERROR_USER_CANCELED,
+                            BiometricPrompt.ERROR_CANCELED,
+                            BiometricPrompt.ERROR_NEGATIVE_BUTTON -> {
+                                failedAttemptCount++
+                                val attemptsLeft = (3 - failedAttemptCount).coerceAtLeast(0)
+                                if (attemptsLeft == 0) {
+                                    authRepository.updateBiometricSubState(
+                                        BiometricUnlockSubState.Unavailable
+                                    )
+                                } else {
+                                    authRepository.updateBiometricSubState(
+                                        BiometricUnlockSubState.Failed(attemptsLeft)
+                                    )
+                                }
+                            }
+                            else -> {
+                                authRepository.updateBiometricSubState(
+                                    BiometricUnlockSubState.Unavailable
+                                )
+                            }
                         }
                     }
                     BiometricPromptManager.BiometricResult.AuthenticationFailed -> {
@@ -129,11 +139,13 @@ class MainActivity : FragmentActivity() {
                                 triggerBiometricUnlock()
                             },
                             onSwitchClick = {
+                                failedAttemptCount = 0
                                 lifecycleScope.launch {
                                     authRepository.logout()
                                 }
                             },
                             onSsoClick = {
+                                failedAttemptCount = 0
                                 lifecycleScope.launch {
                                     authRepository.logout()
                                     PkceAuthManager.launchOidcFlow(this@MainActivity)

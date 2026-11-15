@@ -18,10 +18,12 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.AlternateEmail
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.Fingerprint
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Shield
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.Card
@@ -255,12 +257,32 @@ fun SignInScreen(onBiometricUnlockClick: () -> Unit = {}) {
                 )
             }
             PrimaryButton(
+                text = "Sign In with Credentials",
+                onClick = { },
+                icon = Icons.AutoMirrored.Filled.ArrowForward
+            )
+
+            Spacer(modifier = Modifier.height(20.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.Center
+            ) {
+                Text(
+                    text = "OR",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = GrayText,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Spacer(modifier = Modifier.height(16.dp))
+            PrimaryButton(
                 text = "Sign In with Organization SSO",
                 onClick = { PkceAuthManager.launchOidcFlow(context) },
                 enabled = !isLoading,
-                isLoading = isLoading
+                isLoading = isLoading,
+                icon = Icons.Default.Shield
             )
-
             Spacer(modifier = Modifier.height(20.dp))
 
             // Quick Biometric Sign-In Card
