@@ -1,4 +1,4 @@
-"""Pydantic schemas for DORA metrics (US-26 / Task 26.3 & US-27 / Task 27.2)."""
+"""Pydantic schemas for DORA metrics (US-26 / Task 26.3, US-27 / Task 27.2 & US-28 / Task 28.2)."""
 
 from datetime import date, datetime
 from typing import Literal, Optional
@@ -62,3 +62,51 @@ class LeadTimeResult(BaseModel):
     daily_series: list[DailyLeadTimeMetric]
     window_start: datetime
     window_end: datetime
+
+
+class DailyChangeFailureRateMetric(BaseModel):
+    """Daily Change Failure Rate trend point in UTC."""
+
+    date: date
+    total_deployment_count: int = Field(ge=0)
+    failed_deployment_count: int = Field(ge=0)
+    change_failure_rate: Optional[float] = None
+    change_failure_rate_percentage: Optional[float] = None
+
+    @property
+    def cfr(self) -> Optional[float]:
+        return self.change_failure_rate
+
+    @property
+    def cfr_ratio(self) -> Optional[float]:
+        return self.change_failure_rate
+
+    @property
+    def cfr_percentage(self) -> Optional[float]:
+        return self.change_failure_rate_percentage
+
+
+class ChangeFailureRateResult(BaseModel):
+    """Rolling 14-day or 30-day Change Failure Rate calculation result (US-28 / Task 28.2)."""
+
+    window_days: Literal[14, 30]
+    total_deployment_count: int = Field(ge=0)
+    failed_deployment_count: int = Field(ge=0)
+    change_failure_rate: Optional[float] = None
+    change_failure_rate_percentage: Optional[float] = None
+    failed_deployment_ids: list[uuid.UUID] = Field(default_factory=list)
+    daily_series: list[DailyChangeFailureRateMetric]
+    window_start: datetime
+    window_end: datetime
+
+    @property
+    def cfr(self) -> Optional[float]:
+        return self.change_failure_rate
+
+    @property
+    def cfr_ratio(self) -> Optional[float]:
+        return self.change_failure_rate
+
+    @property
+    def cfr_percentage(self) -> Optional[float]:
+        return self.change_failure_rate_percentage

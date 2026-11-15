@@ -1,4 +1,4 @@
-"""Backend DORA metrics calculation services (US-26 / Task 26.3 & US-27 / Task 27.2)."""
+"""Backend DORA metrics calculation services (US-26 / Task 26.3, US-27 / Task 27.2 & US-28 / Task 28.2)."""
 
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta, timezone
@@ -6,13 +6,21 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Literal, Optional, Sequence
 import uuid
 
-from sqlalchemy import Select, func, select
+from sqlalchemy import Numeric, Select, and_, case, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models.models import Deployment, DeploymentPullRequest, Project, PullRequest
+from app.db.models.models import (
+    Deployment,
+    DeploymentIncident,
+    DeploymentPullRequest,
+    Project,
+    PullRequest,
+)
 from app.deployments.schemas import DeploymentOutcome
 from app.deployments.service import build_authoritative_production_deployments_query
 from app.dora.schemas import (
+    ChangeFailureRateResult,
+    DailyChangeFailureRateMetric,
     DailyDeploymentCount,
     DailyLeadTimeMetric,
     DeploymentFrequencyResult,
@@ -22,6 +30,8 @@ from app.dora.schemas import (
 
 SUPPORTED_DEPLOYMENT_FREQUENCY_WINDOWS: tuple[int, ...] = (14, 30)
 SUPPORTED_LEAD_TIME_WINDOWS: tuple[int, ...] = (14, 30)
+SUPPORTED_CFR_WINDOWS: tuple[int, ...] = (14, 30)
+INCIDENT_CORRELATION_WINDOW_SECONDS: int = 86400
 
 
 def _ensure_utc(dt: datetime) -> datetime:
@@ -485,4 +495,359 @@ async def calculate_rolling_lead_time(
         window_days=window_days,
         window_end=end_utc,
         author_pseudonym_id=author_pseudonym_id,
+    )
+
+
+# ---------------------------------------------------------------------------
+# US-28 / Task 28.2: Change Failure Rate (CFR) Distinct Union Calculator
+# ---------------------------------------------------------------------------
+
+
+def _round_cfr_ratio(failed_count: int, total_count: int) -> Optional[float]:
+    """Compute round(failed_count / total_count, 4) or None when total_count == 0."""
+    if total_count <= 0:
+        return None
+    if failed_count <= 0:
+        return 0.0
+    ratio = (Decimal(failed_count) / Decimal(total_count)).quantize(
+        Decimal("0.0001"),
+        rounding=ROUND_HALF_UP,
+    )
+    return float(ratio)
+
+
+def _round_cfr_percentage(failed_count: int, total_count: int) -> Optional[float]:
+    """Compute round((failed_count / total_count) * 100.0, 2) or None when total_count == 0."""
+    if total_count <= 0:
+        return None
+    if failed_count <= 0:
+        return 0.0
+    pct = ((Decimal(failed_count) * Decimal("100")) / Decimal(total_count)).quantize(
+        Decimal("0.01"),
+        rounding=ROUND_HALF_UP,
+    )
+    return float(pct)
+
+
+def is_active_confirmed_incident_for_deployment(
+    incident: Any,
+    deployment: Any,
+) -> bool:
+    """
+    Evaluate whether a DeploymentIncident link is an active CONFIRMED failure signal
+    within the 0..24h correlation window for a production deployment (Task 28.1 / Task 28.2).
+    """
+    if incident is None or deployment is None:
+        return False
+
+    if getattr(incident, "is_active", True) is not True:
+        return False
+
+    inc_status = getattr(incident, "status", "CONFIRMED")
+    if inc_status is not None and str(inc_status).strip().upper() != "CONFIRMED":
+        return False
+
+    dep_tid = getattr(deployment, "tenant_id", None)
+    inc_tid = getattr(incident, "tenant_id", None)
+    if dep_tid is not None and inc_tid is not None and dep_tid != inc_tid:
+        return False
+
+    dep_id = getattr(deployment, "id", None)
+    inc_dep_id = getattr(incident, "deployment_id", None)
+    if dep_id is not None and inc_dep_id is not None and dep_id != inc_dep_id:
+        return False
+
+    detected_at = getattr(incident, "detected_at", None)
+    deployed_at = getattr(deployment, "deployed_at", None)
+    if detected_at is not None and deployed_at is not None:
+        delta_seconds = (_ensure_utc(detected_at) - _ensure_utc(deployed_at)).total_seconds()
+        if delta_seconds < 0 or delta_seconds > INCIDENT_CORRELATION_WINDOW_SECONDS:
+            return False
+
+    return True
+
+
+def compute_change_failure_rate(
+    deployments: Sequence[Any],
+    *,
+    deployment_incidents: Sequence[DeploymentIncident] = (),
+    window_days: Literal[14, 30] = 14,
+    window_end: Optional[datetime] = None,
+) -> ChangeFailureRateResult:
+    """
+    Compute rolling 14-day or 30-day Change Failure Rate using a strict distinct union
+    over deployment IDs (COUNT(DISTINCT d.id)) across FAILED/ROLLED_BACK outcomes and
+    active CONFIRMED deployment_incidents (Task 28.2).
+
+    Overlapping failure signals on the same deployment increment failed_deployment_count
+    by exactly 1. Returns None (null) for CFR when total_deployment_count == 0.
+    """
+    if window_days not in SUPPORTED_CFR_WINDOWS:
+        raise ValueError(
+            f"Unsupported window_days={window_days}. Expected one of {SUPPORTED_CFR_WINDOWS}."
+        )
+
+    end_utc = _ensure_utc(window_end or datetime.now(timezone.utc))
+    start_utc = end_utc - timedelta(days=window_days)
+
+    incidents_by_dep_id: dict[uuid.UUID, list[Any]] = defaultdict(list)
+    for inc in deployment_incidents:
+        dep_id = getattr(inc, "deployment_id", None)
+        if dep_id is not None:
+            incidents_by_dep_id[dep_id].append(inc)
+
+    unique_deployments: dict[uuid.UUID, tuple[Any, datetime]] = {}
+
+    for entry in deployments:
+        if isinstance(entry, tuple) and len(entry) >= 2:
+            dep_obj, joined_inc = entry[0], entry[1]
+        else:
+            dep_obj, joined_inc = entry, None
+
+        if dep_obj is None:
+            continue
+        if getattr(dep_obj, "environment", None) != "production":
+            continue
+
+        deployed_at = getattr(dep_obj, "deployed_at", None)
+        if deployed_at is None:
+            continue
+        deployed_utc = _ensure_utc(deployed_at)
+        if deployed_utc < start_utc or deployed_utc > end_utc:
+            continue
+
+        dep_id = getattr(dep_obj, "id", None)
+        if dep_id is None:
+            continue
+
+        if dep_id not in unique_deployments:
+            unique_deployments[dep_id] = (dep_obj, deployed_utc)
+
+        if joined_inc is not None:
+            incidents_by_dep_id[dep_id].append(joined_inc)
+
+        preloaded_links = getattr(dep_obj, "__dict__", {}).get("incident_links")
+        if preloaded_links:
+            for link in preloaded_links:
+                incidents_by_dep_id[dep_id].append(link)
+
+    ordered_deployments = sorted(
+        unique_deployments.values(),
+        key=lambda pair: (pair[1], str(pair[0].id)),
+    )
+
+    failed_deployment_ids: list[uuid.UUID] = []
+    daily_total_counts: Counter = Counter()
+    daily_failed_counts: Counter = Counter()
+
+    for dep_obj, deployed_utc in ordered_deployments:
+        dep_id = dep_obj.id
+        deploy_date = deployed_utc.date()
+        daily_total_counts[deploy_date] += 1
+
+        dep_status = getattr(dep_obj, "status", None)
+        is_failed_outcome = dep_status in (
+            DeploymentOutcome.FAILED.value,
+            DeploymentOutcome.ROLLED_BACK.value,
+        )
+        has_active_incident = any(
+            is_active_confirmed_incident_for_deployment(inc, dep_obj)
+            for inc in incidents_by_dep_id.get(dep_id, ())
+        )
+
+        if is_failed_outcome or has_active_incident:
+            failed_deployment_ids.append(dep_id)
+            daily_failed_counts[deploy_date] += 1
+
+    total_count = len(ordered_deployments)
+    failed_count = len(failed_deployment_ids)
+
+    end_date = end_utc.date()
+    start_date = end_date - timedelta(days=window_days - 1)
+    daily_series: list[DailyChangeFailureRateMetric] = []
+
+    for offset in range(window_days):
+        bucket_date = start_date + timedelta(days=offset)
+        day_total = daily_total_counts.get(bucket_date, 0)
+        day_failed = daily_failed_counts.get(bucket_date, 0)
+        daily_series.append(
+            DailyChangeFailureRateMetric(
+                date=bucket_date,
+                total_deployment_count=day_total,
+                failed_deployment_count=day_failed,
+                change_failure_rate=_round_cfr_ratio(day_failed, day_total),
+                change_failure_rate_percentage=_round_cfr_percentage(day_failed, day_total),
+            )
+        )
+
+    return ChangeFailureRateResult(
+        window_days=window_days,
+        total_deployment_count=total_count,
+        failed_deployment_count=failed_count,
+        change_failure_rate=_round_cfr_ratio(failed_count, total_count),
+        change_failure_rate_percentage=_round_cfr_percentage(failed_count, total_count),
+        failed_deployment_ids=failed_deployment_ids,
+        daily_series=daily_series,
+        window_start=start_utc,
+        window_end=end_utc,
+    )
+
+
+def build_change_failure_rate_deployments_query(
+    *,
+    tenant_id: uuid.UUID,
+    project_id: uuid.UUID,
+    start_at: Optional[datetime] = None,
+    end_at: Optional[datetime] = None,
+) -> Select[tuple[Deployment, Optional[DeploymentIncident]]]:
+    """
+    Build authoritative production deployments query left-joining active CONFIRMED
+    deployment_incidents within the 24-hour correlation window (Task 28.2).
+    """
+    stmt = (
+        select(Deployment, DeploymentIncident)
+        .join(Project, Project.id == Deployment.project_id)
+        .outerjoin(
+            DeploymentIncident,
+            and_(
+                DeploymentIncident.deployment_id == Deployment.id,
+                DeploymentIncident.tenant_id == Deployment.tenant_id,
+                DeploymentIncident.is_active.is_(True),
+                DeploymentIncident.status == "CONFIRMED",
+                DeploymentIncident.detected_at >= Deployment.deployed_at,
+                DeploymentIncident.detected_at
+                <= Deployment.deployed_at + text("INTERVAL '24 hours'"),
+            ),
+        )
+        .where(
+            Deployment.tenant_id == tenant_id,
+            Deployment.project_id == project_id,
+            Deployment.environment == "production",
+            Deployment.authoritative_signal_source == Project.authoritative_cd_signal,
+            Project.deleted_at.is_(None),
+        )
+        .order_by(Deployment.deployed_at.asc(), Deployment.id.asc())
+    )
+    if start_at is not None:
+        stmt = stmt.where(Deployment.deployed_at >= start_at)
+    if end_at is not None:
+        stmt = stmt.where(Deployment.deployed_at <= end_at)
+    return stmt
+
+
+def build_change_failure_rate_sql_query(
+    *,
+    tenant_id: uuid.UUID,
+    project_id: uuid.UUID,
+    start_at: Optional[datetime] = None,
+    end_at: Optional[datetime] = None,
+) -> Select[tuple[int, int, Optional[float], Optional[float]]]:
+    """
+    Build native PostgreSQL 16 aggregate query computing COUNT(DISTINCT d.id) for total
+    and failed production deployments (FAILED/ROLLED_BACK U active CONFIRMED incident)
+    per Task 28.1 §5 & Task 28.2.
+    """
+    failure_predicate = or_(
+        Deployment.status.in_(
+            [DeploymentOutcome.FAILED.value, DeploymentOutcome.ROLLED_BACK.value]
+        ),
+        and_(
+            DeploymentIncident.id.is_not(None),
+            DeploymentIncident.is_active.is_(True),
+            DeploymentIncident.status == "CONFIRMED",
+            DeploymentIncident.detected_at >= Deployment.deployed_at,
+            DeploymentIncident.detected_at <= Deployment.deployed_at + text("INTERVAL '24 hours'"),
+        ),
+    )
+
+    total_distinct = func.count(func.distinct(Deployment.id))
+    failed_distinct = func.count(func.distinct(Deployment.id)).filter(failure_predicate)
+
+    stmt = (
+        select(
+            total_distinct.label("total_production_deployments"),
+            failed_distinct.label("distinct_failed_deployments"),
+            case(
+                (total_distinct == 0, None),
+                else_=func.round(
+                    func.cast(failed_distinct, Numeric) / func.cast(total_distinct, Numeric),
+                    4,
+                ),
+            ).label("cfr_ratio"),
+            case(
+                (total_distinct == 0, None),
+                else_=func.round(
+                    (
+                        func.cast(failed_distinct, Numeric)
+                        * Decimal("100.0")
+                        / func.cast(total_distinct, Numeric)
+                    ),
+                    2,
+                ),
+            ).label("cfr_percentage"),
+        )
+        .select_from(Deployment)
+        .join(Project, Project.id == Deployment.project_id)
+        .outerjoin(
+            DeploymentIncident,
+            and_(
+                DeploymentIncident.deployment_id == Deployment.id,
+                DeploymentIncident.tenant_id == Deployment.tenant_id,
+            ),
+        )
+        .where(
+            Deployment.tenant_id == tenant_id,
+            Deployment.project_id == project_id,
+            Deployment.environment == "production",
+            Deployment.authoritative_signal_source == Project.authoritative_cd_signal,
+            Project.deleted_at.is_(None),
+        )
+    )
+    if start_at is not None:
+        stmt = stmt.where(Deployment.deployed_at >= start_at)
+    if end_at is not None:
+        stmt = stmt.where(Deployment.deployed_at <= end_at)
+    return stmt
+
+
+async def calculate_rolling_change_failure_rate(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    project_id: uuid.UUID,
+    window_days: Literal[14, 30] = 14,
+    window_end: Optional[datetime] = None,
+) -> ChangeFailureRateResult:
+    """
+    Query authoritative production deployments left-joining active deployment_incidents
+    and compute rolling 14d/30d Change Failure Rate using COUNT(DISTINCT d.id) (Task 28.2).
+    """
+    if window_days not in SUPPORTED_CFR_WINDOWS:
+        raise ValueError(
+            f"Unsupported window_days={window_days}. Expected one of {SUPPORTED_CFR_WINDOWS}."
+        )
+
+    end_utc = _ensure_utc(window_end or datetime.now(timezone.utc))
+    start_utc = end_utc - timedelta(days=window_days)
+
+    stmt = build_change_failure_rate_deployments_query(
+        tenant_id=tenant_id,
+        project_id=project_id,
+        start_at=start_utc,
+        end_at=end_utc,
+    )
+
+    result = await db.execute(stmt)
+    if hasattr(result, "all"):
+        rows = [
+            tuple(row) if not isinstance(row, tuple) and hasattr(row, "__iter__") else row
+            for row in result.all()
+        ]
+    else:
+        rows = list(result.scalars().all())
+
+    return compute_change_failure_rate(
+        rows,
+        window_days=window_days,
+        window_end=end_utc,
     )
