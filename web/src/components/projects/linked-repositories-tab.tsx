@@ -12,23 +12,28 @@ import {
   ExternalLink,
   GitBranch,
   Link2,
+  Lock,
   Plus,
   Search,
   Unlink2,
+  X,
 } from "lucide-react";
 import { getIntegrations } from "@/lib/integrations-api";
+import { formatRelativeTime } from "@/lib/projects-api";
 import { usePermissions } from "@/hooks/use-permissions";
 import { getPrimaryRoleLabel } from "@/lib/permissions";
 import type { Integration } from "@/types/integration";
 import type { ProjectItem, RepositoryItem } from "@/types/project";
 import { LinkRepositoriesModal } from "@/components/projects/link-repositories-modal";
 import { UnlinkRepositoryModal } from "@/components/projects/unlink-repository-modal";
+import { cn } from "@/lib/utils";
 
 interface LinkedRepositoriesTabProps {
   project: ProjectItem;
   linkModalOpen: boolean;
   onOpenLinkModal: () => void;
   onCloseLinkModal: () => void;
+  onOpenDeploymentSignal?: () => void;
 }
 
 const PAGE_SIZE = 5;
@@ -48,6 +53,7 @@ export function LinkedRepositoriesTab({
   linkModalOpen,
   onOpenLinkModal,
   onCloseLinkModal,
+  onOpenDeploymentSignal,
 }: LinkedRepositoriesTabProps) {
   const { can, roles } = usePermissions();
   const isTenantAdmin = can("MANAGE_WEBHOOK_INTEGRATIONS");
@@ -59,7 +65,14 @@ export function LinkedRepositoriesTab({
   const [selectedIntegrationId, setSelectedIntegrationId] = useState("");
   const [page, setPage] = useState(1);
   const [unlinkTarget, setUnlinkTarget] = useState<RepositoryItem | null>(null);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const [recentlyLinkedNames, setRecentlyLinkedNames] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const [toastState, setToastState] = useState<{
+    title: string;
+    subtitle?: string;
+    showSignalLink?: boolean;
+  } | null>(null);
 
   const integrationsQuery = useQuery<Integration[]>({
     queryKey: ["integrations"],
@@ -90,10 +103,10 @@ export function LinkedRepositoriesTab({
   }, [activeGitHubIntegrations, githubIntegrations, selectedIntegrationId]);
 
   useEffect(() => {
-    if (!toastMessage) return;
-    const timer = window.setTimeout(() => setToastMessage(null), 5000);
+    if (!toastState) return;
+    const timer = window.setTimeout(() => setToastState(null), 6000);
     return () => window.clearTimeout(timer);
-  }, [toastMessage]);
+  }, [toastState]);
 
   const filteredRepos = useMemo(() => {
     const query = repoSearch.trim().toLowerCase();
@@ -136,9 +149,15 @@ export function LinkedRepositoriesTab({
   const copyRepoName = async (fullName: string) => {
     try {
       await navigator.clipboard.writeText(`https://github.com/${fullName}`);
-      setToastMessage(`Copied GitHub URL for ${fullName}`);
+      setToastState({
+        title: "GitHub URL copied",
+        subtitle: `https://github.com/${fullName}`,
+      });
     } catch {
-      setToastMessage(`Repository: https://github.com/${fullName}`);
+      setToastState({
+        title: "Repository URL",
+        subtitle: `https://github.com/${fullName}`,
+      });
     }
   };
 
@@ -223,7 +242,7 @@ export function LinkedRepositoriesTab({
                   setPage(1);
                 }}
                 placeholder="Filter linked repositories..."
-                className="h-[32px] w-[210px] rounded-[6px] border border-[#252b3b] bg-[#0a0e18] pl-[30px] pr-[10px] text-[12px] text-[#e2e8f0] placeholder:text-[#64748b] focus:border-[#00e599] focus:outline-none"
+                className="h-[32px] w-[210px] rounded-[6px] border border-[#252b3b] border-solid bg-[#0a0e18] pl-[30px] pr-[10px] text-[12px] text-[#e2e8f0] shadow-none placeholder:text-[#64748b] focus:border-[#00e599] focus:outline-none focus:ring-0"
                 data-testid="filter-linked-repos-input"
               />
             </div>
@@ -412,7 +431,7 @@ export function LinkedRepositoriesTab({
                       Default Branch &amp; Visibility
                     </th>
                     <th scope="col" className="px-[16px] py-[10px]">
-                      Link Status
+                      Added
                     </th>
                     <th scope="col" className="px-[16px] py-[10px] text-right">
                       Actions
@@ -420,24 +439,46 @@ export function LinkedRepositoriesTab({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-[#1e293b]/80">
-                  {paginatedRepos.map((repo, idx) => (
+                  {paginatedRepos.map((repo, idx) => {
+                    const isJustLinked = recentlyLinkedNames.has(
+                      repo.full_name.toLowerCase(),
+                    );
+                    return (
                     <tr
                       key={repo.id}
                       data-testid={`linked-repo-row-${repo.full_name}`}
-                      className="transition-colors hover:bg-white/[0.02]"
+                      className={cn(
+                        "transition-colors hover:bg-white/[0.02]",
+                        isJustLinked && "bg-[#00e599]/[0.05]",
+                      )}
                     >
                       <td className="px-[16px] py-[12px]">
                         <div className="flex items-center gap-[12px]">
-                          <div className="flex size-[32px] shrink-0 items-center justify-center rounded-full border border-[#1e3a5f] bg-[#10203a] font-mono text-[11px] font-semibold text-[#60a5fa]">
+                          <div
+                            className={cn(
+                              "flex size-[32px] shrink-0 items-center justify-center rounded-[8px] border font-mono text-[11px] font-semibold",
+                              isJustLinked
+                                ? "border-[#00e599]/45 bg-[#00e599]/15 text-[#00e599]"
+                                : "border-[#1e3a5f] bg-[#10203a] text-[#60a5fa]",
+                            )}
+                          >
                             {getRepoInitials(repo.full_name)}
                           </div>
                           <div className="min-w-0">
-                            <div className="flex items-center gap-[8px]">
+                            <div className="flex flex-wrap items-center gap-[6px]">
                               <span className="truncate font-mono text-[13px] font-medium text-[#f8fafc]">
                                 {repo.full_name}
                               </span>
-                              {safePage === 1 && idx === 0 && (
-                                <span className="rounded-[4px] border border-[#00e599]/30 bg-[#00e599]/10 px-[6px] py-[1px] font-mono text-[9px] font-semibold uppercase tracking-[0.5px] text-[#00e599]">
+                              {isJustLinked && (
+                                <span
+                                  data-testid={`just-linked-badge-${repo.full_name}`}
+                                  className="rounded-[4px] border border-[#00e599]/40 bg-[#00e599]/15 px-[6px] py-[1px] font-mono text-[9px] font-semibold uppercase tracking-[0.5px] text-[#00e599]"
+                                >
+                                  Just Linked · just now
+                                </span>
+                              )}
+                              {safePage === 1 && idx === 0 && !isJustLinked && (
+                                <span className="rounded-[4px] border border-[#334155] bg-[#0f131d] px-[6px] py-[1px] font-mono text-[9px] font-semibold uppercase tracking-[0.5px] text-[#cbd5e1]">
                                   Primary
                                 </span>
                               )}
@@ -459,25 +500,23 @@ export function LinkedRepositoriesTab({
                       </td>
 
                       <td className="px-[16px] py-[12px]">
-                        <span className="inline-flex items-center gap-1.5 rounded-[5px] border border-[#1e3a5f] bg-[#0a1628] px-[8px] py-[3px] font-mono text-[11px] text-[#93c5fd]">
-                          <span
-                            className="size-[5px] rounded-full bg-[#60a5fa]"
-                            aria-hidden="true"
-                          />
-                          <span>
-                            {repo.default_branch} ·{" "}
-                            {repo.is_private ? "Private" : "Public"}
+                        <div className="flex flex-wrap items-center gap-[6px]">
+                          <span className="inline-flex items-center gap-1.5 rounded-[5px] border border-[#1e3a5f] bg-[#0a1628] px-[8px] py-[3px] font-mono text-[11px] text-[#93c5fd]">
+                            <GitBranch className="size-[11px] text-[#60a5fa]" aria-hidden="true" />
+                            <span>{repo.default_branch}</span>
                           </span>
-                        </span>
+                          <span className="inline-flex items-center gap-1 rounded-[5px] border border-[#252b3b] bg-[#0a0e18] px-[7px] py-[3px] font-mono text-[10px] text-[#94a3b8]">
+                            {repo.is_private && (
+                              <Lock className="size-[10px] text-[#94a3b8]" aria-hidden="true" />
+                            )}
+                            <span>{repo.is_private ? "Private" : "Public"}</span>
+                          </span>
+                        </div>
                       </td>
 
                       <td className="px-[16px] py-[12px]">
-                        <span className="inline-flex items-center gap-1.5 rounded-[5px] border border-[#00e599]/30 bg-[#00e599]/10 px-[8px] py-[3px] font-mono text-[11px] text-[#00e599]">
-                          <span
-                            className="size-[5px] rounded-full bg-[#00e599]"
-                            aria-hidden="true"
-                          />
-                          <span>Linked</span>
+                        <span className="font-mono text-[11px] text-[#94a3b8]">
+                          {isJustLinked ? "just now" : formatRelativeTime(repo.created_at)}
                         </span>
                       </td>
 
@@ -511,7 +550,8 @@ export function LinkedRepositoriesTab({
                         </div>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -552,28 +592,53 @@ export function LinkedRepositoriesTab({
         )}
       </div>
 
-      {/* Live Region Toast (Figma 3C) */}
+      {/* Floating Top-Right Toast (Figma 3C) */}
       <div aria-live="polite" className="min-h-[1px]">
-        {toastMessage && (
+        {toastState && (
           <div
             role="status"
             data-testid="linked-repos-toast"
-            className="flex items-center justify-between gap-3 rounded-[10px] border border-[#00e599]/35 bg-[#0e1a24] px-[14px] py-[10px] text-[12px] text-[#e2e8f0]"
+            className="fixed right-[24px] top-[76px] z-40 flex w-[min(430px,calc(100vw-32px))] items-start justify-between gap-3 rounded-[10px] border border-[#00e599]/40 bg-[#0e1a24] p-[14px] text-[12px] text-[#e2e8f0] shadow-[0_20px_45px_-12px_rgba(0,0,0,0.75)]"
           >
-            <div className="flex items-center gap-2">
+            <div className="flex min-w-0 items-start gap-2.5">
               <CheckCircle2
-                className="size-[15px] shrink-0 text-[#00e599]"
+                className="mt-[2px] size-[16px] shrink-0 text-[#00e599]"
                 aria-hidden="true"
               />
-              <span>{toastMessage}</span>
+              <div className="min-w-0">
+                <div className="font-semibold text-[#f8fafc]">
+                  {toastState.title}
+                </div>
+                {toastState.subtitle && (
+                  <div className="mt-[2px] truncate font-mono text-[11px] text-[#94a3b8]">
+                    {toastState.subtitle}
+                  </div>
+                )}
+              </div>
             </div>
-            <button
-              type="button"
-              onClick={() => setToastMessage(null)}
-              className="font-mono text-[11px] text-[#94a3b8] hover:text-[#f8fafc]"
-            >
-              Dismiss
-            </button>
+            <div className="flex shrink-0 items-center gap-2">
+              {toastState.showSignalLink && onOpenDeploymentSignal && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setToastState(null);
+                    onOpenDeploymentSignal();
+                  }}
+                  className="inline-flex items-center gap-1 rounded-[5px] border border-[#00e599]/35 bg-[#00e599]/10 px-[8px] py-[4px] font-mono text-[10px] font-semibold text-[#00e599] hover:bg-[#00e599]/20"
+                >
+                  <span>Configure</span>
+                  <ArrowRight className="size-[10px]" aria-hidden="true" />
+                </button>
+              )}
+              <button
+                type="button"
+                aria-label="Dismiss notification"
+                onClick={() => setToastState(null)}
+                className="rounded p-1 text-[#94a3b8] hover:bg-white/[0.06] hover:text-[#f8fafc]"
+              >
+                <X className="size-[13px]" aria-hidden="true" />
+              </button>
+            </div>
           </div>
         )}
       </div>
@@ -584,13 +649,22 @@ export function LinkedRepositoriesTab({
         project={project}
         githubIntegrations={activeGitHubIntegrations}
         selectedIntegrationId={selectedIntegrationId}
-        onLinked={(linkedNames) =>
-          setToastMessage(
-            linkedNames.length === 1
-              ? `Linked ${linkedNames[0]} to ${project.name}.`
-              : `Linked ${linkedNames.length} repositories to ${project.name}.`,
-          )
-        }
+        onLinked={(linkedNames) => {
+          setRecentlyLinkedNames(
+            new Set(linkedNames.map((item) => item.toLowerCase())),
+          );
+          setToastState({
+            title:
+              linkedNames.length === 1
+                ? `Repository linked to ${project.name}`
+                : `${linkedNames.length} repositories linked to ${project.name}`,
+            subtitle:
+              linkedNames.length === 1
+                ? `${linkedNames[0]} · Webhook ingestion ready`
+                : `${linkedNames.join(", ")}`,
+            showSignalLink: true,
+          });
+        }}
       />
 
       <UnlinkRepositoryModal
@@ -599,9 +673,17 @@ export function LinkedRepositoriesTab({
         projectId={project.id}
         projectName={project.name}
         repository={unlinkTarget}
-        onUnlinked={(fullName) =>
-          setToastMessage(`Unlinked ${fullName} from ${project.name}.`)
-        }
+        onUnlinked={(fullName) => {
+          setRecentlyLinkedNames((prev) => {
+            const next = new Set(prev);
+            next.delete(fullName.toLowerCase());
+            return next;
+          });
+          setToastState({
+            title: `Repository unlinked from ${project.name}`,
+            subtitle: fullName,
+          });
+        }}
       />
     </div>
   );

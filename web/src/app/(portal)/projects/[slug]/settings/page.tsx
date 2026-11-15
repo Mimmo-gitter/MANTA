@@ -1,8 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   AlertCircle,
   ArrowLeft,
@@ -13,13 +13,13 @@ import {
 } from "lucide-react";
 import { usePermissions } from "@/hooks/use-permissions";
 import {
-  useDeleteProjectMutation,
   useProjectIncidentsQuery,
   useProjectQuery,
   useProjectsQuery,
   useUpdateProjectMutation,
 } from "@/hooks/use-projects";
 import { isUuid } from "@/lib/projects-api";
+import { ArchiveProjectModal } from "@/components/projects/archive-project-modal";
 import { LinkedRepositoriesTab } from "@/components/projects/linked-repositories-tab";
 import { DeploymentSignalTab } from "@/components/projects/deployment-signal-tab";
 
@@ -32,15 +32,57 @@ const TAB_LABELS: Record<SettingsTabId, string> = {
   general: "General Settings",
 };
 
-export default function ProjectSettingsPage() {
+const TAB_SUBTITLES: Record<SettingsTabId, string> = {
+  repositories:
+    "Manage linked GitHub repositories, webhook listeners, and project configuration.",
+  "deployment-signal":
+    "Configure which authoritative signal defines production deployments for DORA calculation.",
+  "health-sources":
+    "Inspect production incident history and recovery times tracked for MTTR & Change Failure Rate.",
+  general:
+    "Edit project metadata, SLA thresholds, and workspace lifecycle.",
+};
+
+function parseSettingsTab(rawTab: string | null): SettingsTabId {
+  if (
+    rawTab === "repositories" ||
+    rawTab === "deployment-signal" ||
+    rawTab === "health-sources" ||
+    rawTab === "general"
+  ) {
+    return rawTab;
+  }
+  return "repositories";
+}
+
+function ProjectSettingsContent() {
   const params = useParams<{ slug: string }>();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const slugParam = params?.slug ?? "";
+  const urlTab = parseSettingsTab(searchParams.get("tab"));
   const { can } = usePermissions();
   const isTenantAdmin = can("MANAGE_WEBHOOK_INTEGRATIONS");
 
-  const [activeTab, setActiveTab] = useState<SettingsTabId>("repositories");
+  const [activeTab, setActiveTab] = useState<SettingsTabId>(urlTab);
   const [linkModalOpen, setLinkModalOpen] = useState(false);
+  const [archiveModalOpen, setArchiveModalOpen] = useState(false);
+
+  useEffect(() => {
+    setActiveTab(urlTab);
+  }, [urlTab]);
+
+  const handleTabChange = useCallback(
+    (nextTab: SettingsTabId) => {
+      setActiveTab(nextTab);
+      if (slugParam) {
+        router.replace(`/projects/${slugParam}/settings?tab=${nextTab}`, {
+          scroll: false,
+        });
+      }
+    },
+    [router, slugParam],
+  );
 
   const projectsQuery = useProjectsQuery();
   const projectFromList = projectsQuery.data?.find(
@@ -54,7 +96,6 @@ export default function ProjectSettingsPage() {
 
   const project = projectFromList || directQuery.data;
   const updateProjectMutation = useUpdateProjectMutation(project?.id ?? "");
-  const deleteProjectMutation = useDeleteProjectMutation();
   const incidentsQuery = useProjectIncidentsQuery(
     project?.id,
     activeTab === "health-sources",
@@ -109,7 +150,7 @@ export default function ProjectSettingsPage() {
 
   if (error) {
     return (
-      <div className="flex w-full flex-col gap-[10px] px-[24px] py-[14px]">
+      <div className="flex min-w-0 w-full flex-col gap-[10px] px-[24px] py-[14px]">
         <div
           role="alert"
           className="flex flex-col items-center justify-center rounded-[12px] border border-[#ef4444]/35 bg-[#131722] px-[24px] py-[48px] text-center"
@@ -148,7 +189,7 @@ export default function ProjectSettingsPage() {
 
   if (!project) {
     return (
-      <div className="flex w-full flex-col gap-[10px] px-[24px] py-[14px]">
+      <div className="flex min-w-0 w-full flex-col gap-[10px] px-[24px] py-[14px]">
         <div
           data-testid="project-not-found"
           className="flex flex-col items-center justify-center rounded-[12px] border border-[#262d3d] bg-[#131722] px-[24px] py-[56px] text-center"
@@ -224,7 +265,7 @@ export default function ProjectSettingsPage() {
         message: "Project metadata and engineering thresholds saved.",
       });
       if (updated.slug !== slugParam) {
-        router.replace(`/projects/${updated.slug}/settings`);
+        router.replace(`/projects/${updated.slug}/settings?tab=general`);
       }
     } catch (err: unknown) {
       setSaveFeedback({
@@ -235,28 +276,17 @@ export default function ProjectSettingsPage() {
     }
   };
 
-  const handleArchiveProject = async () => {
-    if (!project || !isTenantAdmin || !project.is_active) return;
-    setSaveFeedback(null);
-    try {
-      await deleteProjectMutation.mutateAsync(project.id);
-      router.push("/projects");
-    } catch (err: unknown) {
-      setSaveFeedback({
-        type: "error",
-        message:
-          err instanceof Error ? err.message : "Failed to archive project.",
-      });
-    }
-  };
-
   return (
-    <div className="flex w-full flex-col gap-[10px] px-[24px] py-[14px]">
+    <div className="flex min-w-0 w-full flex-col gap-[10px] px-[24px] py-[14px]">
       {/* Breadcrumb */}
       <nav
         aria-label="Project Settings Breadcrumb"
         className="flex flex-wrap items-center gap-[6px] font-mono text-[11px] leading-normal text-[#94a3b8]"
       >
+        <span>Workspace</span>
+        <span className="text-[#475569]" aria-hidden="true">
+          /
+        </span>
         <Link href="/projects" className="text-[#94a3b8] hover:text-[#e2e8f0]">
           Projects
         </Link>
@@ -281,8 +311,7 @@ export default function ProjectSettingsPage() {
           <p className="font-mono text-[11px] leading-[16px] text-[#64748b]">
             /projects/{project.slug}/settings ·{" "}
             <span className="font-sans text-[12px] text-[#94a3b8]">
-              Manage connected GitHub integration, linked repositories, and
-              deployment signals.
+              {TAB_SUBTITLES[activeTab]}
             </span>
           </p>
         </div>
@@ -331,7 +360,7 @@ export default function ProjectSettingsPage() {
               type="button"
               role="tab"
               aria-selected={isSelected}
-              onClick={() => setActiveTab(tab.id)}
+              onClick={() => handleTabChange(tab.id)}
               data-testid={`project-tab-${tab.id}`}
               className={`inline-flex items-center gap-[8px] rounded-[7px] px-[12px] py-[6px] text-[13px] font-medium transition-colors ${
                 isSelected
@@ -357,6 +386,7 @@ export default function ProjectSettingsPage() {
           linkModalOpen={linkModalOpen}
           onOpenLinkModal={() => setLinkModalOpen(true)}
           onCloseLinkModal={() => setLinkModalOpen(false)}
+          onOpenDeploymentSignal={() => handleTabChange("deployment-signal")}
         />
       )}
 
@@ -501,7 +531,7 @@ export default function ProjectSettingsPage() {
                 value={formName}
                 onChange={(e) => setFormName(e.target.value)}
                 disabled={!isTenantAdmin}
-                className="mt-[6px] w-full rounded-[6px] border border-[#1e293b] bg-[#111622] px-[10px] py-[6px] text-[13px] font-medium text-[#f8fafc] outline-none focus:border-[#00e599] disabled:opacity-60"
+                className="mt-[6px] w-full rounded-[6px] border border-[#1e293b] border-solid bg-[#111622] px-[10px] py-[6px] text-[13px] font-medium text-[#f8fafc] shadow-none outline-none focus:border-[#00e599] focus:ring-0 disabled:opacity-60"
               />
             </label>
 
@@ -514,7 +544,7 @@ export default function ProjectSettingsPage() {
                 value={formSlug}
                 onChange={(e) => setFormSlug(e.target.value)}
                 disabled={!isTenantAdmin}
-                className="mt-[6px] w-full rounded-[6px] border border-[#1e293b] bg-[#111622] px-[10px] py-[6px] font-mono text-[12px] text-[#00e599] outline-none focus:border-[#00e599] disabled:opacity-60"
+                className="mt-[6px] w-full rounded-[6px] border border-[#1e293b] border-solid bg-[#111622] px-[10px] py-[6px] font-mono text-[12px] text-[#00e599] shadow-none outline-none focus:border-[#00e599] focus:ring-0 disabled:opacity-60"
               />
             </label>
 
@@ -529,7 +559,7 @@ export default function ProjectSettingsPage() {
                 value={formSlaHours}
                 onChange={(e) => setFormSlaHours(e.target.value)}
                 disabled={!isTenantAdmin}
-                className="mt-[6px] w-full rounded-[6px] border border-[#1e293b] bg-[#111622] px-[10px] py-[6px] font-mono text-[12px] text-[#e2e8f0] outline-none focus:border-[#00e599] disabled:opacity-60"
+                className="mt-[6px] w-full rounded-[6px] border border-[#1e293b] border-solid bg-[#111622] px-[10px] py-[6px] font-mono text-[12px] text-[#e2e8f0] shadow-none outline-none focus:border-[#00e599] focus:ring-0 disabled:opacity-60"
               />
             </label>
 
@@ -544,7 +574,7 @@ export default function ProjectSettingsPage() {
                 value={formWipLimit}
                 onChange={(e) => setFormWipLimit(e.target.value)}
                 disabled={!isTenantAdmin}
-                className="mt-[6px] w-full rounded-[6px] border border-[#1e293b] bg-[#111622] px-[10px] py-[6px] font-mono text-[12px] text-[#e2e8f0] outline-none focus:border-[#00e599] disabled:opacity-60"
+                className="mt-[6px] w-full rounded-[6px] border border-[#1e293b] border-solid bg-[#111622] px-[10px] py-[6px] font-mono text-[12px] text-[#e2e8f0] shadow-none outline-none focus:border-[#00e599] focus:ring-0 disabled:opacity-60"
               />
             </label>
 
@@ -559,7 +589,7 @@ export default function ProjectSettingsPage() {
                 value={formPrStaleHours}
                 onChange={(e) => setFormPrStaleHours(e.target.value)}
                 disabled={!isTenantAdmin}
-                className="mt-[6px] w-full rounded-[6px] border border-[#1e293b] bg-[#111622] px-[10px] py-[6px] font-mono text-[12px] text-[#e2e8f0] outline-none focus:border-[#00e599] disabled:opacity-60"
+                className="mt-[6px] w-full rounded-[6px] border border-[#1e293b] border-solid bg-[#111622] px-[10px] py-[6px] font-mono text-[12px] text-[#e2e8f0] shadow-none outline-none focus:border-[#00e599] focus:ring-0 disabled:opacity-60"
               />
             </label>
 
@@ -572,7 +602,7 @@ export default function ProjectSettingsPage() {
                 value={formLeadTimeStrategy}
                 onChange={(e) => setFormLeadTimeStrategy(e.target.value)}
                 disabled={!isTenantAdmin}
-                className="mt-[6px] w-full rounded-[6px] border border-[#1e293b] bg-[#111622] px-[10px] py-[6px] font-mono text-[12px] text-[#e2e8f0] outline-none focus:border-[#00e599] disabled:opacity-60"
+                className="mt-[6px] w-full rounded-[6px] border border-[#1e293b] border-solid bg-[#111622] px-[10px] py-[6px] font-mono text-[12px] text-[#e2e8f0] shadow-none outline-none focus:border-[#00e599] focus:ring-0 disabled:opacity-60"
               />
             </label>
 
@@ -586,7 +616,7 @@ export default function ProjectSettingsPage() {
                 onChange={(e) => setFormDescription(e.target.value)}
                 disabled={!isTenantAdmin}
                 placeholder="Describe this project's service ownership, delivery scope, and SLA expectations..."
-                className="mt-[6px] w-full rounded-[6px] border border-[#1e293b] bg-[#111622] px-[10px] py-[6px] text-[12px] text-[#cbd5e1] outline-none focus:border-[#00e599] disabled:opacity-60"
+                className="mt-[6px] w-full rounded-[6px] border border-[#1e293b] border-solid bg-[#111622] px-[10px] py-[6px] text-[12px] text-[#cbd5e1] shadow-none outline-none focus:border-[#00e599] focus:ring-0 disabled:opacity-60"
               />
             </label>
 
@@ -618,25 +648,34 @@ export default function ProjectSettingsPage() {
               </button>
               <button
                 type="button"
-                disabled={
-                  !isTenantAdmin ||
-                  !project.is_active ||
-                  deleteProjectMutation.isPending
-                }
-                onClick={() => void handleArchiveProject()}
+                disabled={!isTenantAdmin || !project.is_active}
+                onClick={() => setArchiveModalOpen(true)}
                 data-testid="general-archive-button"
                 className="h-[34px] rounded-[8px] border border-[#ef4444]/40 bg-[#ef4444]/15 px-[14px] text-[12px] font-medium text-[#fca5a5] transition-colors hover:bg-[#ef4444]/25 disabled:cursor-not-allowed disabled:opacity-55"
               >
-                {!project.is_active
-                  ? "Archived"
-                  : deleteProjectMutation.isPending
-                    ? "Archiving..."
-                    : "Archive Project"}
+                {!project.is_active ? "Archived" : "Archive Project"}
               </button>
             </div>
           </div>
         </form>
       )}
+
+      <ArchiveProjectModal
+        open={archiveModalOpen}
+        onClose={() => setArchiveModalOpen(false)}
+        project={project}
+        onArchived={() => {
+          router.push("/projects");
+        }}
+      />
     </div>
+  );
+}
+
+export default function ProjectSettingsPage() {
+  return (
+    <Suspense fallback={null}>
+      <ProjectSettingsContent />
+    </Suspense>
   );
 }

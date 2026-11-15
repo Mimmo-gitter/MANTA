@@ -13,12 +13,19 @@ interface ApiErrorPayload {
 export class ApiHttpError extends Error {
   readonly status: number;
   readonly detail?: string;
+  readonly requestId?: string;
 
-  constructor(status: number, message: string, detail?: string) {
+  constructor(
+    status: number,
+    message: string,
+    detail?: string,
+    requestId?: string,
+  ) {
     super(message);
     this.name = "ApiHttpError";
     this.status = status;
     this.detail = detail;
+    this.requestId = requestId;
   }
 }
 
@@ -56,7 +63,14 @@ async function parseApiResponse<T>(response: Response): Promise<T> {
       // Keep the default status error message when response body is not JSON.
     }
 
-    throw new ApiHttpError(response.status, message, detail);
+    throw new ApiHttpError(
+      response.status,
+      message,
+      detail,
+      response.headers.get("x-request-id") ??
+        response.headers.get("x-correlation-id") ??
+        undefined,
+    );
   }
 
   if (response.status === 204) {

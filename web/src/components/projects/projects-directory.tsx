@@ -5,20 +5,28 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   AlertCircle,
+  Check,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Copy,
   FolderPlus,
+  Loader2,
   MoreVertical,
   Plus,
   RefreshCw,
   Search,
   Settings,
   Trash2,
+  X,
 } from "lucide-react";
 import { useAuth } from "@/providers/auth-provider";
 import { usePermissions } from "@/hooks/use-permissions";
-import { useDeleteProjectMutation, useProjectsQuery } from "@/hooks/use-projects";
+import { isApiHttpError } from "@/lib/api-client";
+import { formatRelativeTime } from "@/lib/projects-api";
+import { useProjectsQuery } from "@/hooks/use-projects";
 import type { ProjectItem } from "@/types/project";
+import { ArchiveProjectModal } from "@/components/projects/archive-project-modal";
 import { CreateProjectModal } from "@/components/projects/create-project-modal";
 import {
   FilterDropdown,
@@ -34,6 +42,12 @@ const PAGE_SIZE = 6;
 const SIGNAL_SHORT_LABELS: Record<string, string> = {
   github_deployments_api: "GitHub Deployments",
   argocd_postsync_webhook: "ArgoCD PostSync",
+  direct_deployment_api: "Direct API",
+};
+
+const SIGNAL_PILL_LABELS: Record<string, string> = {
+  github_deployments_api: "GitHub",
+  argocd_postsync_webhook: "ArgoCD",
   direct_deployment_api: "Direct API",
 };
 
@@ -55,15 +69,46 @@ function ProjectsDirectorySkeleton() {
   return (
     <div className="flex w-full flex-col gap-[10px]" data-testid="projects-loading-skeleton">
       <div className="h-[38px] animate-pulse rounded-[8px] border border-[#1e2636] bg-[#111622]" />
-      <div className="rounded-[12px] border border-[#262d3d] bg-[#131722] p-[16px]">
-        <div className="mb-[14px] h-[30px] animate-pulse rounded-[6px] bg-[#171b26]" />
-        <div className="grid grid-cols-1 gap-[14px] md:grid-cols-2 xl:grid-cols-3">
+      <div className="overflow-hidden rounded-[12px] border border-[#262d3d] bg-[#131722]">
+        <div className="flex h-[46px] items-center justify-between border-b border-[#262d3d] bg-[#171b26] px-[16px]">
+          <div className="flex items-center gap-[8px]">
+            <span className="font-mono text-[11px] font-bold uppercase text-[#94a3b8]">
+              WORKSPACE PROJECTS
+            </span>
+            <span className="h-[18px] w-[28px] animate-pulse rounded-full bg-[#1e293b]" />
+          </div>
+          <div className="flex items-center gap-[8px]">
+            <span className="h-[28px] w-[180px] animate-pulse rounded-[6px] bg-[#0a0e18]" />
+            <span className="h-[28px] w-[96px] animate-pulse rounded-[6px] bg-[#0a0e18]" />
+          </div>
+        </div>
+        <div className="grid grid-cols-1 gap-[14px] p-[16px] md:grid-cols-2 xl:grid-cols-3">
           {Array.from({ length: 6 }).map((_, idx) => (
             <div
               key={idx}
-              className="h-[158px] animate-pulse rounded-[10px] border border-[#262d3d] bg-[#111622]"
-            />
+              className="flex h-[156px] animate-pulse flex-col justify-between rounded-[12px] border border-[#1e2636] bg-[#111622] p-[16px]"
+            >
+              <div className="flex items-center gap-[10px]">
+                <div className="size-[34px] rounded-[8px] bg-[#1e293b]" />
+                <div className="flex-1 space-y-2">
+                  <div className="h-[13px] w-[130px] rounded bg-[#1e293b]" />
+                  <div className="h-[10px] w-[96px] rounded bg-[#172033]" />
+                </div>
+              </div>
+              <div className="space-y-2">
+                <div className="h-[10px] w-full rounded bg-[#172033]" />
+                <div className="h-[10px] w-[72%] rounded bg-[#172033]" />
+              </div>
+              <div className="flex items-center justify-between pt-2">
+                <div className="h-[20px] w-[132px] rounded bg-[#172033]" />
+                <div className="h-[20px] w-[62px] rounded bg-[#1e293b]" />
+              </div>
+            </div>
           ))}
+        </div>
+        <div className="flex items-center justify-center gap-2 border-t border-[#262d3d] bg-[#0e121b] px-[16px] py-[10px] font-mono text-[11px] text-[#64748b]">
+          <Loader2 className="size-[13px] animate-spin text-[#00e599]" aria-hidden="true" />
+          <span>Syncing workspace projects &amp; GitHub repository telemetry...</span>
         </div>
       </div>
     </div>
@@ -78,7 +123,6 @@ export function ProjectsDirectory() {
   const isTenantAdmin = can("MANAGE_WEBHOOK_INTEGRATIONS");
 
   const projectsQuery = useProjectsQuery();
-  const deleteProjectMutation = useDeleteProjectMutation();
   const initialQuery = searchParams.get("q") ?? "";
 
   const [searchTerm, setSearchTerm] = useState(initialQuery);
@@ -86,8 +130,15 @@ export function ProjectsDirectory() {
   const [repoFilter, setRepoFilter] = useState<RepoFilter>("all");
   const [page, setPage] = useState(1);
   const [createOpen, setCreateOpen] = useState(false);
+  const [createInitialName, setCreateInitialName] = useState("");
+  const [archiveTarget, setArchiveTarget] = useState<ProjectItem | null>(null);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [copiedNotice, setCopiedNotice] = useState<string | null>(null);
+  const [showDiagnostics, setShowDiagnostics] = useState(true);
+  const [copiedTrace, setCopiedTrace] = useState(false);
+  const [fallbackTraceId] = useState(
+    () => `req-${Math.random().toString(36).slice(2, 10)}`,
+  );
 
   const searchInputId = useId();
   const statusSelectId = useId();
@@ -109,8 +160,17 @@ export function ProjectsDirectory() {
         setOpenMenuId(null);
       }
     }
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === "Escape" && openMenuId) {
+        setOpenMenuId(null);
+      }
+    }
     document.addEventListener("mousedown", handleOutsideClick);
-    return () => document.removeEventListener("mousedown", handleOutsideClick);
+    document.addEventListener("keydown", handleEscape);
+    return () => {
+      document.removeEventListener("mousedown", handleOutsideClick);
+      document.removeEventListener("keydown", handleEscape);
+    };
   }, [openMenuId]);
 
   useEffect(() => {
@@ -263,6 +323,11 @@ export function ProjectsDirectory() {
     }
   };
 
+  const openCreateModal = (prefillName = "") => {
+    setCreateInitialName(prefillName);
+    setCreateOpen(true);
+  };
+
   const handleCopySlug = async (slug: string) => {
     setOpenMenuId(null);
     try {
@@ -273,10 +338,34 @@ export function ProjectsDirectory() {
     }
   };
 
+  const hasActiveFilters = Boolean(
+    searchTerm.trim() || statusFilter !== "all" || repoFilter !== "all",
+  );
+  const errorStatus = isApiHttpError(projectsQuery.error)
+    ? projectsQuery.error.status
+    : 500;
+  const errorTraceId =
+    (isApiHttpError(projectsQuery.error) && projectsQuery.error.requestId) ||
+    fallbackTraceId;
+  const errorMessageText =
+    projectsQuery.error instanceof Error
+      ? projectsQuery.error.message
+      : "Failed to fetch /api/v1/projects from backend.";
+
+  const handleCopyTraceId = async () => {
+    try {
+      await navigator.clipboard.writeText(errorTraceId);
+      setCopiedTrace(true);
+      window.setTimeout(() => setCopiedTrace(false), 1800);
+    } catch {
+      setCopiedNotice(`Trace ID: ${errorTraceId}`);
+    }
+  };
+
   return (
     <div
       ref={menuContainerRef}
-      className="flex w-full flex-col gap-[10px] px-[24px] py-[14px]"
+      className="flex w-full min-w-0 flex-col gap-[10px] px-[24px] py-[14px]"
     >
       {/* Breadcrumb (Matches Access & Roles layout) */}
       <nav
@@ -304,7 +393,7 @@ export function ProjectsDirectory() {
 
         <button
           type="button"
-          onClick={() => setCreateOpen(true)}
+          onClick={() => openCreateModal("")}
           disabled={!isTenantAdmin}
           aria-disabled={!isTenantAdmin}
           title={
@@ -326,28 +415,108 @@ export function ProjectsDirectory() {
         <div
           role="alert"
           data-testid="projects-error-state"
-          className="flex flex-col items-center justify-center rounded-[12px] border border-[#ef4444]/35 bg-[#131722] px-[24px] py-[48px] text-center"
+          className="overflow-hidden rounded-[12px] border border-[#ef4444]/40 bg-[#131722]"
         >
-          <div className="flex size-[42px] items-center justify-center rounded-full border border-[#ef4444]/40 bg-[#ef4444]/10 text-[#ef4444]">
-            <AlertCircle className="size-[20px]" aria-hidden="true" />
+          <div className="flex flex-wrap items-center justify-between gap-[14px] border-b border-[#ef4444]/25 bg-[#1b131b] px-[18px] py-[14px]">
+            <div className="flex items-start gap-[12px]">
+              <div className="mt-[2px] flex size-[36px] shrink-0 items-center justify-center rounded-[9px] border border-[#ef4444]/40 bg-[#ef4444]/10 text-[#ef4444]">
+                <AlertCircle className="size-[18px]" aria-hidden="true" />
+              </div>
+              <div>
+                <div className="inline-flex items-center gap-1.5 rounded-[4px] border border-[#ef4444]/40 bg-[#ef4444]/15 px-[7px] py-[2px] font-mono text-[10px] font-semibold uppercase tracking-[0.6px] text-[#fca5a5]">
+                  <span
+                    className="size-[5px] rounded-full bg-[#ef4444]"
+                    aria-hidden="true"
+                  />
+                  <span>Project Registry Error · HTTP {errorStatus}</span>
+                </div>
+                <h2 className="mt-[6px] text-[15px] font-semibold text-[#f8fafc]">
+                  Unable to load workspace projects
+                </h2>
+                <p className="mt-[2px] text-[12px] text-[#94a3b8]">
+                  Last cached project snapshot unavailable · Please verify backend connectivity
+                </p>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-[8px]">
+              <button
+                type="button"
+                onClick={() => setShowDiagnostics((prev) => !prev)}
+                data-testid="projects-error-details-toggle"
+                className="inline-flex h-[34px] items-center gap-1.5 rounded-[8px] border border-[#262d3d] bg-[#0a0e18] px-[12px] text-[12px] font-medium text-[#cbd5e1] transition-colors hover:border-[#3b455e] hover:text-[#f8fafc]"
+              >
+                {showDiagnostics ? (
+                  <>
+                    <ChevronUp className="size-[13px]" aria-hidden="true" />
+                    <span>Hide error details</span>
+                  </>
+                ) : (
+                  <>
+                    <ChevronDown className="size-[13px]" aria-hidden="true" />
+                    <span>Show error details</span>
+                  </>
+                )}
+              </button>
+              <button
+                type="button"
+                onClick={() => projectsQuery.refetch()}
+                disabled={projectsQuery.isFetching}
+                data-testid="projects-retry-button"
+                className="inline-flex h-[34px] items-center gap-1.5 rounded-[8px] border border-[#00e599]/45 bg-[#00e599]/15 px-[14px] text-[12px] font-semibold text-[#00e599] transition-colors hover:bg-[#00e599]/25 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <RefreshCw
+                  className={cn(
+                    "size-[13px]",
+                    projectsQuery.isFetching && "animate-spin",
+                  )}
+                  aria-hidden="true"
+                />
+                <span>
+                  {projectsQuery.isFetching ? "Retrying..." : "Retry Connection"}
+                </span>
+              </button>
+            </div>
           </div>
-          <h2 className="mt-[14px] text-[16px] font-semibold text-[#f8fafc]">
-            Unable to load workspace projects
-          </h2>
-          <p className="mt-[6px] max-w-[440px] text-[12px] text-[#94a3b8]">
-            {projectsQuery.error instanceof Error
-              ? projectsQuery.error.message
-              : "Failed to fetch /api/v1/projects from backend."}
-          </p>
-          <button
-            type="button"
-            onClick={() => projectsQuery.refetch()}
-            data-testid="projects-retry-button"
-            className="mt-[16px] inline-flex h-[34px] items-center gap-1.5 rounded-[8px] border border-[#262d3d] bg-[#171b26] px-[14px] text-[12px] font-medium text-[#f8fafc] transition-colors hover:border-[#00e599]/50"
-          >
-            <RefreshCw className="size-[13px]" aria-hidden="true" />
-            <span>Retry</span>
-          </button>
+
+          {showDiagnostics && (
+            <div
+              data-testid="projects-diagnostic-trace"
+              className="bg-[#0a0e18] px-[18px] py-[14px]"
+            >
+              <div className="mb-[8px] flex flex-wrap items-center justify-between gap-2">
+                <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.7px] text-[#94a3b8]">
+                  Diagnostic Trace · Tenant Admin View
+                </span>
+                <button
+                  type="button"
+                  onClick={() => void handleCopyTraceId()}
+                  className="inline-flex items-center gap-1 rounded-[5px] border border-[#262d3d] bg-[#131722] px-[8px] py-[3px] font-mono text-[10px] text-[#cbd5e1] hover:border-[#3b455e] hover:text-[#f8fafc]"
+                >
+                  {copiedTrace ? (
+                    <Check className="size-[11px] text-[#00e599]" aria-hidden="true" />
+                  ) : (
+                    <Copy className="size-[11px]" aria-hidden="true" />
+                  )}
+                  <span>{copiedTrace ? "Copied" : "Copy Trace ID"}</span>
+                </button>
+              </div>
+              <div className="space-y-1 rounded-[8px] border border-[#1e293b] bg-[#0f131d] p-[12px] font-mono text-[11px] leading-[18px] text-[#cbd5e1]">
+                <div className="text-[#fca5a5]">
+                  <span className="text-[#64748b]">ERROR: </span>
+                  {errorMessageText}
+                </div>
+                <div>
+                  <span className="text-[#64748b]">TRACE ID: </span>
+                  {errorTraceId}
+                </div>
+                <div>
+                  <span className="text-[#64748b]">ENDPOINT: </span>
+                  GET /api/v1/projects
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       ) : (
         <>
@@ -392,9 +561,18 @@ export function ProjectsDirectory() {
                 <h2 className="font-mono text-[11px] font-bold uppercase leading-normal text-[#94a3b8]">
                   WORKSPACE PROJECTS
                 </h2>
-                <span className="flex items-start rounded-[99px] border border-[rgba(0,229,153,0.35)] bg-[rgba(0,229,153,0.12)] px-[7px] py-[2px] font-mono text-[11px] font-bold leading-normal text-[#00e599]">
-                  {filteredProjects.length}
-                </span>
+                {projects.length > 0 && filteredProjects.length === 0 ? (
+                  <span
+                    data-testid="projects-filtered-zero-badge"
+                    className="flex items-start rounded-[99px] border border-[#f59e0b]/40 bg-[#f59e0b]/15 px-[7px] py-[2px] font-mono text-[11px] font-bold leading-normal text-[#fbbf24]"
+                  >
+                    0 of {projects.length}
+                  </span>
+                ) : (
+                  <span className="flex items-start rounded-[99px] border border-[rgba(0,229,153,0.35)] bg-[rgba(0,229,153,0.12)] px-[7px] py-[2px] font-mono text-[11px] font-bold leading-normal text-[#00e599]">
+                    {filteredProjects.length}
+                  </span>
+                )}
               </div>
 
               <div className="flex flex-wrap items-center gap-[8px]">
@@ -486,6 +664,71 @@ export function ProjectsDirectory() {
               </div>
             </div>
 
+            {/* Active Filter Chips Bar (Figma 1D) */}
+            {projects.length > 0 && hasActiveFilters && (
+              <div
+                data-testid="projects-active-filters-bar"
+                className="flex flex-wrap items-center justify-between gap-[8px] border-b border-[#262d3d] bg-[#111622] px-[16px] py-[8px]"
+              >
+                <div className="flex flex-wrap items-center gap-[6px]">
+                  <span className="mr-[4px] font-mono text-[10px] font-semibold uppercase tracking-[0.6px] text-[#64748b]">
+                    Active Filters:
+                  </span>
+                  {searchTerm.trim() && (
+                    <button
+                      type="button"
+                      data-testid="filter-chip-search"
+                      onClick={() => {
+                        setSearchTerm("");
+                        setPage(1);
+                        if (searchParams.get("q")) router.replace("/projects");
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-[6px] border border-[#00e599]/35 bg-[#00e599]/10 px-[8px] py-[3px] font-mono text-[11px] text-[#00e599] hover:bg-[#00e599]/20"
+                    >
+                      <span>Search: &ldquo;{searchTerm.trim()}&rdquo;</span>
+                      <X className="size-[11px]" aria-hidden="true" />
+                    </button>
+                  )}
+                  {statusFilter !== "all" && (
+                    <button
+                      type="button"
+                      data-testid="filter-chip-status"
+                      onClick={() => {
+                        setStatusFilter("all");
+                        setPage(1);
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-[6px] border border-[#334155] bg-[#0a0e18] px-[8px] py-[3px] font-mono text-[11px] text-[#cbd5e1] hover:border-[#475569] hover:text-[#f8fafc]"
+                    >
+                      <span>Status: {activeStatusOption.label}</span>
+                      <X className="size-[11px]" aria-hidden="true" />
+                    </button>
+                  )}
+                  {repoFilter !== "all" && (
+                    <button
+                      type="button"
+                      data-testid="filter-chip-repo"
+                      onClick={() => {
+                        setRepoFilter("all");
+                        setPage(1);
+                      }}
+                      className="inline-flex items-center gap-1.5 rounded-[6px] border border-[#334155] bg-[#0a0e18] px-[8px] py-[3px] font-mono text-[11px] text-[#cbd5e1] hover:border-[#475569] hover:text-[#f8fafc]"
+                    >
+                      <span>Repos: {activeRepoOption.label}</span>
+                      <X className="size-[11px]" aria-hidden="true" />
+                    </button>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={resetFilters}
+                  className="font-mono text-[11px] text-[#94a3b8] underline-offset-2 hover:text-[#00e599] hover:underline"
+                >
+                  Reset all filters
+                </button>
+              </div>
+            )}
+
             {/* Cards / Empty States */}
             {projects.length === 0 ? (
               <div className="p-[24px]">
@@ -497,7 +740,7 @@ export function ProjectsDirectory() {
                     <FolderPlus className="size-[20px]" aria-hidden="true" />
                   </div>
                   <h3 className="mt-[14px] text-[16px] font-semibold text-[#f8fafc]">
-                    No projects in this workspace yet
+                    No engineering projects yet
                   </h3>
                   <p className="mt-[6px] max-w-[440px] text-[12px] leading-[19px] text-[#94a3b8]">
                     Create your first project workspace in{" "}
@@ -507,43 +750,70 @@ export function ProjectsDirectory() {
                     to connect GitHub repositories, ingest webhook events, and
                     track DORA engineering metrics.
                   </p>
-                  <button
-                    type="button"
-                    onClick={() => setCreateOpen(true)}
-                    disabled={!isTenantAdmin}
-                    aria-disabled={!isTenantAdmin}
-                    title={
-                      !isTenantAdmin
-                        ? "Only Tenant Administrators can create projects"
-                        : undefined
-                    }
-                    data-testid="create-first-project-button"
-                    className="mt-[18px] inline-flex h-[38px] items-center gap-1.5 rounded-[8px] bg-[#00e599] px-[18px] text-[13px] font-semibold text-[#07111a] transition-colors hover:bg-[#1ef5ab] disabled:cursor-not-allowed disabled:opacity-45"
-                  >
-                    <Plus className="size-[14px]" aria-hidden="true" />
-                    <span>Create First Project</span>
-                  </button>
+                  <div className="mt-[18px] flex flex-wrap items-center justify-center gap-[10px]">
+                    <button
+                      type="button"
+                      onClick={() => openCreateModal("")}
+                      disabled={!isTenantAdmin}
+                      aria-disabled={!isTenantAdmin}
+                      title={
+                        !isTenantAdmin
+                          ? "Only Tenant Administrators can create projects"
+                          : undefined
+                      }
+                      data-testid="create-first-project-button"
+                      className="inline-flex h-[38px] items-center gap-1.5 rounded-[8px] bg-[#00e599] px-[18px] text-[13px] font-semibold text-[#07111a] transition-colors hover:bg-[#1ef5ab] disabled:cursor-not-allowed disabled:opacity-45"
+                    >
+                      <Plus className="size-[14px]" aria-hidden="true" />
+                      <span>Create First Project</span>
+                    </button>
+                    <Link
+                      href="/integrations"
+                      className="inline-flex h-[38px] items-center gap-1.5 rounded-[8px] border border-[#262d3d] bg-[#111622] px-[14px] text-[12px] font-medium text-[#cbd5e1] transition-colors hover:border-[#3b455e] hover:text-[#f8fafc]"
+                    >
+                      <span>View Integrations</span>
+                      <span aria-hidden="true">&rarr;</span>
+                    </Link>
+                  </div>
                 </div>
               </div>
             ) : filteredProjects.length === 0 ? (
-              <div
-                data-testid="projects-filter-empty-state"
-                className="flex flex-col items-center justify-center px-[24px] py-[48px] text-center"
-              >
-                <p className="text-[14px] font-medium text-[#f8fafc]">
-                  No projects match your current filters
-                </p>
-                <p className="mt-[4px] text-[12px] text-[#94a3b8]">
-                  Try clearing search keywords or switching status filters.
-                </p>
-                <button
-                  type="button"
-                  onClick={resetFilters}
-                  data-testid="projects-reset-filters-button"
-                  className="mt-[14px] rounded-[8px] border border-[#252b3b] bg-[#0a0e18] px-[14px] py-[7px] text-[12px] font-medium text-[#cbd5e1] hover:border-[#00e599]/50 hover:text-[#f8fafc]"
+              <div className="p-[24px]">
+                <div
+                  data-testid="projects-filter-empty-state"
+                  className="flex flex-col items-center justify-center rounded-[12px] border border-dashed border-[#252b3b] bg-[#0a0e18] px-[24px] py-[48px] text-center"
                 >
-                  Reset filters
-                </button>
+                  <div className="flex size-[42px] items-center justify-center rounded-full border border-[#f59e0b]/35 bg-[#f59e0b]/10 text-[#fbbf24]">
+                    <Search className="size-[18px]" aria-hidden="true" />
+                  </div>
+                  <h3 className="mt-[12px] text-[15px] font-semibold text-[#f8fafc]">
+                    No matching workspace projects found
+                  </h3>
+                  <p className="mt-[4px] max-w-[440px] text-[12px] text-[#94a3b8]">
+                    No workspace projects matched your active search or filter criteria.
+                  </p>
+                  <div className="mt-[16px] flex flex-wrap items-center justify-center gap-[8px]">
+                    <button
+                      type="button"
+                      onClick={resetFilters}
+                      data-testid="projects-reset-filters-button"
+                      className="inline-flex h-[34px] items-center rounded-[8px] border border-[#252b3b] bg-[#111622] px-[14px] text-[12px] font-medium text-[#cbd5e1] hover:border-[#00e599]/50 hover:text-[#f8fafc]"
+                    >
+                      Clear search &amp; filters
+                    </button>
+                    {searchTerm.trim() && isTenantAdmin && (
+                      <button
+                        type="button"
+                        onClick={() => openCreateModal(searchTerm.trim())}
+                        data-testid="projects-create-from-search-button"
+                        className="inline-flex h-[34px] items-center gap-1.5 rounded-[8px] bg-[#00e599] px-[14px] text-[12px] font-semibold text-[#05080f] hover:bg-[#2df0b0]"
+                      >
+                        <Plus className="size-[13px]" aria-hidden="true" />
+                        <span>Create &ldquo;{searchTerm.trim()}&rdquo;</span>
+                      </button>
+                    )}
+                  </div>
+                </div>
               </div>
             ) : (
               <>
@@ -556,6 +826,8 @@ export function ProjectsDirectory() {
                       project.authoritative_cd_signal;
                     const signalShort =
                       SIGNAL_SHORT_LABELS[signalKey] || signalKey;
+                    const signalPill =
+                      SIGNAL_PILL_LABELS[signalKey] || signalShort;
                     const summaryCopy =
                       project.description?.trim() ||
                       `SLA ${project.tier_sla_hours}h · WIP limit ${project.wip_limit_per_dev}/dev · PR stale ${project.pr_stale_threshold_hours}h`;
@@ -571,7 +843,7 @@ export function ProjectsDirectory() {
                       <article
                         key={project.id}
                         data-testid={`project-card-${project.slug}`}
-                        className={`relative flex flex-col justify-between rounded-[12px] border bg-[#111622] p-[16px] transition-colors ${cardBorder}`}
+                        className={`relative flex min-w-0 flex-col justify-between rounded-[12px] border bg-[#111622] p-[16px] transition-colors ${cardBorder}`}
                       >
                         <div>
                           <div className="flex items-start justify-between gap-2">
@@ -579,7 +851,16 @@ export function ProjectsDirectory() {
                               href={`/projects/${project.slug}/settings`}
                               className="group flex min-w-0 items-center gap-[10px]"
                             >
-                              <div className="flex size-[34px] shrink-0 items-center justify-center rounded-full border border-[#00e599]/35 bg-[#0e2425] font-mono text-[11px] font-semibold text-[#00e599]">
+                              <div
+                                className={cn(
+                                  "flex size-[34px] shrink-0 items-center justify-center rounded-full border font-mono text-[11px] font-semibold",
+                                  status === "inactive"
+                                    ? "border-[#ef4444]/35 bg-[#ef4444]/10 text-[#fca5a5]"
+                                    : status === "setup"
+                                      ? "border-[#f59e0b]/35 bg-[#f59e0b]/10 text-[#fbbf24]"
+                                      : "border-[#00e599]/35 bg-[#0e2425] text-[#00e599]",
+                                )}
+                              >
                                 {getProjectInitials(project.name)}
                               </div>
                               <div className="min-w-0">
@@ -587,7 +868,8 @@ export function ProjectsDirectory() {
                                   {project.name}
                                 </h3>
                                 <p className="truncate font-mono text-[11px] text-[#64748b]">
-                                  /projects/{project.slug}
+                                  /projects/{project.slug} · Updated{" "}
+                                  {formatRelativeTime(project.updated_at)}
                                 </p>
                               </div>
                             </Link>
@@ -604,7 +886,7 @@ export function ProjectsDirectory() {
                                 aria-expanded={openMenuId === project.id}
                                 aria-haspopup="menu"
                                 data-testid={`project-card-menu-${project.slug}`}
-                                className="flex size-[28px] items-center justify-center rounded-[6px] border border-[#1e293b] bg-[#0a0e18] text-[#94a3b8] hover:border-[#334155] hover:text-[#f8fafc]"
+                                className="flex size-[28px] items-center justify-center rounded-[6px] border border-transparent bg-transparent text-[#64748b] transition-colors hover:border-[#1e293b] hover:bg-[#0a0e18] hover:text-[#f8fafc]"
                               >
                                 <MoreVertical
                                   className="size-[13px]"
@@ -643,9 +925,7 @@ export function ProjectsDirectory() {
                                   </button>
                                   {(() => {
                                     const archiveDisabled =
-                                      !isTenantAdmin ||
-                                      !project.is_active ||
-                                      deleteProjectMutation.isPending;
+                                      !isTenantAdmin || !project.is_active;
                                     const archiveTitle = !isTenantAdmin
                                       ? "Only Tenant Administrators can archive projects"
                                       : !project.is_active
@@ -659,23 +939,10 @@ export function ProjectsDirectory() {
                                         aria-disabled={archiveDisabled || undefined}
                                         title={archiveTitle}
                                         data-testid={`archive-project-action-${project.slug}`}
-                                        onClick={async () => {
+                                        onClick={() => {
                                           if (archiveDisabled) return;
                                           setOpenMenuId(null);
-                                          try {
-                                            await deleteProjectMutation.mutateAsync(
-                                              project.id,
-                                            );
-                                            setCopiedNotice(
-                                              `Archived project "${project.name}".`,
-                                            );
-                                          } catch (err: unknown) {
-                                            setCopiedNotice(
-                                              err instanceof Error
-                                                ? err.message
-                                                : "Failed to archive project.",
-                                            );
-                                          }
+                                          setArchiveTarget(project);
                                         }}
                                         className={cn(
                                           "flex w-full items-center gap-2 rounded-[6px] px-[8px] py-[7px] text-left text-[12px] transition-colors",
@@ -701,26 +968,34 @@ export function ProjectsDirectory() {
                             </div>
                           </div>
 
-                          <p className="mt-[10px] line-clamp-2 text-[12px] leading-[18px] text-[#94a3b8]">
+                          <p className="mt-[10px] line-clamp-2 min-h-[36px] text-[12px] leading-[18px] text-[#94a3b8]">
                             {summaryCopy}
                           </p>
                         </div>
 
-                        <div className="mt-[14px] flex flex-wrap items-center justify-between gap-2">
-                          <span className="inline-flex items-center gap-1.5 rounded-[5px] border border-[#1e293b] bg-[#0a0e18] px-[8px] py-[3px] font-mono text-[10px] text-[#cbd5e1]">
+                        <div className="mt-[14px] flex items-center justify-between gap-[8px]">
+                          <Link
+                            href={`/projects/${project.slug}/settings?tab=repositories`}
+                            title={`${repoCount} ${repoCount === 1 ? "repository" : "repositories"} · ${signalShort}`}
+                            className="inline-flex min-w-0 items-center gap-1.5 rounded-full border border-[#1e293b] bg-[#0a0e18] px-[10px] py-[3px] font-mono text-[10px] text-[#cbd5e1] transition-colors hover:border-[#00e599]/45 hover:text-[#f8fafc]"
+                          >
                             <span
-                              className="size-[5px] rounded-full bg-[#60a5fa]"
+                              className={cn(
+                                "size-[5px] shrink-0 rounded-full",
+                                repoCount > 0 ? "bg-[#00e599]" : "bg-[#60a5fa]",
+                              )}
                               aria-hidden="true"
                             />
-                            <span>
-                              {repoCount}{" "}
-                              {repoCount === 1 ? "repository" : "repositories"}{" "}
-                              · {signalShort}
+                            <span className="truncate">
+                              {repoCount === 0
+                                ? "0 repos"
+                                : `${repoCount} ${repoCount === 1 ? "repo" : "repos"}`}{" "}
+                              · {signalPill}
                             </span>
-                          </span>
+                          </Link>
 
                           {status === "active" ? (
-                            <span className="inline-flex items-center gap-1.5 rounded-[5px] border border-[#00e599]/35 bg-[#00e599]/10 px-[8px] py-[3px] font-mono text-[10px] font-medium text-[#00e599]">
+                            <span className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-[#00e599]/35 bg-[#00e599]/10 px-[10px] py-[3px] font-mono text-[10px] font-medium text-[#00e599]">
                               <span
                                 className="size-[5px] rounded-full bg-[#00e599]"
                                 aria-hidden="true"
@@ -728,15 +1003,15 @@ export function ProjectsDirectory() {
                               <span>Active</span>
                             </span>
                           ) : status === "setup" ? (
-                            <span className="inline-flex items-center gap-1.5 rounded-[5px] border border-[#f59e0b]/40 bg-[#f59e0b]/10 px-[8px] py-[3px] font-mono text-[10px] font-medium text-[#fbbf24]">
+                            <span className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-[#f59e0b]/40 bg-[#f59e0b]/10 px-[10px] py-[3px] font-mono text-[10px] font-medium text-[#fbbf24]">
                               <span
                                 className="size-[5px] rounded-full bg-[#fbbf24]"
                                 aria-hidden="true"
                               />
-                              <span>Setup</span>
+                              <span>Setup required</span>
                             </span>
                           ) : (
-                            <span className="inline-flex items-center gap-1.5 rounded-[5px] border border-[#ef4444]/40 bg-[#ef4444]/10 px-[8px] py-[3px] font-mono text-[10px] font-medium text-[#fca5a5]">
+                            <span className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border border-[#ef4444]/40 bg-[#ef4444]/10 px-[10px] py-[3px] font-mono text-[10px] font-medium text-[#fca5a5]">
                               <span
                                 className="size-[5px] rounded-full bg-[#ef4444]"
                                 aria-hidden="true"
@@ -832,8 +1107,21 @@ export function ProjectsDirectory() {
 
       <CreateProjectModal
         open={createOpen}
-        onClose={() => setCreateOpen(false)}
+        onClose={() => {
+          setCreateOpen(false);
+          setCreateInitialName("");
+        }}
         existingProjects={projects}
+        initialName={createInitialName}
+      />
+
+      <ArchiveProjectModal
+        open={Boolean(archiveTarget)}
+        onClose={() => setArchiveTarget(null)}
+        project={archiveTarget}
+        onArchived={(archived) => {
+          setCopiedNotice(`Archived project "${archived.name}".`);
+        }}
       />
     </div>
   );

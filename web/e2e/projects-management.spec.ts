@@ -64,6 +64,37 @@ async function setupStatefulProjectsApi(
   );
 
   await page.route(
+    (url) => /^\/api\/v1\/projects\/[^/]+$/.test(url.pathname),
+    async (route) => {
+      const method = route.request().method();
+      if (method === "OPTIONS") {
+        await fulfillCorsJson(route, 204);
+        return;
+      }
+      const match = new URL(route.request().url()).pathname.match(
+        /^\/api\/v1\/projects\/([^/]+)$/,
+      );
+      const key = match?.[1] ?? "";
+      const project = projects.find((p) => p.id === key || p.slug === key);
+      if (!project) {
+        await fulfillCorsJson(route, 404, { detail: "Project not found" });
+        return;
+      }
+      if (method === "GET") {
+        await fulfillCorsJson(route, 200, project);
+        return;
+      }
+      if (method === "DELETE") {
+        project.is_active = false;
+        project.updated_at = new Date().toISOString();
+        await fulfillCorsJson(route, 204);
+        return;
+      }
+      await route.fallback();
+    },
+  );
+
+  await page.route(
     (url) => /^\/api\/v1\/projects\/[^/]+\/repositories$/.test(url.pathname),
     async (route) => {
       const method = route.request().method();
@@ -304,17 +335,33 @@ test.describe("Projects Directory, Repository Linking & Deployment Signal (SCRUM
     await page.getByTestId("projects-repo-filter-popover").getByRole("option", { name: /All repos/i }).click();
     await expect(page.getByTestId("project-card-search-indexer")).toBeVisible();
 
-    // Archive button is enabled for active projects as Tenant Administrator, and disabled once already archived
-    await page.getByTestId("project-card-menu-core-payments").click();
-    const archiveBtn = page.getByTestId("archive-project-action-core-payments");
-    await expect(archiveBtn).toBeVisible();
-    await expect(archiveBtn).toBeEnabled();
-    await page.keyboard.press("Escape");
-
+    // Archive button opens confirmation modal (Cancel keeps active, Confirm archives)
     await page.getByTestId("project-card-menu-search-indexer").click();
     const archivedItemBtn = page.getByTestId("archive-project-action-search-indexer");
     await expect(archivedItemBtn).toBeVisible();
     await expect(archivedItemBtn).toBeDisabled();
+    await page.keyboard.press("Escape");
+
+    await page.getByTestId("project-card-menu-core-payments").click();
+    const archiveBtn = page.getByTestId("archive-project-action-core-payments");
+    await expect(archiveBtn).toBeVisible();
+    await expect(archiveBtn).toBeEnabled();
+    await archiveBtn.click();
+
+    const archiveModal = page.getByTestId("archive-project-modal");
+    await expect(archiveModal).toBeVisible();
+    await page.getByTestId("archive-project-cancel-button").click();
+    await expect(archiveModal).not.toBeVisible();
+
+    await page.getByTestId("project-card-menu-core-payments").click();
+    await page.getByTestId("archive-project-action-core-payments").click();
+    await expect(archiveModal).toBeVisible();
+    await page.getByTestId("archive-project-confirm-button").click();
+    await expect(archiveModal).not.toBeVisible();
+
+    await page.getByTestId("project-card-menu-core-payments").click();
+    await expect(page.getByTestId("archive-project-action-core-payments")).toBeDisabled();
+    await page.keyboard.press("Escape");
 
     // Developer sees Create Project rendered disabled (not removed)
     await mockAuthenticatedSession(page, {
@@ -371,14 +418,20 @@ test.describe("Projects Directory, Repository Linking & Deployment Signal (SCRUM
     const modal = page.getByRole("dialog");
     await expect(modal).toBeVisible();
 
-    // Rejects non-GitHub URL (client-side validation matching backend validator)
+    // Multi-entry validation (Frame 3E): rejects invalid entries simultaneously and allows row removal
     await page
       .getByTestId("link-repo-url-input")
       .fill("https://gitlab.com/org-alpha/service");
+    await page.getByTestId("add-repo-entry-button").click();
+    await page.getByTestId("link-repo-url-input-1").fill("not a valid repo");
     await page.getByTestId("link-repo-submit").click();
-    await expect(page.getByTestId("link-repo-error")).toContainText(/GitHub/i);
 
-    // Accepts valid owner/repo input
+    await expect(page.getByTestId("link-repo-error")).toContainText(/GitHub/i);
+    await expect(page.getByTestId("link-repo-entry-error-0")).toContainText(/GitHub/i);
+    await expect(page.getByTestId("link-repo-entry-error-1")).toBeVisible();
+    await page.getByTestId("remove-repo-entry-1").click();
+
+    // Accepts valid owner/repo input and displays Frame 3C floating toast + highlighted row
     await page.getByTestId("link-repo-url-input").fill("org-alpha/payments-api");
     await page.getByTestId("link-repo-submit").click();
     await expect(modal).not.toBeVisible();
@@ -386,6 +439,12 @@ test.describe("Projects Directory, Repository Linking & Deployment Signal (SCRUM
     await expect(
       page.getByTestId("linked-repo-row-org-alpha/payments-api"),
     ).toBeVisible();
+    await expect(
+      page.getByTestId("just-linked-badge-org-alpha/payments-api"),
+    ).toBeVisible();
+
+    const linkedToast = page.getByTestId("linked-repos-toast");
+    await expect(linkedToast).toBeVisible();
 
     // Unlink repository
     await page.getByTestId("unlink-repo-button-org-alpha/payments-api").click();
@@ -411,6 +470,9 @@ test.describe("Projects Directory, Repository Linking & Deployment Signal (SCRUM
 
     await page.goto("/projects/core-payments/settings");
     await page.getByTestId("project-tab-deployment-signal").click();
+    await expect(page).toHaveURL(
+      /\/projects\/core-payments\/settings\?tab=deployment-signal/,
+    );
 
     await expect(
       page.getByTestId("signal-option-github_deployments_api"),
@@ -421,10 +483,14 @@ test.describe("Projects Directory, Repository Linking & Deployment Signal (SCRUM
     await page.getByTestId("signal-option-argocd_postsync_webhook").click();
     await expect(page.getByText(/\/api\/v1\/webhooks\/gitops/i).first()).toBeVisible();
 
-    // Frame 4C Direct Deployment API reveals cURL panel
+    // Frame 4C Direct Deployment API reveals cURL panel using project UUID
     await page.getByTestId("signal-option-direct_deployment_api").click();
     await expect(
-      page.getByText(/\/api\/v1\/projects\/core-payments\/deployments/i).first(),
+      page
+        .getByText(
+          /\/api\/v1\/projects\/11111111-1111-1111-1111-000000000001\/deployments/i,
+        )
+        .first(),
     ).toBeVisible();
 
     await page.getByTestId("deployment-signal-save-button").click();
@@ -437,15 +503,27 @@ test.describe("Projects Directory, Repository Linking & Deployment Signal (SCRUM
       page.getByTestId("signal-option-github_deployments_api"),
     ).toBeChecked();
 
-    // 2. Non-admin Developer sees Read-Only Banner & disabled controls (Frame 4F)
+    // Task 18.2: Save new signal and verify real page.reload() + URL ?tab= persistence
+    await page.getByTestId("signal-option-argocd_postsync_webhook").click();
+    await page.getByTestId("deployment-signal-save-button").click();
+    await expect(page.getByTestId("deployment-signal-toast")).toBeVisible();
+
+    await page.reload();
+    await expect(page).toHaveURL(
+      /\/projects\/core-payments\/settings\?tab=deployment-signal/,
+    );
+    await expect(
+      page.getByTestId("signal-option-argocd_postsync_webhook"),
+    ).toBeChecked();
+
+    // 2. Non-admin Developer sees Read-Only Banner, disabled controls, and hidden action buttons (Frame 4F)
     await mockAuthenticatedSession(page, {
       roles: ["DEVELOPER"],
       email: "dev@company.com",
     });
     await setupStatefulProjectsApi(page, [proj]);
 
-    await page.goto("/projects/core-payments/settings");
-    await page.getByTestId("project-tab-deployment-signal").click();
+    await page.goto("/projects/core-payments/settings?tab=deployment-signal");
 
     const readonlyBanner = page.getByTestId("deployment-signal-readonly-banner");
     await expect(readonlyBanner).toBeVisible();
@@ -457,9 +535,92 @@ test.describe("Projects Directory, Repository Linking & Deployment Signal (SCRUM
     ).toBeDisabled();
     await expect(
       page.getByTestId("deployment-signal-cancel-button"),
-    ).toBeDisabled();
+    ).not.toBeVisible();
     await expect(
       page.getByTestId("deployment-signal-save-button"),
-    ).toBeDisabled();
+    ).not.toBeVisible();
+  });
+
+  test("Figma 1D/1E & 2C/2D: filter zero-match chips, error trace + retry, invalid/duplicate slug recovery", async ({
+    page,
+  }) => {
+    const existing = makeMockProject({
+      id: "11111111-1111-1111-1111-000000000001",
+      name: "Core Payments",
+      slug: "core-payments",
+    });
+
+    await mockAuthenticatedSession(page, { roles: ["TENANT_ADMIN"] });
+    await setupStatefulProjectsApi(page, [existing]);
+
+    let failCount = 0;
+    await page.route(
+      (url) => url.pathname === "/api/v1/projects",
+      async (route) => {
+        if (route.request().method() === "OPTIONS") {
+          await fulfillCorsJson(route, 204);
+          return;
+        }
+        if (route.request().method() === "GET" && failCount < 2) {
+          failCount += 1;
+          await route.fulfill({
+            status: 500,
+            contentType: "application/json",
+            headers: {
+              "access-control-allow-origin": "http://localhost:3000",
+              "access-control-allow-credentials": "true",
+              "access-control-expose-headers": "x-request-id",
+              "x-request-id": "trace-e2e-500-99",
+            },
+            body: JSON.stringify({ detail: "Registry timeout" }),
+          });
+          return;
+        }
+        await route.fallback();
+      },
+    );
+
+    // First load triggers Frame 1E diagnostic trace expanded by default; toggle + Retry recovers
+    await page.goto("/projects");
+    await expect(page.getByText(/Project Registry Error · HTTP 500/i)).toBeVisible();
+    await expect(page.getByTestId("projects-diagnostic-trace")).toContainText(
+      "TRACE ID: trace-e2e-500-99",
+    );
+    await page.getByTestId("projects-error-details-toggle").click();
+    await expect(page.getByTestId("projects-diagnostic-trace")).not.toBeVisible();
+    await page.getByTestId("projects-error-details-toggle").click();
+    await expect(page.getByTestId("projects-diagnostic-trace")).toContainText(
+      "TRACE ID:",
+    );
+    await page.getByTestId("projects-retry-button").click();
+    await expect(page.getByTestId("project-card-core-payments")).toBeVisible();
+
+    // Frame 1D zero-match filter bar + prefilled Create CTA
+    await page.getByTestId("projects-filter-input").fill("Nonexistent Service");
+    await expect(page.getByTestId("projects-filtered-zero-badge")).toHaveText(
+      "0 of 1",
+    );
+    await expect(page.getByTestId("filter-chip-search")).toBeVisible();
+    await page.getByTestId("projects-create-from-search-button").click();
+    await expect(page.getByTestId("create-project-name-input")).toHaveValue(
+      "Nonexistent Service",
+    );
+
+    // Frame 2D invalid slug characters & Frame 2C duplicate slug recovery
+    await page.getByTestId("create-project-slug-input").fill("Bad_Slug!");
+    await expect(page.getByTestId("create-project-error")).toContainText(
+      /invalid characters/i,
+    );
+
+    await page.getByTestId("create-project-slug-input").fill("core-payments");
+    await expect(page.getByTestId("create-project-error")).toContainText(
+      /already/i,
+    );
+    await page.getByRole("button", { name: /Use ‘core-payments-v2’/i }).click();
+    await expect(page.getByTestId("create-project-slug-input")).toHaveValue(
+      "core-payments-v2",
+    );
+    await page.getByTestId("create-project-submit").click();
+    await expect(page).toHaveURL("/projects/core-payments-v2/settings");
   });
 });

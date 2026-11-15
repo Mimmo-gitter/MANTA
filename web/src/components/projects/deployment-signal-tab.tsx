@@ -9,8 +9,10 @@ import {
   Copy,
   Loader2,
   RotateCcw,
+  X,
 } from "lucide-react";
 import { isApiHttpError } from "@/lib/api-client";
+import { formatRelativeTime } from "@/lib/projects-api";
 import {
   useDeploymentSignalQuery,
   useUpdateDeploymentSignalMutation,
@@ -72,8 +74,11 @@ export function DeploymentSignalTab({ project }: { project: ProjectItem }) {
 
   const isDirty = selectedSignal !== authoritativeSignal;
   const gitopsWebhookUrl = `${API_URL}/api/v1/webhooks/gitops`;
-  const directApiEndpoint = `${API_URL}/api/v1/projects/${project.slug}/deployments`;
+  const directApiEndpoint = `${API_URL}/api/v1/projects/${project.id}/deployments`;
   const directApiCurl = `curl -X POST ${directApiEndpoint} -H "Authorization: Bearer <SERVICE_TOKEN>" -H "Content-Type: application/json" -d '{"commit_sha":"'$SHA'"}'`;
+  const lastUpdatedLabel = formatRelativeTime(
+    signalQuery.data?.updated_at || project.updated_at,
+  );
 
   const handleCopy = async (key: string, value: string) => {
     try {
@@ -137,15 +142,25 @@ export function DeploymentSignalTab({ project }: { project: ProjectItem }) {
   };
 
   return (
-    <div className="space-y-[16px]">
-      <div className="rounded-[12px] border border-[#1e293b] bg-[#0d121f] p-[20px]">
-        <h2 className="text-[16px] font-semibold text-[#f8fafc]">
-          Authoritative Production Deployment Signal
-        </h2>
-        <p className="mt-[4px] text-[12px] text-[#94a3b8]">
-          Configure the authoritative delivery pipeline source used to calculate
-          verified DORA Lead Time and Change Failure Rate.
-        </p>
+    <div className="min-w-0 space-y-[16px]">
+      <div className="min-w-0 rounded-[12px] border border-[#1e293b] bg-[#0d121f] p-[20px]">
+        <div className="flex flex-wrap items-start justify-between gap-2">
+          <div>
+            <h2 className="text-[16px] font-semibold text-[#f8fafc]">
+              Authoritative Production Deployment Signal
+            </h2>
+            <p className="mt-[4px] text-[12px] text-[#94a3b8]">
+              Configure the authoritative delivery pipeline source used to
+              calculate verified DORA Lead Time and Change Failure Rate.
+            </p>
+          </div>
+          <span
+            data-testid="deployment-signal-updated-at"
+            className="rounded-[4px] border border-[#1e293b] bg-[#0a0e18] px-[8px] py-[3px] font-mono text-[10px] text-[#64748b]"
+          >
+            Updated {lastUpdatedLabel}
+          </span>
+        </div>
 
         {/* Read-only banner for non-admins (Figma 4F) OR DORA accuracy callout (4A) */}
         {!isTenantAdmin ? (
@@ -193,14 +208,17 @@ export function DeploymentSignalTab({ project }: { project: ProjectItem }) {
         )}
 
         {/* Radio Option Cards */}
-        <fieldset className="mt-[14px] space-y-[10px]" disabled={!isTenantAdmin}>
+        <fieldset
+          className="mt-[14px] w-full min-w-0 space-y-[10px] [min-inline-size:0]"
+          disabled={!isTenantAdmin}
+        >
           <legend className="sr-only">
             Authoritative production deployment signal source
           </legend>
 
           {/* Option 1: GitHub Deployments API */}
           <label
-            className={`block rounded-[10px] border p-[14px] transition-colors ${
+            className={`block w-full min-w-0 rounded-[10px] border p-[14px] transition-colors ${
               !isTenantAdmin ? "cursor-not-allowed opacity-85" : "cursor-pointer"
             } ${
               selectedSignal === "github_deployments_api"
@@ -221,7 +239,7 @@ export function DeploymentSignalTab({ project }: { project: ProjectItem }) {
                 disabled={!isTenantAdmin}
                 aria-disabled={!isTenantAdmin}
                 data-testid="signal-option-github_deployments_api"
-                className="mt-[3px] size-[15px] accent-[#00e599]"
+                className="mt-[3px] size-[16px] shrink-0 cursor-pointer appearance-none rounded-full border-[1.5px] border-[#475569] border-solid bg-transparent bg-none text-[#00e599] transition-colors checked:border-[#00e599] checked:bg-[#00e599] checked:shadow-[inset_0_0_0_3px_#0a141d] focus:outline-none focus:ring-0 focus-visible:ring-2 focus-visible:ring-[#00e599] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0a0e18] disabled:cursor-not-allowed"
               />
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-[8px]">
@@ -231,7 +249,7 @@ export function DeploymentSignalTab({ project }: { project: ProjectItem }) {
                   <span className="rounded-[4px] border border-[#00e599]/35 bg-[#00e599]/10 px-[6px] py-[1px] font-mono text-[10px] font-semibold uppercase text-[#00e599]">
                     Recommended
                   </span>
-                  <code className="rounded-[4px] border border-[#1e293b] bg-[#0f131d] px-[8px] py-[2px] font-mono text-[11px] text-[#00e599]">
+                  <code className="max-w-full rounded-[4px] border border-[#1e293b] bg-[#0f131d] px-[8px] py-[2px] font-mono text-[11px] text-[#00e599] [overflow-wrap:anywhere]">
                     environment=&quot;production&quot; · deployment_status: success
                   </code>
                 </div>
@@ -245,7 +263,7 @@ export function DeploymentSignalTab({ project }: { project: ProjectItem }) {
 
           {/* Option 2: ArgoCD / GitOps Webhook */}
           <label
-            className={`block rounded-[10px] border p-[14px] transition-colors ${
+            className={`block w-full min-w-0 rounded-[10px] border p-[14px] transition-colors ${
               !isTenantAdmin ? "cursor-not-allowed opacity-85" : "cursor-pointer"
             } ${
               selectedSignal === "argocd_postsync_webhook"
@@ -266,14 +284,14 @@ export function DeploymentSignalTab({ project }: { project: ProjectItem }) {
                 disabled={!isTenantAdmin}
                 aria-disabled={!isTenantAdmin}
                 data-testid="signal-option-argocd_postsync_webhook"
-                className="mt-[3px] size-[15px] accent-[#00e599]"
+                className="mt-[3px] size-[16px] shrink-0 cursor-pointer appearance-none rounded-full border-[1.5px] border-[#475569] border-solid bg-transparent bg-none text-[#00e599] transition-colors checked:border-[#00e599] checked:bg-[#00e599] checked:shadow-[inset_0_0_0_3px_#0a141d] focus:outline-none focus:ring-0 focus-visible:ring-2 focus-visible:ring-[#00e599] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0a0e18] disabled:cursor-not-allowed"
               />
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-[8px]">
                   <span className="text-[14px] font-semibold text-[#f8fafc]">
                     ArgoCD / GitOps Webhook
                   </span>
-                  <code className="rounded-[4px] border border-[#1e293b] bg-[#0f131d] px-[8px] py-[2px] font-mono text-[11px] text-[#00e599]">
+                  <code className="max-w-full rounded-[4px] border border-[#1e293b] bg-[#0f131d] px-[8px] py-[2px] font-mono text-[11px] text-[#00e599] [overflow-wrap:anywhere]">
                     /api/v1/webhooks/gitops · PostSync wave completion
                   </code>
                 </div>
@@ -283,12 +301,12 @@ export function DeploymentSignalTab({ project }: { project: ProjectItem }) {
                 </p>
 
                 {selectedSignal === "argocd_postsync_webhook" && (
-                  <div className="mt-[12px] space-y-[8px] rounded-[8px] border border-[#1e293b] bg-[#070a11] p-[12px]">
-                    <div className="flex flex-wrap items-center gap-[8px]">
+                  <div className="mt-[12px] min-w-0 space-y-[8px] rounded-[8px] border border-[#1e293b] bg-[#070a11] p-[12px]">
+                    <div className="flex min-w-0 flex-wrap items-center gap-[8px]">
                       <span className="text-[11px] text-[#94a3b8]">
                         Webhook URL:
                       </span>
-                      <code className="rounded-[5px] border border-[#1e293b] bg-[#0d121f] px-[8px] py-[3px] font-mono text-[11px] text-[#e2e8f0]">
+                      <code className="max-w-full rounded-[5px] border border-[#1e293b] bg-[#0d121f] px-[8px] py-[3px] font-mono text-[11px] text-[#e2e8f0] [overflow-wrap:anywhere]">
                         {gitopsWebhookUrl}
                       </code>
                       <button
@@ -334,7 +352,7 @@ export function DeploymentSignalTab({ project }: { project: ProjectItem }) {
 
           {/* Option 3: Direct Deployment Ingestion API */}
           <label
-            className={`block rounded-[10px] border p-[14px] transition-colors ${
+            className={`block w-full min-w-0 rounded-[10px] border p-[14px] transition-colors ${
               !isTenantAdmin ? "cursor-not-allowed opacity-85" : "cursor-pointer"
             } ${
               selectedSignal === "direct_deployment_api"
@@ -355,15 +373,15 @@ export function DeploymentSignalTab({ project }: { project: ProjectItem }) {
                 disabled={!isTenantAdmin}
                 aria-disabled={!isTenantAdmin}
                 data-testid="signal-option-direct_deployment_api"
-                className="mt-[3px] size-[15px] accent-[#00e599]"
+                className="mt-[3px] size-[16px] shrink-0 cursor-pointer appearance-none rounded-full border-[1.5px] border-[#475569] border-solid bg-transparent bg-none text-[#00e599] transition-colors checked:border-[#00e599] checked:bg-[#00e599] checked:shadow-[inset_0_0_0_3px_#0a141d] focus:outline-none focus:ring-0 focus-visible:ring-2 focus-visible:ring-[#00e599] focus-visible:ring-offset-2 focus-visible:ring-offset-[#0a0e18] disabled:cursor-not-allowed"
               />
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-[8px]">
                   <span className="text-[14px] font-semibold text-[#f8fafc]">
                     Direct Deployment Ingestion API
                   </span>
-                  <code className="rounded-[4px] border border-[#1e293b] bg-[#0f131d] px-[8px] py-[2px] font-mono text-[11px] text-[#00e599]">
-                    POST /api/v1/projects/{project.slug}/deployments
+                  <code className="max-w-full rounded-[4px] border border-[#1e293b] bg-[#0f131d] px-[8px] py-[2px] font-mono text-[11px] text-[#00e599] [overflow-wrap:anywhere]">
+                    POST /api/v1/projects/{project.id}/deployments
                   </code>
                 </div>
                 <p className="mt-[4px] text-[12px] text-[#94a3b8]">
@@ -372,12 +390,12 @@ export function DeploymentSignalTab({ project }: { project: ProjectItem }) {
                 </p>
 
                 {selectedSignal === "direct_deployment_api" && (
-                  <div className="mt-[12px] space-y-[8px] rounded-[8px] border border-[#1e293b] bg-[#070a11] p-[12px]">
-                    <div className="flex flex-wrap items-center gap-[8px]">
+                  <div className="mt-[12px] min-w-0 space-y-[8px] rounded-[8px] border border-[#1e293b] bg-[#070a11] p-[12px]">
+                    <div className="flex min-w-0 flex-wrap items-center gap-[8px]">
                       <span className="text-[11px] text-[#94a3b8]">
                         Endpoint:
                       </span>
-                      <code className="rounded-[5px] border border-[#1e293b] bg-[#0d121f] px-[8px] py-[3px] font-mono text-[11px] text-[#e2e8f0]">
+                      <code className="max-w-full rounded-[5px] border border-[#1e293b] bg-[#0d121f] px-[8px] py-[3px] font-mono text-[11px] text-[#e2e8f0] [overflow-wrap:anywhere]">
                         POST {directApiEndpoint}
                       </code>
                       <button
@@ -398,8 +416,11 @@ export function DeploymentSignalTab({ project }: { project: ProjectItem }) {
                         </span>
                       </button>
                     </div>
-                    <div className="flex flex-wrap items-center justify-between gap-[8px] rounded-[6px] border border-[#1e293b] bg-[#0d121f] px-[10px] py-[6px]">
-                      <code className="truncate font-mono text-[11px] text-[#94a3b8]">
+                    <div className="flex min-w-0 items-center justify-between gap-[10px] rounded-[6px] border border-[#1e293b] bg-[#0d121f] px-[10px] py-[6px]">
+                      <code
+                        title={directApiCurl}
+                        className="min-w-0 flex-1 truncate font-mono text-[11px] text-[#94a3b8]"
+                      >
                         {directApiCurl}
                       </code>
                       <button
@@ -438,96 +459,109 @@ export function DeploymentSignalTab({ project }: { project: ProjectItem }) {
 
         {/* Footer Action Bar */}
         <div className="mt-[16px] flex flex-wrap items-center justify-between gap-3 rounded-[10px] border border-[#1e293b] bg-[#0a0e18] px-[14px] py-[10px]">
-          <div className="flex items-center gap-2 font-mono text-[11px] text-[#00e599]">
+          <div
+            className={`flex items-center gap-2 font-mono text-[11px] ${
+              !isTenantAdmin ? "text-[#fbbf24]" : "text-[#00e599]"
+            }`}
+          >
             <span
-              className="size-[6px] rounded-full bg-[#00e599]"
+              className={`size-[6px] rounded-full ${
+                !isTenantAdmin ? "bg-[#f59e0b]" : "bg-[#00e599]"
+              }`}
               aria-hidden="true"
             />
             <span>
-              Telemetry Ingestion Engine: Active ·{" "}
-              {isDirty ? "Unsaved change selected" : "Authoritative signal verified"}
+              {!isTenantAdmin
+                ? "Read-Only Policy · Tenant Administrator access required"
+                : updateMutation.isPending
+                  ? "Saving configuration..."
+                  : `Telemetry Ingestion Engine: Active · ${
+                      isDirty
+                        ? "Unsaved change selected"
+                        : "Authoritative signal verified"
+                    }`}
             </span>
           </div>
 
-          <div className="flex items-center gap-[8px]">
-            <button
-              type="button"
-              onClick={() => {
-                setSelectedSignal(authoritativeSignal);
-                setErrorMessage(null);
-              }}
-              disabled={!isTenantAdmin || !isDirty || updateMutation.isPending}
-              aria-disabled={!isTenantAdmin || !isDirty || updateMutation.isPending}
-              title={
-                !isTenantAdmin
-                  ? "Only Tenant Administrators can modify deployment signals"
-                  : undefined
-              }
-              data-testid="deployment-signal-cancel-button"
-              className="h-[32px] rounded-[7px] px-[12px] text-[12px] font-medium text-[#cbd5e1] transition-colors hover:bg-white/[0.04] disabled:cursor-not-allowed disabled:opacity-45"
-            >
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={!isTenantAdmin || !isDirty || updateMutation.isPending}
-              aria-disabled={!isTenantAdmin || !isDirty || updateMutation.isPending}
-              title={
-                !isTenantAdmin
-                  ? "Only Tenant Administrators can modify deployment signals"
-                  : undefined
-              }
-              data-testid="deployment-signal-save-button"
-              className="inline-flex h-[32px] items-center gap-1.5 rounded-[7px] bg-[#00e599] px-[14px] text-[12px] font-semibold text-[#07111a] transition-colors hover:bg-[#1ef5ab] disabled:cursor-not-allowed disabled:bg-[#1f2937] disabled:text-[#64748b]"
-            >
-              {updateMutation.isPending ? (
-                <>
-                  <Loader2 className="size-[13px] animate-spin" aria-hidden="true" />
-                  <span>Saving...</span>
-                </>
-              ) : (
-                <span>Save Changes</span>
-              )}
-            </button>
-          </div>
+          {isTenantAdmin && (
+            <div className="flex items-center gap-[8px]">
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedSignal(authoritativeSignal);
+                  setErrorMessage(null);
+                }}
+                disabled={!isDirty || updateMutation.isPending}
+                aria-disabled={!isDirty || updateMutation.isPending}
+                data-testid="deployment-signal-cancel-button"
+                className="h-[32px] rounded-[7px] px-[12px] text-[12px] font-medium text-[#cbd5e1] transition-colors hover:bg-white/[0.04] disabled:cursor-not-allowed disabled:opacity-45"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={!isDirty || updateMutation.isPending}
+                aria-disabled={!isDirty || updateMutation.isPending}
+                data-testid="deployment-signal-save-button"
+                className="inline-flex h-[32px] items-center gap-1.5 rounded-[7px] bg-[#00e599] px-[14px] text-[12px] font-semibold text-[#07111a] transition-colors hover:bg-[#1ef5ab] disabled:cursor-not-allowed disabled:bg-[#1f2937] disabled:text-[#64748b]"
+              >
+                {updateMutation.isPending ? (
+                  <>
+                    <Loader2 className="size-[13px] animate-spin" aria-hidden="true" />
+                    <span>Saving configuration...</span>
+                  </>
+                ) : (
+                  <span>Save Changes</span>
+                )}
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
-      {/* Live Toast with Undo (Figma 4E) */}
+      {/* Live Floating Toast with Undo (Figma 4E) */}
       <div aria-live="polite" className="min-h-[1px]">
         {toastInfo && (
           <div
             role="status"
             data-testid="deployment-signal-toast"
-            className="flex flex-wrap items-center justify-between gap-3 rounded-[10px] border border-[#00e599]/35 bg-[#0e1a24] px-[14px] py-[10px] text-[12px] text-[#e2e8f0]"
+            className="fixed right-[24px] top-[76px] z-50 flex w-[min(410px,calc(100vw-32px))] items-start justify-between gap-3 rounded-[10px] border border-[#00e599]/40 bg-[#0d1924] px-[14px] py-[12px] text-[12px] text-[#e2e8f0] shadow-[0_12px_36px_rgba(0,0,0,0.5)]"
           >
-            <div className="flex items-center gap-2">
+            <div className="flex items-start gap-2.5">
               <CheckCircle2
-                className="size-[15px] shrink-0 text-[#00e599]"
+                className="mt-[2px] size-[15px] shrink-0 text-[#00e599]"
                 aria-hidden="true"
               />
-              <span>{toastInfo.message}</span>
+              <div>
+                <p className="text-[12px] font-semibold text-[#f8fafc]">
+                  Deployment signal updated
+                </p>
+                <p className="mt-[2px] text-[11px] leading-[16px] text-[#94a3b8]">
+                  {toastInfo.message}
+                </p>
+              </div>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex shrink-0 items-center gap-2 pt-0.5">
               {toastInfo.previousSignal && isTenantAdmin && (
                 <button
                   type="button"
                   onClick={handleUndo}
                   disabled={updateMutation.isPending}
                   data-testid="deployment-signal-undo-button"
-                  className="inline-flex items-center gap-1 font-mono text-[11px] font-medium text-[#00e599] hover:underline"
+                  className="inline-flex h-[26px] items-center gap-1 rounded-[5px] border border-[#00e599]/35 bg-[#00e599]/10 px-[8px] font-mono text-[10px] font-medium text-[#00e599] hover:bg-[#00e599]/20"
                 >
-                  <RotateCcw className="size-[12px]" aria-hidden="true" />
+                  <RotateCcw className="size-[11px]" aria-hidden="true" />
                   <span>Undo</span>
                 </button>
               )}
               <button
                 type="button"
                 onClick={() => setToastInfo(null)}
-                className="font-mono text-[11px] text-[#94a3b8] hover:text-[#f8fafc]"
+                aria-label="Dismiss notification"
+                className="flex size-[24px] items-center justify-center rounded-[5px] text-[#94a3b8] transition-colors hover:bg-white/[0.06] hover:text-[#f8fafc]"
               >
-                Dismiss
+                <X className="size-[13px]" aria-hidden="true" />
               </button>
             </div>
           </div>

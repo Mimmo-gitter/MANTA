@@ -85,7 +85,7 @@ export function UnlinkRepositoryModal({
         <div className="p-[22px]">
           <div className="flex items-start justify-between gap-4">
             <div>
-              <div className="inline-flex items-center gap-1.5 rounded-[4px] border border-[#ef4444]/40 bg-[#ef4444]/10 px-[8px] py-[2px] font-mono text-[10px] font-medium uppercase tracking-[0.6px] text-[#fca5a5]">
+              <div className="inline-flex items-center gap-1.5 rounded-full border border-[#ef4444]/40 bg-[#ef4444]/10 px-[10px] py-[3px] font-mono text-[10px] font-medium uppercase tracking-[0.6px] text-[#fca5a5]">
                 <span
                   className="size-[5px] rounded-full bg-[#ef4444]"
                   aria-hidden="true"
