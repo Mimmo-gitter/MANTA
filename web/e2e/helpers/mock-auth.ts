@@ -12,8 +12,17 @@ export interface MockIntegrationRow {
   provider: "github" | "jira" | "slack" | string;
   external_account_id: string;
   webhook_url?: string | null;
+  webhook_secret_masked?: string | null;
   is_active: boolean;
   created_at: string;
+}
+
+export interface MockWorkspaceOption {
+  tenant_id: string;
+  tenant_name: string;
+  tenant_slug: string;
+  role: string;
+  is_current: boolean;
 }
 
 export interface MockSessionOptions {
@@ -26,6 +35,7 @@ export interface MockSessionOptions {
   roles?: string[];
   projects?: Array<Partial<ProjectItem>>;
   integrations?: MockIntegrationRow[];
+  workspaces?: MockWorkspaceOption[];
 }
 
 export const OIDC_STORAGE_KEY =
@@ -135,6 +145,25 @@ export async function mockAuthenticatedSession(
   const roles = options.roles ?? ["TENANT_ADMIN"];
   const defaultProjects = (options.projects ?? []).map((p) => makeMockProject(p));
   const defaultIntegrations = options.integrations ?? [];
+  const defaultSlug =
+    tenantName
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "") || "workspace";
+  const workspaceList: MockWorkspaceOption[] = options.workspaces ?? [
+    {
+      tenant_id: tenantId,
+      tenant_name: tenantName,
+      tenant_slug: defaultSlug,
+      role: roles[0] ?? "TENANT_ADMIN",
+      is_current: true,
+    },
+  ];
+  let activeTenantId =
+    workspaceList.find((w) => w.is_current)?.tenant_id ?? tenantId;
+  let activeTenantName =
+    workspaceList.find((w) => w.tenant_id === activeTenantId)?.tenant_name ??
+    tenantName;
 
   const profile = {
     sub,
@@ -176,9 +205,65 @@ export async function mockAuthenticatedSession(
   await page.route("**/api/v1/auth/me", async (route) => {
     await fulfillCorsJson(route, 200, {
       ...profile,
+      tenant_id: activeTenantId,
+      tenant_name: activeTenantName,
       roles,
     });
   });
+
+  await page.route(
+    (url) => url.pathname === "/api/v1/auth/workspaces",
+    async (route) => {
+      if (
+        route.request().method() === "GET" ||
+        route.request().method() === "OPTIONS"
+      ) {
+        await fulfillCorsJson(
+          route,
+          200,
+          workspaceList.map((ws) => ({
+            ...ws,
+            is_current: ws.tenant_id === activeTenantId,
+          })),
+        );
+        return;
+      }
+      await route.fallback();
+    },
+  );
+
+  await page.route(
+    (url) => url.pathname === "/api/v1/auth/switch-workspace",
+    async (route) => {
+      const method = route.request().method();
+      if (method === "OPTIONS") {
+        await fulfillCorsJson(route, 204);
+        return;
+      }
+      if (method === "POST") {
+        const body = (route.request().postDataJSON() ?? {}) as {
+          tenant_id?: string;
+        };
+        const target = workspaceList.find(
+          (ws) => ws.tenant_id === body.tenant_id,
+        );
+        if (!target) {
+          await fulfillCorsJson(route, 404, {
+            detail: "Workspace not found or access revoked.",
+          });
+          return;
+        }
+        activeTenantId = target.tenant_id;
+        activeTenantName = target.tenant_name;
+        await fulfillCorsJson(route, 200, {
+          ...target,
+          is_current: true,
+        });
+        return;
+      }
+      await route.fallback();
+    },
+  );
 
   await page.route(
     (url) => url.pathname === "/api/v1/projects",

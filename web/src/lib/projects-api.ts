@@ -111,6 +111,43 @@ export function isValidProjectSlug(slug: string): boolean {
   return slug.length > 0 && slug.length <= 64 && PROJECT_SLUG_PATTERN.test(slug);
 }
 
+/**
+ * Extracts offending characters or structural issues from an invalid URL slug
+ * so the UI can explain why the slug format was rejected.
+ */
+export function getInvalidSlugCharacters(slug: string): string[] {
+  const tokens: string[] = [];
+  if (/[A-Z]/.test(slug)) tokens.push("uppercase letters");
+  if (/\s/.test(slug)) tokens.push("spaces");
+  const seen = new Set<string>();
+  for (const ch of slug) {
+    if (!/[a-zA-Z0-9-\s]/.test(ch) && !seen.has(ch)) {
+      seen.add(ch);
+      tokens.push(`'${ch}'`);
+    }
+  }
+  return tokens;
+}
+
+/**
+ * Formats an ISO-8601 timestamp into a concise relative string (e.g. "just now", "5m ago").
+ */
+export function formatRelativeTime(isoDate: string): string {
+  const ts = Date.parse(isoDate);
+  if (Number.isNaN(ts)) return "recently";
+  const diffSeconds = Math.max(0, Math.floor((Date.now() - ts) / 1000));
+  if (diffSeconds < 60) return "just now";
+  const diffMinutes = Math.floor(diffSeconds / 60);
+  if (diffMinutes < 60) return `${diffMinutes}m ago`;
+  const diffHours = Math.floor(diffMinutes / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays < 30) return `${diffDays}d ago`;
+  const diffMonths = Math.floor(diffDays / 30);
+  if (diffMonths < 12) return `${diffMonths}mo ago`;
+  return `${Math.floor(diffMonths / 12)}y ago`;
+}
+
 export function isUuid(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(
     value,

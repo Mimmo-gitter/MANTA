@@ -12,6 +12,7 @@ import {
 import { cn } from "@/lib/utils";
 import {
   Badge,
+  ConnectedWebhookCredentials,
   ConnectingStep,
   FailedStep,
   ModalShell,
@@ -400,9 +401,11 @@ function Row({
 }
 
 function ConnectedStep({
+  connection,
   onDone,
   onClose,
 }: {
+  connection: SlackConnection | null;
   onDone: () => void;
   onClose: () => void;
 }) {
@@ -463,6 +466,15 @@ function ConnectedStep({
             </Badge>
           </Row>
         </dl>
+
+        <div className="mt-4 w-full">
+          <ConnectedWebhookCredentials
+            webhookUrl={connection?.webhook_url}
+            webhookSecret={connection?.webhook_secret}
+            webhookSecretMasked={connection?.webhook_secret_masked}
+            urlDescription="Use this webhook payload URL in your Slack App Event Subscriptions settings."
+          />
+        </div>
       </div>
     </ModalShell>
   );
@@ -568,6 +580,7 @@ export function SlackConnectDialog({
     case "connected":
       return (
         <ConnectedStep
+          connection={connection}
           onClose={close}
           onDone={() => {
             if (connection) {
