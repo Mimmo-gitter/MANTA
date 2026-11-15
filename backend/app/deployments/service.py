@@ -1,8 +1,9 @@
 """Service layer for deployment persistence, project resolution, and authoritative queries."""
 
-from datetime import datetime
+from collections import deque
+from datetime import datetime, timezone
 import logging
-from typing import Optional
+from typing import AbstractSet, Mapping, Optional, Sequence
 import uuid
 
 from fastapi import HTTPException, status
@@ -14,10 +15,13 @@ from app.auth.permissions import Role, resolve_caller_roles
 from app.auth.schemas import TokenClaims
 from app.contributors.service import resolve_or_create_contributor_pseudonym
 from app.db.models.models import (
+    Commit,
     Deployment,
+    DeploymentPullRequest,
     Project,
     ProjectLink,
     ProjectMember,
+    PullRequest,
     Repository,
     User,
 )
@@ -219,6 +223,11 @@ async def persist_deployment_idempotent(
         )
         db.add(deployment)
         await db.flush()
+        if (
+            deployment.environment == "production"
+            and deployment.status == DeploymentOutcome.SUCCESS.value
+        ):
+            await resolve_deployment_pull_requests(db, deployment=deployment)
         return deployment, False
 
     clean_ext_id = external_deployment_id.strip()[:128]
@@ -277,7 +286,323 @@ async def persist_deployment_idempotent(
     deployment_id, inserted = row[0], bool(row[1])
     persisted = await db.get(Deployment, deployment_id)
     assert persisted is not None
+    if (
+        persisted.environment == "production"
+        and persisted.status == DeploymentOutcome.SUCCESS.value
+    ):
+        await resolve_deployment_pull_requests(db, deployment=persisted)
     return persisted, (not inserted)
+
+
+def _normalize_utc(dt: datetime) -> datetime:
+    """Normalize a datetime to timezone-aware UTC."""
+    if dt.tzinfo is None:
+        return dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def compute_commit_range_shas(
+    target_commit_sha: str,
+    *,
+    previous_deployment_shas: Sequence[str] = (),
+    commits_by_sha: Optional[Mapping[str, Commit]] = None,
+    parent_shas_by_sha: Optional[Mapping[str, Sequence[str]]] = None,
+    max_depth: int = 1000,
+) -> set[str]:
+    """
+    Compute the half-open commit range S_i = (D_{i-1}, D_i] (Task 26.2 / Task 26.1 §2.2).
+
+    Walks commit parent_shas backward from target_commit_sha while pruning any commit
+    reachable from previous_deployment_shas (A_{i-1}). If target_commit_sha is already
+    in A_{i-1} (e.g. re-deploy or rollback of an already-shipped SHA), returns set().
+    """
+    target = (target_commit_sha or "").strip().lower()
+    if not target:
+        return set()
+
+    parents_map: dict[str, list[str]] = {}
+    if commits_by_sha:
+        for sha_key, commit_obj in commits_by_sha.items():
+            norm_sha = (sha_key or getattr(commit_obj, "sha", "") or "").strip().lower()
+            if not norm_sha:
+                continue
+            raw_parents = getattr(commit_obj, "parent_shas", None) or []
+            parents_map[norm_sha] = [
+                p.strip().lower() for p in raw_parents if isinstance(p, str) and p.strip()
+            ]
+    if parent_shas_by_sha:
+        for sha_key, raw_parents in parent_shas_by_sha.items():
+            norm_sha = (sha_key or "").strip().lower()
+            if not norm_sha:
+                continue
+            parents_map[norm_sha] = [
+                p.strip().lower() for p in (raw_parents or []) if isinstance(p, str) and p.strip()
+            ]
+
+    norm_prev_shas = [
+        s.strip().lower() for s in previous_deployment_shas if isinstance(s, str) and s.strip()
+    ]
+
+    # Build ancestor exclusion set A_{i-1} reachable from previous SUCCESS production deployments
+    ancestor_exclusion_set: set[str] = set()
+    exclusion_queue: deque[tuple[str, int]] = deque()
+    for prev_sha in norm_prev_shas:
+        if prev_sha not in ancestor_exclusion_set:
+            ancestor_exclusion_set.add(prev_sha)
+            exclusion_queue.append((prev_sha, 0))
+
+    while exclusion_queue:
+        curr_sha, depth = exclusion_queue.popleft()
+        if depth >= max_depth:
+            continue
+        for parent_sha in parents_map.get(curr_sha, ()):
+            if parent_sha not in ancestor_exclusion_set:
+                ancestor_exclusion_set.add(parent_sha)
+                exclusion_queue.append((parent_sha, depth + 1))
+
+    if target in ancestor_exclusion_set:
+        return set()
+
+    # Walk backward from target_commit_sha to collect S_i = (D_{i-1}, D_i]
+    range_shas: set[str] = {target}
+    range_queue: deque[tuple[str, int]] = deque([(target, 0)])
+
+    while range_queue:
+        curr_sha, depth = range_queue.popleft()
+        if depth >= max_depth:
+            continue
+        for parent_sha in parents_map.get(curr_sha, ()):
+            if parent_sha in ancestor_exclusion_set or parent_sha in range_shas:
+                continue
+            range_shas.add(parent_sha)
+            range_queue.append((parent_sha, depth + 1))
+
+    return range_shas
+
+
+def match_unclaimed_pull_requests_in_range(
+    deployment: Deployment,
+    *,
+    commit_range_shas: AbstractSet[str],
+    candidate_pull_requests: Sequence[PullRequest],
+    commits_in_range: Sequence[Commit] = (),
+    already_claimed_pr_ids: AbstractSet[uuid.UUID] = frozenset(),
+    default_branch: Optional[str] = None,
+    has_previous_deployment_boundary: bool = True,
+) -> list[PullRequest]:
+    """
+    Match unclaimed merged PRs in commit_range_shas across merge, squash, and rebase strategies
+    while ignoring trunk-only non-PR commits and already-shipped PRs (Task 26.2 / Task 26.1 §3-§5).
+    """
+    if (
+        deployment.environment != "production"
+        or deployment.status != DeploymentOutcome.SUCCESS.value
+    ):
+        return []
+
+    normalized_range_shas = {
+        s.strip().lower() for s in commit_range_shas if isinstance(s, str) and s.strip()
+    }
+    if not normalized_range_shas:
+        return []
+
+    range_commit_pr_ids: set[uuid.UUID] = {
+        c.pull_request_id
+        for c in commits_in_range
+        if c.pull_request_id is not None
+        and getattr(c, "sha", None)
+        and c.sha.strip().lower() in normalized_range_shas
+    }
+
+    norm_default_branch = default_branch.strip() if default_branch else None
+    deployed_at_utc = (
+        _normalize_utc(deployment.deployed_at) if deployment.deployed_at is not None else None
+    )
+
+    matched_prs: list[PullRequest] = []
+    seen_pr_ids: set[uuid.UUID] = set()
+
+    for pr in candidate_pull_requests:
+        if pr.id in seen_pr_ids or pr.id in already_claimed_pr_ids:
+            continue
+        if pr.tenant_id != deployment.tenant_id or pr.project_id != deployment.project_id:
+            continue
+        if (
+            deployment.repository_id is not None
+            and pr.repository_id is not None
+            and pr.repository_id != deployment.repository_id
+        ):
+            continue
+        if (pr.state or "").strip().lower() != "merged":
+            continue
+        if norm_default_branch and pr.base_branch and pr.base_branch.strip() != norm_default_branch:
+            continue
+        if (
+            not has_previous_deployment_boundary
+            and pr.merged_at is not None
+            and deployed_at_utc is not None
+            and _normalize_utc(pr.merged_at) > deployed_at_utc
+        ):
+            continue
+
+        merge_sha = pr.merge_commit_sha.strip().lower() if pr.merge_commit_sha else None
+        head_sha = pr.head_sha.strip().lower() if pr.head_sha else None
+
+        matched_by_merge_sha = bool(merge_sha and merge_sha in normalized_range_shas)
+        matched_by_head_sha = bool(head_sha and head_sha in normalized_range_shas)
+        matched_by_commit_fk = pr.id in range_commit_pr_ids
+
+        if matched_by_merge_sha or matched_by_head_sha or matched_by_commit_fk:
+            seen_pr_ids.add(pr.id)
+            matched_prs.append(pr)
+
+    return matched_prs
+
+
+async def resolve_deployment_pull_requests(
+    db: AsyncSession,
+    *,
+    deployment: Deployment,
+    max_depth: int = 1000,
+) -> list[DeploymentPullRequest]:
+    """
+    Resolve and persist DeploymentPullRequest links for a newly ingested SUCCESS production
+    deployment across standard merge, squash-and-merge, and rebase-and-merge strategies (Task 26.2).
+    """
+    if (
+        deployment.environment != "production"
+        or deployment.status != DeploymentOutcome.SUCCESS.value
+    ):
+        return []
+
+    # 1. Resolve preceding SUCCESS production deployment commit SHAs for boundary D_{i-1}
+    prev_deployments_stmt = (
+        select(Deployment.commit_sha)
+        .where(
+            Deployment.tenant_id == deployment.tenant_id,
+            Deployment.project_id == deployment.project_id,
+            Deployment.environment == "production",
+            Deployment.status == DeploymentOutcome.SUCCESS.value,
+            Deployment.id != deployment.id,
+            Deployment.deployed_at <= deployment.deployed_at,
+        )
+        .order_by(Deployment.deployed_at.desc(), Deployment.id.desc())
+    )
+    if deployment.repository_id is not None:
+        prev_deployments_stmt = prev_deployments_stmt.where(
+            Deployment.repository_id == deployment.repository_id
+        )
+    if deployment.authoritative_signal_source:
+        prev_deployments_stmt = prev_deployments_stmt.where(
+            Deployment.authoritative_signal_source == deployment.authoritative_signal_source
+        )
+    prev_deployment_shas = list((await db.execute(prev_deployments_stmt)).scalars().all())
+
+    # 2. Load repository default_branch (if repository_id is bound) and commit graph
+    default_branch: Optional[str] = None
+    if deployment.repository_id is not None:
+        default_branch = (
+            await db.execute(
+                select(Repository.default_branch).where(
+                    Repository.tenant_id == deployment.tenant_id,
+                    Repository.id == deployment.repository_id,
+                )
+            )
+        ).scalar_one_or_none()
+        commits_stmt = select(Commit).where(
+            Commit.tenant_id == deployment.tenant_id,
+            Commit.repository_id == deployment.repository_id,
+        )
+    else:
+        commits_stmt = (
+            select(Commit)
+            .join(Repository, Repository.id == Commit.repository_id)
+            .where(
+                Commit.tenant_id == deployment.tenant_id,
+                Repository.project_id == deployment.project_id,
+            )
+        )
+
+    commits_list = list((await db.execute(commits_stmt)).scalars().all())
+    commits_by_sha: dict[str, Commit] = {
+        c.sha.strip().lower(): c for c in commits_list if c.sha and c.sha.strip()
+    }
+
+    # 3. Compute half-open commit range S_i = (D_{i-1}, D_i]
+    commit_range_shas = compute_commit_range_shas(
+        deployment.commit_sha,
+        previous_deployment_shas=prev_deployment_shas,
+        commits_by_sha=commits_by_sha,
+        max_depth=max_depth,
+    )
+    if not commit_range_shas:
+        return []
+
+    commits_in_range = [c for sha_key, c in commits_by_sha.items() if sha_key in commit_range_shas]
+
+    # 4. Load already-claimed pull_request_ids across deployment_pull_requests in tenant
+    claimed_pr_ids = set(
+        (
+            await db.execute(
+                select(DeploymentPullRequest.pull_request_id).where(
+                    DeploymentPullRequest.tenant_id == deployment.tenant_id
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    # 5. Load candidate merged pull requests in project/repository
+    pr_stmt = (
+        select(PullRequest)
+        .where(
+            PullRequest.tenant_id == deployment.tenant_id,
+            PullRequest.project_id == deployment.project_id,
+            func.lower(PullRequest.state) == "merged",
+        )
+        .order_by(PullRequest.merged_at.asc().nulls_last(), PullRequest.external_pr_number.asc())
+    )
+    if deployment.repository_id is not None:
+        pr_stmt = pr_stmt.where(PullRequest.repository_id == deployment.repository_id)
+
+    candidate_prs = list((await db.execute(pr_stmt)).scalars().all())
+
+    matched_prs = match_unclaimed_pull_requests_in_range(
+        deployment,
+        commit_range_shas=commit_range_shas,
+        candidate_pull_requests=candidate_prs,
+        commits_in_range=commits_in_range,
+        already_claimed_pr_ids=claimed_pr_ids,
+        default_branch=default_branch,
+        has_previous_deployment_boundary=bool(prev_deployment_shas),
+    )
+    if not matched_prs:
+        return []
+
+    # 6. Idempotent insert into deployment_pull_requests (ON CONFLICT DO NOTHING)
+    insert_values = [
+        {
+            "id": uuid.uuid4(),
+            "tenant_id": deployment.tenant_id,
+            "deployment_id": deployment.id,
+            "pull_request_id": pr.id,
+        }
+        for pr in matched_prs
+    ]
+    insert_stmt = (
+        pg_insert(DeploymentPullRequest)
+        .values(insert_values)
+        .on_conflict_do_nothing(
+            index_elements=[
+                DeploymentPullRequest.deployment_id,
+                DeploymentPullRequest.pull_request_id,
+            ]
+        )
+        .returning(DeploymentPullRequest)
+    )
+    inserted_links = list((await db.execute(insert_stmt)).scalars().all())
+    return inserted_links
 
 
 async def _enforce_abac_project_assignment_if_non_admin(

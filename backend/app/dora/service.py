@@ -1,19 +1,27 @@
-"""Backend DORA metrics calculation services (US-27 / Task 27.2)."""
+"""Backend DORA metrics calculation services (US-26 / Task 26.3 & US-27 / Task 27.2)."""
 
-from collections import Counter
-from datetime import datetime, timedelta, timezone
+from collections import Counter, defaultdict
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Literal, Optional, Sequence
+from typing import Any, Literal, Optional, Sequence
 import uuid
 
+from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models.models import Deployment
+from app.db.models.models import Deployment, DeploymentPullRequest, Project, PullRequest
 from app.deployments.schemas import DeploymentOutcome
 from app.deployments.service import build_authoritative_production_deployments_query
-from app.dora.schemas import DailyDeploymentCount, DeploymentFrequencyResult
+from app.dora.schemas import (
+    DailyDeploymentCount,
+    DailyLeadTimeMetric,
+    DeploymentFrequencyResult,
+    LeadTimeResult,
+    PullRequestLeadTimeItem,
+)
 
 SUPPORTED_DEPLOYMENT_FREQUENCY_WINDOWS: tuple[int, ...] = (14, 30)
+SUPPORTED_LEAD_TIME_WINDOWS: tuple[int, ...] = (14, 30)
 
 
 def _ensure_utc(dt: datetime) -> datetime:
@@ -21,6 +29,12 @@ def _ensure_utc(dt: datetime) -> datetime:
     if dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
     return dt.astimezone(timezone.utc)
+
+
+def _round_two_decimals(value: float | Decimal) -> float:
+    """Round a numeric value to 2 decimal places using deterministic half-up rounding."""
+    quantized = Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return float(quantized)
 
 
 def _round_rate(count: int, window_days: int) -> float:
@@ -116,4 +130,359 @@ async def calculate_rolling_deployment_frequency(
         deployments,
         window_days=window_days,
         window_end=end_utc,
+    )
+
+
+# ---------------------------------------------------------------------------
+# US-26 / Task 26.3: Per-PR Lead Time & Project Median Lead Time Calculator
+# ---------------------------------------------------------------------------
+
+
+def compute_pr_lead_time_seconds(
+    first_commit_at: datetime,
+    deployed_at: datetime,
+) -> float:
+    """
+    Calculate per-PR Lead Time in seconds: T_prod_deployed - T_first_commit (Task 26.3).
+
+    Raises ValueError if deployed_at is earlier than first_commit_at.
+    """
+    first_utc = _ensure_utc(first_commit_at)
+    deployed_utc = _ensure_utc(deployed_at)
+    delta_seconds = (deployed_utc - first_utc).total_seconds()
+    if delta_seconds < 0:
+        raise ValueError(
+            f"deployed_at ({deployed_utc.isoformat()}) cannot be earlier than "
+            f"first_commit_at ({first_utc.isoformat()})."
+        )
+    return _round_two_decimals(delta_seconds)
+
+
+def compute_pr_lead_time_hours(
+    first_commit_at: datetime,
+    deployed_at: datetime,
+) -> float:
+    """
+    Calculate per-PR Lead Time in hours: (T_prod_deployed - T_first_commit) / 3600 (Task 26.3).
+
+    Raises ValueError if deployed_at is earlier than first_commit_at.
+    """
+    first_utc = _ensure_utc(first_commit_at)
+    deployed_utc = _ensure_utc(deployed_at)
+    delta_seconds = (deployed_utc - first_utc).total_seconds()
+    if delta_seconds < 0:
+        raise ValueError(
+            f"deployed_at ({deployed_utc.isoformat()}) cannot be earlier than "
+            f"first_commit_at ({first_utc.isoformat()})."
+        )
+    hours = Decimal(str(delta_seconds)) / Decimal("3600")
+    return float(hours.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+
+def compute_continuous_median(values: Sequence[float | Decimal]) -> Optional[float]:
+    """
+    Compute exact continuous median equivalent to PostgreSQL percentile_cont(0.5) WITHIN GROUP.
+
+    - Returns None when values is empty (0 shipped PRs).
+    - For odd N, returns the middle sorted element.
+    - For even N, linearly interpolates 0.5 * (sorted[N//2 - 1] + sorted[N//2]).
+    """
+    if not values:
+        return None
+
+    sorted_vals = sorted(Decimal(str(v)) for v in values)
+    n = len(sorted_vals)
+    mid = n // 2
+    if n % 2 == 1:
+        median_val = sorted_vals[mid]
+    else:
+        median_val = (sorted_vals[mid - 1] + sorted_vals[mid]) / Decimal("2")
+
+    return float(median_val.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+
+
+def _unpack_shipped_pr_entry(entry: Any) -> tuple[Any, Any]:
+    """
+    Normalize a shipped PR entry into a (pull_request, deployment) pair.
+
+    Supports:
+    - (PullRequest, Deployment) 2-tuples
+    - (DeploymentPullRequest, PullRequest, Deployment) 3-tuples
+    - Objects with .pull_request and .deployment attributes
+    - Flat objects carrying both PullRequest and Deployment fields directly
+    """
+    if isinstance(entry, tuple):
+        if len(entry) == 2:
+            return entry[0], entry[1]
+        if len(entry) == 3:
+            return entry[1], entry[2]
+    if hasattr(entry, "pull_request") and hasattr(entry, "deployment"):
+        return entry.pull_request, entry.deployment
+    return entry, entry
+
+
+def compute_lead_time_metrics(
+    shipped_prs: Sequence[Any],
+    *,
+    window_days: Literal[14, 30] = 14,
+    window_end: Optional[datetime] = None,
+    author_pseudonym_id: Optional[str] = None,
+) -> LeadTimeResult:
+    """
+    Compute per-PR Lead Time (attributed to contributor pseudonyms) and the project's
+    rolling 14d/30d continuous median Lead Time and daily trend series (Task 26.3).
+    """
+    if window_days not in SUPPORTED_LEAD_TIME_WINDOWS:
+        raise ValueError(
+            f"Unsupported window_days={window_days}. Expected one of {SUPPORTED_LEAD_TIME_WINDOWS}."
+        )
+
+    end_utc = _ensure_utc(window_end or datetime.now(timezone.utc))
+    start_utc = end_utc - timedelta(days=window_days)
+
+    # Deduplicate by pull_request_id, keeping the earliest shipping production deployment
+    earliest_by_pr_id: dict[uuid.UUID, tuple[PullRequestLeadTimeItem, Decimal]] = {}
+
+    for entry in shipped_prs:
+        pr_obj, dep_obj = _unpack_shipped_pr_entry(entry)
+
+        dep_env = getattr(dep_obj, "environment", "production")
+        dep_status = getattr(dep_obj, "status", DeploymentOutcome.SUCCESS.value)
+        if dep_env != "production" or dep_status != DeploymentOutcome.SUCCESS.value:
+            continue
+
+        pr_state = getattr(pr_obj, "state", "merged")
+        if pr_state is not None and str(pr_state).strip().lower() != "merged":
+            continue
+
+        first_commit_at = getattr(pr_obj, "first_commit_at", None)
+        deployed_at = getattr(dep_obj, "deployed_at", None)
+        if first_commit_at is None or deployed_at is None:
+            continue
+
+        first_utc = _ensure_utc(first_commit_at)
+        deployed_utc = _ensure_utc(deployed_at)
+
+        if deployed_utc < start_utc or deployed_utc > end_utc:
+            continue
+        if deployed_utc < first_utc:
+            continue
+
+        pr_author_pseudonym = getattr(pr_obj, "author_pseudonym_id", None) or ""
+        if author_pseudonym_id is not None and pr_author_pseudonym != author_pseudonym_id:
+            continue
+
+        pr_id = getattr(pr_obj, "pull_request_id", None) or getattr(pr_obj, "id", None)
+        dep_id = getattr(dep_obj, "deployment_id", None) or getattr(dep_obj, "id", None)
+        if pr_id is None or dep_id is None:
+            continue
+
+        raw_seconds = Decimal(str((deployed_utc - first_utc).total_seconds()))
+        lead_seconds = float(raw_seconds.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
+        lead_hours = float(
+            (raw_seconds / Decimal("3600")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        )
+
+        item = PullRequestLeadTimeItem(
+            pull_request_id=pr_id,
+            deployment_id=dep_id,
+            repository_id=getattr(pr_obj, "repository_id", None)
+            or getattr(dep_obj, "repository_id", None),
+            external_pr_number=int(getattr(pr_obj, "external_pr_number", 0)),
+            author_pseudonym_id=pr_author_pseudonym,
+            actor_pseudonym_id=getattr(dep_obj, "actor_pseudonym_id", None),
+            merge_commit_sha=getattr(pr_obj, "merge_commit_sha", None),
+            head_sha=getattr(pr_obj, "head_sha", None),
+            first_commit_at=first_utc,
+            deployed_at=deployed_utc,
+            lead_time_seconds=lead_seconds,
+            lead_time_hours=lead_hours,
+        )
+
+        existing = earliest_by_pr_id.get(pr_id)
+        if existing is None or deployed_utc < existing[0].deployed_at:
+            earliest_by_pr_id[pr_id] = (item, raw_seconds)
+
+    ordered_pairs = sorted(
+        earliest_by_pr_id.values(),
+        key=lambda pair: (
+            pair[0].deployed_at,
+            pair[0].external_pr_number,
+            str(pair[0].pull_request_id),
+        ),
+    )
+
+    pr_items = [pair[0] for pair in ordered_pairs]
+    all_raw_seconds = [pair[1] for pair in ordered_pairs]
+    all_raw_hours = [sec / Decimal("3600") for sec in all_raw_seconds]
+
+    daily_raw_seconds: dict[date, list[Decimal]] = defaultdict(list)
+    for item, raw_sec in ordered_pairs:
+        daily_raw_seconds[item.deployed_at.date()].append(raw_sec)
+
+    end_date = end_utc.date()
+    start_date = end_date - timedelta(days=window_days - 1)
+    daily_series: list[DailyLeadTimeMetric] = []
+
+    for offset in range(window_days):
+        bucket_date = start_date + timedelta(days=offset)
+        day_secs = daily_raw_seconds.get(bucket_date, [])
+        day_hours = [sec / Decimal("3600") for sec in day_secs]
+        daily_series.append(
+            DailyLeadTimeMetric(
+                date=bucket_date,
+                deployed_pr_count=len(day_secs),
+                median_lead_time_seconds=compute_continuous_median(day_secs),
+                median_lead_time_hours=compute_continuous_median(day_hours),
+            )
+        )
+
+    return LeadTimeResult(
+        window_days=window_days,
+        deployed_pr_count=len(pr_items),
+        median_lead_time_seconds=compute_continuous_median(all_raw_seconds),
+        median_lead_time_hours=compute_continuous_median(all_raw_hours),
+        pull_requests=pr_items,
+        daily_series=daily_series,
+        window_start=start_utc,
+        window_end=end_utc,
+    )
+
+
+def build_shipped_pull_requests_lead_time_query(
+    *,
+    tenant_id: uuid.UUID,
+    project_id: uuid.UUID,
+    start_at: Optional[datetime] = None,
+    end_at: Optional[datetime] = None,
+    author_pseudonym_id: Optional[str] = None,
+) -> Select[tuple[PullRequest, Deployment]]:
+    """
+    Canonical DORA Lead Time query joining deployment_pull_requests -> pull_requests -> deployments
+    for authoritative SUCCESS production deployments in an active project (Task 26.3).
+    """
+    stmt = (
+        select(PullRequest, Deployment)
+        .join(
+            DeploymentPullRequest,
+            DeploymentPullRequest.pull_request_id == PullRequest.id,
+        )
+        .join(
+            Deployment,
+            Deployment.id == DeploymentPullRequest.deployment_id,
+        )
+        .join(Project, Project.id == Deployment.project_id)
+        .where(
+            DeploymentPullRequest.tenant_id == tenant_id,
+            PullRequest.tenant_id == tenant_id,
+            PullRequest.project_id == project_id,
+            Deployment.tenant_id == tenant_id,
+            Deployment.project_id == project_id,
+            Deployment.environment == "production",
+            Deployment.status == DeploymentOutcome.SUCCESS.value,
+            Deployment.authoritative_signal_source == Project.authoritative_cd_signal,
+            Project.deleted_at.is_(None),
+            PullRequest.first_commit_at.is_not(None),
+        )
+        .order_by(Deployment.deployed_at.asc(), PullRequest.external_pr_number.asc())
+    )
+    if start_at is not None:
+        stmt = stmt.where(Deployment.deployed_at >= start_at)
+    if end_at is not None:
+        stmt = stmt.where(Deployment.deployed_at <= end_at)
+    if author_pseudonym_id is not None:
+        stmt = stmt.where(PullRequest.author_pseudonym_id == author_pseudonym_id)
+    return stmt
+
+
+def build_project_median_lead_time_sql_query(
+    *,
+    tenant_id: uuid.UUID,
+    project_id: uuid.UUID,
+    start_at: Optional[datetime] = None,
+    end_at: Optional[datetime] = None,
+    author_pseudonym_id: Optional[str] = None,
+) -> Select[tuple[Optional[float], int]]:
+    """
+    Build SQL query computing PostgreSQL percentile_cont(0.5) median Lead Time in seconds
+    and shipped PR count across authoritative SUCCESS production deployments.
+    """
+    lead_time_epoch = func.extract("epoch", Deployment.deployed_at - PullRequest.first_commit_at)
+    stmt = (
+        select(
+            func.percentile_cont(0.5)
+            .within_group(lead_time_epoch)
+            .label("median_lead_time_seconds"),
+            func.count(PullRequest.id).label("deployed_pr_count"),
+        )
+        .select_from(DeploymentPullRequest)
+        .join(PullRequest, PullRequest.id == DeploymentPullRequest.pull_request_id)
+        .join(Deployment, Deployment.id == DeploymentPullRequest.deployment_id)
+        .join(Project, Project.id == Deployment.project_id)
+        .where(
+            DeploymentPullRequest.tenant_id == tenant_id,
+            PullRequest.tenant_id == tenant_id,
+            PullRequest.project_id == project_id,
+            Deployment.tenant_id == tenant_id,
+            Deployment.project_id == project_id,
+            Deployment.environment == "production",
+            Deployment.status == DeploymentOutcome.SUCCESS.value,
+            Deployment.authoritative_signal_source == Project.authoritative_cd_signal,
+            Project.deleted_at.is_(None),
+            PullRequest.first_commit_at.is_not(None),
+            Deployment.deployed_at >= PullRequest.first_commit_at,
+        )
+    )
+    if start_at is not None:
+        stmt = stmt.where(Deployment.deployed_at >= start_at)
+    if end_at is not None:
+        stmt = stmt.where(Deployment.deployed_at <= end_at)
+    if author_pseudonym_id is not None:
+        stmt = stmt.where(PullRequest.author_pseudonym_id == author_pseudonym_id)
+    return stmt
+
+
+async def calculate_rolling_lead_time(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    project_id: uuid.UUID,
+    window_days: Literal[14, 30] = 14,
+    window_end: Optional[datetime] = None,
+    author_pseudonym_id: Optional[str] = None,
+) -> LeadTimeResult:
+    """
+    Query shipped PRs via deployment_pull_requests for authoritative SUCCESS production
+    deployments and compute per-PR Lead Time and rolling 14d/30d project median (Task 26.3).
+    """
+    if window_days not in SUPPORTED_LEAD_TIME_WINDOWS:
+        raise ValueError(
+            f"Unsupported window_days={window_days}. Expected one of {SUPPORTED_LEAD_TIME_WINDOWS}."
+        )
+
+    end_utc = _ensure_utc(window_end or datetime.now(timezone.utc))
+    start_utc = end_utc - timedelta(days=window_days)
+
+    stmt = build_shipped_pull_requests_lead_time_query(
+        tenant_id=tenant_id,
+        project_id=project_id,
+        start_at=start_utc,
+        end_at=end_utc,
+        author_pseudonym_id=author_pseudonym_id,
+    )
+
+    result = await db.execute(stmt)
+    if hasattr(result, "all"):
+        shipped_rows = [
+            tuple(row) if not isinstance(row, tuple) and hasattr(row, "__iter__") else row
+            for row in result.all()
+        ]
+    else:
+        shipped_rows = list(result.scalars().all())
+
+    return compute_lead_time_metrics(
+        shipped_rows,
+        window_days=window_days,
+        window_end=end_utc,
+        author_pseudonym_id=author_pseudonym_id,
     )
