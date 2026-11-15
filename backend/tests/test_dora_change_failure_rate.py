@@ -20,7 +20,9 @@ import hashlib
 from typing import Optional
 import uuid
 
+from httpx import ASGITransport, AsyncClient
 import pytest
+from sqlalchemy import text
 from sqlalchemy.dialects import postgresql
 
 from app.db.models.models import (
@@ -28,7 +30,6 @@ from app.db.models.models import (
     DeploymentIncident,
     Issue,
     Project,
-    Tenant,
 )
 from app.db.session import async_engine, get_tenant_db_context
 from app.deployments.schemas import DeploymentOutcome, DeploymentSignalSource
@@ -40,6 +41,60 @@ from app.dora.service import (
     compute_change_failure_rate,
     is_active_confirmed_incident_for_deployment,
 )
+from app.main import app
+
+
+def is_live_db_available() -> bool:
+    """Check if a real PostgreSQL instance is reachable with configured credentials."""
+    try:
+
+        async def _ping() -> None:
+            await async_engine.dispose()
+            try:
+                async with async_engine.connect() as conn:
+                    await conn.execute(text("SELECT 1"))
+            finally:
+                await async_engine.dispose()
+
+        asyncio.run(_ping())
+        return True
+    except Exception:
+        return False
+
+
+LIVE_DB_AVAILABLE = is_live_db_available()
+skip_without_live_db = pytest.mark.skipif(
+    not LIVE_DB_AVAILABLE,
+    reason="PostgreSQL test instance is not reachable locally; runs in CI.",
+)
+
+
+@pytest.fixture(autouse=True)
+async def cleanup_engine():
+    """Teardown database engine connections and reset rate limiters per test."""
+    from app.tenants.rate_limiter import registration_rate_limiter
+
+    registration_rate_limiter.reset()
+    yield
+    await async_engine.dispose()
+    registration_rate_limiter.reset()
+
+
+async def _register_test_tenant(slug_prefix: str) -> tuple[uuid.UUID, str]:
+    """Register an isolated test tenant via /tenants/register for live DB tests."""
+    unique = uuid.uuid4().hex[:8]
+    payload = {
+        "name": f"DORA CFR Tenant {unique}",
+        "slug": f"{slug_prefix}-{unique}",
+        "admin_email": f"cfr-{unique}@doratemp.org",
+        "admin_name": f"Admin {unique}",
+    }
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post("/tenants/register", json=payload)
+        assert resp.status_code == 201, f"Failed to register test tenant: {resp.text}"
+        data = resp.json()
+        return uuid.UUID(data["tenant_id"]), payload["slug"]
 
 
 def _sha(label: str) -> str:
@@ -403,7 +458,8 @@ def test_task_28_2_daily_trend_series_and_window_validation():
         compute_change_failure_rate([], window_days=7)  # type: ignore[arg-type]
 
 
-def test_task_28_2_sql_queries_and_calculate_rolling_change_failure_rate_async():
+@pytest.mark.asyncio
+async def test_task_28_2_sql_queries_and_calculate_rolling_change_failure_rate_async():
     """
     Task 28.2:
     - Verifies SQL query builders compile LEFT OUTER JOIN deployment_incidents and COUNT(DISTINCT deployments.id).
@@ -451,14 +507,12 @@ def test_task_28_2_sql_queries_and_calculate_rolling_change_failure_rate_async()
             return _MockResult()
 
     session = _MockSession()
-    res = asyncio.run(
-        calculate_rolling_change_failure_rate(
-            session,  # type: ignore[arg-type]
-            tenant_id=tenant_id,
-            project_id=project_id,
-            window_days=14,
-            window_end=window_end,
-        )
+    res = await calculate_rolling_change_failure_rate(
+        session,  # type: ignore[arg-type]
+        tenant_id=tenant_id,
+        project_id=project_id,
+        window_days=14,
+        window_end=window_end,
     )
     assert res.total_deployment_count == 10
     assert res.failed_deployment_count == 3
@@ -471,32 +525,6 @@ def test_task_28_2_sql_queries_and_calculate_rolling_change_failure_rate_async()
 # ===========================================================================
 
 
-def _is_postgres_available() -> bool:
-    async def _probe() -> bool:
-        try:
-            async with async_engine.connect() as conn:
-                await conn.exec_driver_sql("SELECT 1")
-            await async_engine.dispose()
-            return True
-        except Exception:
-            try:
-                await async_engine.dispose()
-            except Exception:
-                pass
-            return False
-
-    try:
-        return asyncio.run(_probe())
-    except Exception:
-        return False
-
-
-skip_without_live_db = pytest.mark.skipif(
-    not _is_postgres_available(),
-    reason="PostgreSQL test instance is not reachable locally; runs in CI.",
-)
-
-
 @skip_without_live_db
 @pytest.mark.asyncio
 async def test_task_28_2_live_postgres_10_deployment_benchmark_e2e():
@@ -506,9 +534,8 @@ async def test_task_28_2_live_postgres_10_deployment_benchmark_e2e():
     total = 10, failed = 3, CFR = 0.30 (30.0%) in both calculate_rolling_change_failure_rate
     and native SQL build_change_failure_rate_sql_query.
     """
-    tenant_id = uuid.uuid4()
+    tenant_id, _ = await _register_test_tenant("us28-e2e")
     project_id = uuid.uuid4()
-    slug = f"us28-e2e-{tenant_id.hex[:8]}"
     window_end = datetime(2026, 11, 14, 18, 0, 0, tzinfo=timezone.utc)
 
     deployments, incidents, _ = _build_10_deployment_benchmark_fixture(
@@ -518,9 +545,6 @@ async def test_task_28_2_live_postgres_10_deployment_benchmark_e2e():
     )
 
     async with get_tenant_db_context(tenant_id) as db:
-        db.add(Tenant(id=tenant_id, slug=slug, name=f"US28 Tenant {slug}"))
-        await db.flush()
-
         db.add(
             Project(
                 id=project_id,
@@ -578,6 +602,3 @@ async def test_task_28_2_live_postgres_10_deployment_benchmark_e2e():
         assert int(sql_row[1]) == 3
         assert float(sql_row[2]) == 0.30
         assert float(sql_row[3]) == 30.0
-
-        await db.rollback()
-    await async_engine.dispose()
