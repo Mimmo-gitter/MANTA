@@ -13,8 +13,9 @@ import hmac
 from typing import Optional
 import uuid
 
+from httpx import ASGITransport, AsyncClient
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.dialects import postgresql
 
 from app.contributors.service import resolve_or_create_contributor_pseudonym
@@ -25,7 +26,6 @@ from app.db.models.models import (
     Project,
     PullRequest,
     Repository,
-    Tenant,
 )
 from app.db.session import async_engine, get_tenant_db_context
 from app.deployments.schemas import DeploymentOutcome, DeploymentSignalSource
@@ -45,6 +45,60 @@ from app.dora.service import (
     compute_pr_lead_time_hours,
     compute_pr_lead_time_seconds,
 )
+from app.main import app
+
+
+def is_live_db_available() -> bool:
+    """Check if a real PostgreSQL instance is reachable with configured credentials."""
+    try:
+
+        async def _ping() -> None:
+            await async_engine.dispose()
+            try:
+                async with async_engine.connect() as conn:
+                    await conn.execute(text("SELECT 1"))
+            finally:
+                await async_engine.dispose()
+
+        asyncio.run(_ping())
+        return True
+    except Exception:
+        return False
+
+
+LIVE_DB_AVAILABLE = is_live_db_available()
+skip_without_live_db = pytest.mark.skipif(
+    not LIVE_DB_AVAILABLE,
+    reason="PostgreSQL test instance is not reachable locally; runs in CI.",
+)
+
+
+@pytest.fixture(autouse=True)
+async def cleanup_engine():
+    """Teardown database engine connections and reset rate limiters per test."""
+    from app.tenants.rate_limiter import registration_rate_limiter
+
+    registration_rate_limiter.reset()
+    yield
+    await async_engine.dispose()
+    registration_rate_limiter.reset()
+
+
+async def _register_test_tenant(slug_prefix: str) -> tuple[uuid.UUID, str]:
+    """Register an isolated test tenant via /tenants/register for live DB tests."""
+    unique = uuid.uuid4().hex[:8]
+    payload = {
+        "name": f"DORA Lead Time Tenant {unique}",
+        "slug": f"{slug_prefix}-{unique}",
+        "admin_email": f"lt-{unique}@doratemp.org",
+        "admin_name": f"Admin {unique}",
+    }
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post("/tenants/register", json=payload)
+        assert resp.status_code == 201, f"Failed to register test tenant: {resp.text}"
+        data = resp.json()
+        return uuid.UUID(data["tenant_id"]), payload["slug"]
 
 
 def _sha(label: str) -> str:
@@ -500,7 +554,8 @@ def test_task_26_2_redeploy_and_already_claimed_pr_prevention():
     )
 
 
-def test_task_26_2_resolve_deployment_pull_requests_async_session():
+@pytest.mark.asyncio
+async def test_task_26_2_resolve_deployment_pull_requests_async_session():
     """
     Task 26.2: Verify resolve_deployment_pull_requests queries prior SUCCESS boundary,
     walks commit DAG, filters unclaimed merged PRs, and executes idempotent insert into
@@ -602,7 +657,7 @@ def test_task_26_2_resolve_deployment_pull_requests_async_session():
             raise AssertionError(f"Unexpected query step {self._step}")
 
     session = _MockAsyncSession()
-    inserted = asyncio.run(resolve_deployment_pull_requests(session, deployment=dep))  # type: ignore[arg-type]
+    inserted = await resolve_deployment_pull_requests(session, deployment=dep)  # type: ignore[arg-type]
     assert len(inserted) == 2
     assert {link.pull_request_id for link in inserted} == {pr_1.id, pr_2.id}
 
@@ -908,7 +963,8 @@ def test_task_26_3_invalid_inputs_and_sql_query_builders():
     assert "within group" in compiled_median.lower()
 
 
-def test_task_26_3_calculate_rolling_lead_time_async_service():
+@pytest.mark.asyncio
+async def test_task_26_3_calculate_rolling_lead_time_async_service():
     """
     Task 26.3: Verify calculate_rolling_lead_time executes query and computes
     LeadTimeResult with mock AsyncSession.
@@ -939,14 +995,12 @@ def test_task_26_3_calculate_rolling_lead_time_async_service():
             return _MockResult()
 
     session = _MockSession()
-    res = asyncio.run(
-        calculate_rolling_lead_time(
-            session,  # type: ignore[arg-type]
-            tenant_id=tenant_id,
-            project_id=project_id,
-            window_days=14,
-            window_end=deployed_at,
-        )
+    res = await calculate_rolling_lead_time(
+        session,  # type: ignore[arg-type]
+        tenant_id=tenant_id,
+        project_id=project_id,
+        window_days=14,
+        window_end=deployed_at,
     )
     assert res.deployed_pr_count == 1
     assert res.median_lead_time_hours == 26.5
@@ -956,32 +1010,6 @@ def test_task_26_3_calculate_rolling_lead_time_async_service():
 # ===========================================================================
 # PART 3: Live PostgreSQL 16 End-to-End Verification (Task 26.2 + Task 26.3)
 # ===========================================================================
-
-
-def _is_postgres_available() -> bool:
-    async def _probe() -> bool:
-        try:
-            async with async_engine.connect() as conn:
-                await conn.exec_driver_sql("SELECT 1")
-            await async_engine.dispose()
-            return True
-        except Exception:
-            try:
-                await async_engine.dispose()
-            except Exception:
-                pass
-            return False
-
-    try:
-        return asyncio.run(_probe())
-    except Exception:
-        return False
-
-
-skip_without_live_db = pytest.mark.skipif(
-    not _is_postgres_available(),
-    reason="PostgreSQL test instance is not reachable locally; runs in CI.",
-)
 
 
 @skip_without_live_db
@@ -996,16 +1024,12 @@ async def test_tasks_26_2_and_26_3_live_postgres_e2e():
     4. Verifies calculate_rolling_lead_time and build_project_median_lead_time_sql_query
        both return 23.5h (84,600.0s).
     """
-    tenant_id = uuid.uuid4()
+    tenant_id, _ = await _register_test_tenant("us26-e2e")
     project_id = uuid.uuid4()
     repo_id = uuid.uuid4()
-    slug = f"us26-e2e-{tenant_id.hex[:8]}"
     deployed_at = datetime(2026, 11, 14, 18, 0, 0, tzinfo=timezone.utc)
 
     async with get_tenant_db_context(tenant_id) as db:
-        db.add(Tenant(id=tenant_id, slug=slug, name=f"US26 Tenant {slug}"))
-        await db.flush()
-
         db.add(
             Project(
                 id=project_id,
@@ -1149,5 +1173,3 @@ async def test_tasks_26_2_and_26_3_live_postgres_e2e():
         assert sql_row is not None
         assert float(sql_row[0]) == 84600.0
         assert int(sql_row[1]) == 2
-        await db.rollback()
-    await async_engine.dispose()
