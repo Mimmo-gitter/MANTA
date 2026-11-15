@@ -47,7 +47,13 @@ function buildSeries(days: number): Record<DoraMetricId, DoraTrendPoint[]> {
 
   dayList(days).forEach((date, i) => {
     if (gaps.has(i)) {
-      for (const id of DORA_METRIC_IDS) out[id].push({ date, value: null, note: null });
+      for (const id of DORA_METRIC_IDS) {
+        out[id].push({
+          date,
+          value: null,
+          note: id === "mttr" ? "No telemetry" : null,
+        });
+      }
       return;
     }
     const deploys = Math.floor(seeded(i, 1) * 5); // 0 is a real zero here
