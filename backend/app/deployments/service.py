@@ -435,11 +435,7 @@ def match_unclaimed_pull_requests_in_range(
             continue
         if (pr.state or "").strip().lower() != "merged":
             continue
-        if (
-            norm_default_branch
-            and pr.base_branch
-            and pr.base_branch.strip() != norm_default_branch
-        ):
+        if norm_default_branch and pr.base_branch and pr.base_branch.strip() != norm_default_branch:
             continue
         if (
             not has_previous_deployment_boundary
@@ -542,9 +538,7 @@ async def resolve_deployment_pull_requests(
     if not commit_range_shas:
         return []
 
-    commits_in_range = [
-        c for sha_key, c in commits_by_sha.items() if sha_key in commit_range_shas
-    ]
+    commits_in_range = [c for sha_key, c in commits_by_sha.items() if sha_key in commit_range_shas]
 
     # 4. Load already-claimed pull_request_ids across deployment_pull_requests in tenant
     claimed_pr_ids = set(

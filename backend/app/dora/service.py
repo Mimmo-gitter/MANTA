@@ -410,7 +410,9 @@ def build_project_median_lead_time_sql_query(
     lead_time_epoch = func.extract("epoch", Deployment.deployed_at - PullRequest.first_commit_at)
     stmt = (
         select(
-            func.percentile_cont(0.5).within_group(lead_time_epoch).label("median_lead_time_seconds"),
+            func.percentile_cont(0.5)
+            .within_group(lead_time_epoch)
+            .label("median_lead_time_seconds"),
             func.count(PullRequest.id).label("deployed_pr_count"),
         )
         .select_from(DeploymentPullRequest)
@@ -471,7 +473,10 @@ async def calculate_rolling_lead_time(
 
     result = await db.execute(stmt)
     if hasattr(result, "all"):
-        shipped_rows = [ tuple(row) if not isinstance(row, tuple) and hasattr(row, "__iter__") else row for row in result.all() ]
+        shipped_rows = [
+            tuple(row) if not isinstance(row, tuple) and hasattr(row, "__iter__") else row
+            for row in result.all()
+        ]
     else:
         shipped_rows = list(result.scalars().all())
 

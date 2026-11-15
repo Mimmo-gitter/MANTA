@@ -142,7 +142,8 @@ def _make_deployment(
         environment=environment,
         commit_sha=commit_sha,
         status=status,
-        is_change_failure=status in (DeploymentOutcome.FAILED.value, DeploymentOutcome.ROLLED_BACK.value),
+        is_change_failure=status
+        in (DeploymentOutcome.FAILED.value, DeploymentOutcome.ROLLED_BACK.value),
         authoritative_signal_source=signal_source,
         deployed_at=deployed_at,
     )
@@ -266,9 +267,7 @@ def test_task_26_2_single_pr_rebase_and_merge_strategy():
 
     commits = {
         sha_d0: _make_commit(sha_d0, parent_shas=[]),
-        sha_rebased_1: _make_commit(
-            sha_rebased_1, parent_shas=[sha_d0], pull_request_id=pr_103_id
-        ),
+        sha_rebased_1: _make_commit(sha_rebased_1, parent_shas=[sha_d0], pull_request_id=pr_103_id),
         sha_rebased_2: _make_commit(
             sha_rebased_2, parent_shas=[sha_rebased_1], pull_request_id=pr_103_id
         ),
@@ -353,12 +352,8 @@ def test_task_26_2_batched_multi_pr_deployment_across_all_three_strategies_and_t
             sha_trunk_direct, parent_shas=[sha_m2_merge], pull_request_id=None
         ),
         sha_m3_squash: _make_commit(sha_m3_squash, parent_shas=[sha_trunk_direct]),
-        sha_r4_1: _make_commit(
-            sha_r4_1, parent_shas=[sha_m3_squash], pull_request_id=pr4_id
-        ),
-        sha_r4_2_tip: _make_commit(
-            sha_r4_2_tip, parent_shas=[sha_r4_1], pull_request_id=pr4_id
-        ),
+        sha_r4_1: _make_commit(sha_r4_1, parent_shas=[sha_m3_squash], pull_request_id=pr4_id),
+        sha_r4_2_tip: _make_commit(sha_r4_2_tip, parent_shas=[sha_r4_1], pull_request_id=pr4_id),
     }
 
     range_shas = compute_commit_range_shas(
@@ -450,16 +445,12 @@ def test_task_26_2_redeploy_and_already_claimed_pr_prevention():
 
     # Re-deploy of sha_2 when sha_2 was already deployed
     assert (
-        compute_commit_range_shas(
-            sha_2, previous_deployment_shas=[sha_2], commits_by_sha=commits
-        )
+        compute_commit_range_shas(sha_2, previous_deployment_shas=[sha_2], commits_by_sha=commits)
         == set()
     )
     # Rollback to ancestor sha_1 when sha_2 was already deployed
     assert (
-        compute_commit_range_shas(
-            sha_1, previous_deployment_shas=[sha_2], commits_by_sha=commits
-        )
+        compute_commit_range_shas(sha_1, previous_deployment_shas=[sha_2], commits_by_sha=commits)
         == set()
     )
 
@@ -615,9 +606,7 @@ def test_task_26_2_resolve_deployment_pull_requests_async_session():
     assert len(inserted) == 2
     assert {link.pull_request_id for link in inserted} == {pr_1.id, pr_2.id}
 
-    compiled_insert = str(
-        session.executed_statements[-1].compile(dialect=postgresql.dialect())
-    )
+    compiled_insert = str(session.executed_statements[-1].compile(dialect=postgresql.dialect()))
     assert "INSERT INTO deployment_pull_requests" in compiled_insert
     assert "ON CONFLICT (deployment_id, pull_request_id) DO NOTHING" in compiled_insert
 
@@ -861,7 +850,13 @@ def test_task_26_3_daily_trend_series_and_contributor_pseudonym_isolation():
     for item_dict in serialized["pull_requests"]:
         assert "author_pseudonym_id" in item_dict
         assert len(item_dict["author_pseudonym_id"]) == 64
-        for forbidden_pii_key in ("raw_email", "raw_name", "raw_handle", "author_email", "author_id"):
+        for forbidden_pii_key in (
+            "raw_email",
+            "raw_name",
+            "raw_handle",
+            "author_email",
+            "author_id",
+        ):
             assert forbidden_pii_key not in item_dict
 
 
@@ -895,7 +890,10 @@ def test_task_26_3_invalid_inputs_and_sql_query_builders():
     )
     compiled_shipped = str(shipped_stmt.compile(dialect=postgresql.dialect()))
     assert "JOIN deployment_pull_requests" in compiled_shipped
-    assert "deployments.authoritative_signal_source = projects.authoritative_cd_signal" in compiled_shipped
+    assert (
+        "deployments.authoritative_signal_source = projects.authoritative_cd_signal"
+        in compiled_shipped
+    )
     assert "pull_requests.author_pseudonym_id =" in compiled_shipped
 
     median_stmt = build_project_median_lead_time_sql_query(
