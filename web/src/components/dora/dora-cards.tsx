@@ -6,16 +6,19 @@
  * (Recharts), deployment signal card, state panels, and loading skeleton.
  * Props only; no data fetching in this file.
  */
-import { useEffect, useId, useRef, useState, type ReactNode } from "react";
+import React, { useId, useState, type ReactNode } from "react";
 import Link from "next/link";
 import {
   Activity,
+  BellOff,
+  Info,
   ArrowDown,
   ArrowUp,
   ChevronDown,
   Minus,
   Network,
   RefreshCw,
+  LoaderCircle,
   ShieldAlert,
   ShieldCheck,
 } from "lucide-react";
@@ -27,7 +30,6 @@ import {
   CartesianGrid,
   Line,
   LineChart,
-  LabelList,
   ReferenceArea,
   ReferenceLine,
   ResponsiveContainer,
@@ -65,7 +67,7 @@ import {
   type DoraTrendViewModel,
   type DoraUnit,
   type DoraVerification,
-} from "../../types/dora";
+} from "@/types/dora";
 
 // ==========================================================================
 // Page header and filters
@@ -171,115 +173,88 @@ export function DoraFilters({
   dataStatus,
 }: DoraFiltersProps) {
   const selected = projects.find((p) => p.id === selectedProjectId) ?? null;
-
-  const [isProjectOpen, setIsProjectOpen] = useState(false);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    function handleClickOutside(event: MouseEvent) {
-      if (
-        dropdownRef.current &&
-        !dropdownRef.current.contains(event.target as Node)
-      ) {
-        setIsProjectOpen(false);
-      }
-    }
-
-    document.addEventListener("mousedown", handleClickOutside);
-
-    return () => {
-      document.removeEventListener("mousedown", handleClickOutside);
-    };
-  }, []);
+  const [projectMenuOpen, setProjectMenuOpen] = useState(false);
 
   return (
     <div
       data-testid="dora-filters"
       className="flex flex-wrap items-center justify-between gap-x-8 gap-y-3 rounded-[12px] border border-[#1f2433] bg-[#131822] px-4 py-3"
     >
-      {/* Project selector */}
-      <div className="flex items-center gap-4">
-        <label className={LABEL}>Project</label>
-
-        <div ref={dropdownRef} className="relative">
+      <div className="flex items-center gap-3">
+        <label htmlFor="dora-project-select" className={LABEL}>
+          Project
+        </label>
+        <div className="relative">
           <button
+            type="button"
             id="dora-project-select"
             data-testid="dora-project-select"
-            type="button"
             aria-haspopup="listbox"
-            aria-expanded={isProjectOpen}
-            onClick={() => setIsProjectOpen((prev) => !prev)}
-            className={cn(
-              "flex h-[44px] min-w-[300px] items-center gap-3 rounded-[11px] border px-3 transition-all",
-              "border-[#252b3b] bg-[#1b202b]",
-              "hover:border-[#374151]",
-              "focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#00e599]",
-              isProjectOpen && "border-[#00e599]/50",
-            )}
+            aria-expanded={projectMenuOpen}
+            onClick={() => setProjectMenuOpen((open) => !open)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setProjectMenuOpen(false);
+            }}
+            className="flex h-[44px] min-w-[300px] items-center gap-3 rounded-[10px] border border-[#252b3b] bg-[#131822] px-3 text-left transition-colors hover:border-[#374151] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#22d3ee]"
           >
             <Network
-              className="size-[20px] shrink-0 text-[#22d3ee]"
+              className="size-[16px] shrink-0 text-[#22d3ee]"
               aria-hidden="true"
             />
 
-            <span className="min-w-0 flex-1 truncate text-left text-[14px] font-medium text-[#e2e8f0]">
+            <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-[#e2e8f0]">
               {selected?.name ?? "Select project"}
             </span>
 
-            {selected && (
-              <span className="shrink-0 rounded-[5px] bg-[#303642] px-2 py-1 font-mono text-[11px] text-[#22d3ee]">
-                {selected.repoCount} repos
-              </span>
-            )}
+            <span className="shrink-0 rounded-[5px] bg-[#1b2933] px-2 py-1 font-mono text-[10px] font-semibold text-[#22d3ee]">
+              {selected?.repoCount ?? 0} repos
+            </span>
 
             <ChevronDown
               className={cn(
-                "size-[16px] shrink-0 text-[#a4a8b8] transition-transform duration-200",
-                isProjectOpen && "rotate-180",
+                "size-[15px] shrink-0 text-[#7c839b] transition-transform",
+                projectMenuOpen && "rotate-180",
               )}
               aria-hidden="true"
             />
           </button>
 
-          {isProjectOpen && (
+          {projectMenuOpen && (
             <div
               role="listbox"
-              aria-label="Select project"
-              className="absolute left-0 top-[calc(100%+8px)] z-50 min-w-full overflow-hidden rounded-[11px] border border-[#303746] bg-[#1b202b] p-1 shadow-[0_12px_32px_rgba(0,0,0,0.45)]"
+              aria-labelledby="dora-project-select"
+              className="absolute left-0 top-[calc(100%+6px)] z-50 w-full overflow-hidden rounded-[10px] border border-[#252b3b] bg-[#161b26] p-1 shadow-[0_12px_32px_rgba(0,0,0,0.45)]"
             >
               {projects.map((project) => {
-                const active = project.id === selectedProjectId;
+                const isSelected = project.id === selectedProjectId;
 
                 return (
                   <button
                     key={project.id}
                     type="button"
                     role="option"
-                    aria-selected={active}
+                    aria-selected={isSelected}
                     onClick={() => {
                       onProjectChange(project.id);
-                      setIsProjectOpen(false);
+                      setProjectMenuOpen(false);
                     }}
                     className={cn(
                       "flex w-full items-center gap-3 rounded-[7px] px-3 py-2.5 text-left transition-colors",
-                      active ? "bg-[#303642]" : "hover:bg-[#252c39]",
+                      isSelected
+                        ? "bg-[rgba(34,211,238,0.09)]"
+                        : "hover:bg-[#1f2433]",
                     )}
                   >
-                    <Network
-                      className="size-[17px] shrink-0 text-[#22d3ee]"
-                      aria-hidden="true"
-                    />
-
-                    <span className="min-w-0 flex-1 truncate text-[13px] font-medium text-[#e2e8f0]">
+                    <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-[#e2e8f0]">
                       {project.name}
                     </span>
 
-                    <span className="shrink-0 rounded-[5px] bg-[#303642] px-2 py-1 font-mono text-[10px] text-[#22d3ee]">
+                    <span className="shrink-0 rounded-[5px] bg-[#1b2933] px-2 py-1 font-mono text-[10px] text-[#22d3ee]">
                       {project.repoCount} repos
                     </span>
 
-                    {active && (
-                      <span className="size-1.5 shrink-0 rounded-full bg-[#00e599]" />
+                    {isSelected && (
+                      <span className="size-[6px] shrink-0 rounded-full bg-[#22d3ee]" />
                     )}
                   </button>
                 );
@@ -289,12 +264,10 @@ export function DoraFilters({
         </div>
       </div>
 
-      {/* Timeframe */}
       <div className="flex items-center gap-3">
         <span id="dora-timeframe-label" className={LABEL}>
           Timeframe
         </span>
-
         <div
           role="group"
           aria-labelledby="dora-timeframe-label"
@@ -302,7 +275,6 @@ export function DoraFilters({
         >
           {DORA_TIMEFRAMES.map((days) => {
             const active = days === timeframe;
-
             return (
               <button
                 key={days}
@@ -324,10 +296,8 @@ export function DoraFilters({
         </div>
       </div>
 
-      {/* Data status */}
       <div className="flex items-center gap-3">
         <span className={LABEL}>Data status</span>
-
         <span
           data-testid="dora-data-status"
           role="status"
@@ -565,7 +535,15 @@ export function MetricCard({
     >
       <div className="flex items-start justify-between gap-3">
         <h3 className="max-w-[140px] text-[13px] font-medium leading-[18px] text-[#cbd5e1]">
-          {meta.title}
+          {metric.id === "change_failure_rate" ? (
+            <>
+              Change Failure
+              <br />
+              Rate
+            </>
+          ) : (
+            meta.title
+          )}
         </h3>
         {hasValue && metric.tier ? (
           <TierBadge tier={metric.tier} />
@@ -604,22 +582,45 @@ export function MetricCard({
         </>
       ) : (
         <div data-testid="dora-metric-no-data" className="flex flex-col gap-2">
-          <span className="font-mono text-[28px] font-medium leading-[40px] text-[#3b4257]">
+          <span className="font-mono text-[28px] font-medium leading-[40px] text-[#405748]">
             No data
           </span>
-          <p className="rounded-[8px] border border-[#1f2433] bg-[#131822] px-3 py-2 text-[11px] leading-[16px] text-[#7c839b]">
-            {metric.unavailableReason ?? EMPTY_MESSAGES[emptyVariant]}
-          </p>
+          <div className="flex items-start gap-3 rounded-[8px] border border-dashed border-[#29372f] bg-[#171d25] px-3 py-2 text-[11px] leading-[16px] text-[#aebdb3]">
+            <Info
+              className="mt-0.5 size-4 shrink-0 text-[#84968a]"
+              aria-hidden="true"
+            />
+            <p>
+              {emptyVariant === "not_configured"
+                ? "No telemetry data available yet."
+                : (metric.unavailableReason ??
+                  (metric.id === "lead_time"
+                    ? "No verified commit-to-deployment data is available yet."
+                    : metric.id === "deployment_frequency"
+                      ? "No verified production deployment events have been received."
+                      : metric.id === "change_failure_rate"
+                        ? "No deployment outcomes or confirmed incident records are available."
+                        : "Service restoration signals are not available for this project."))}
+            </p>
+          </div>
         </div>
       )}
 
       <p
         className={cn(
           "mt-auto text-[12px] leading-[17px]",
-          hasValue ? "text-[#a4a8b8]" : "text-[#4a5168]",
+          hasValue ? "text-[#a4a8b8]" : "text-[#657468]",
         )}
       >
-        {meta.description}
+        {hasValue
+          ? meta.description
+          : metric.id === "lead_time"
+            ? "Awaiting verified production deployments and commit timestamps."
+            : metric.id === "deployment_frequency"
+              ? "Awaiting successful production deployment events."
+              : metric.id === "change_failure_rate"
+                ? "Awaiting deployment outcomes and confirmed incident records."
+                : "Awaiting incident detection and verified service restoration signals."}
       </p>
     </article>
   );
@@ -690,32 +691,9 @@ export function TrendChartCard({
   const gradientId = `dora-grad-${useId().replace(/:/g, "")}`;
 
   const hasData = hasAnyValue(trend.points);
-  const isMttr = trend.id === "mttr";
-  const allRows = toChartRows(trend.points);
-
-  // MTTR nulls normally mean "no incident was recorded that day", not a
-  // telemetry outage. Keep only measured values and explicitly marked outages.
-  // This prevents every incident-free day from becoming a shaded "No telemetry" band.
-  const rows = isMttr
-    ? allRows.filter((row) => row.value !== null || row.note === "No telemetry")
-    : allRows;
-
-  const chartPoints = isMttr
-    ? trend.points.filter(
-        (point) => point.value !== null || point.note === "No telemetry",
-      )
-    : trend.points;
-
+  const rows = toChartRows(trend.points);
   const scale = meta.chartKind === "bar" ? "band" : "point";
-  const gapRuns = isMttr
-    ? findGapRuns(chartPoints).filter((run) =>
-        chartPoints
-          .slice(run.startIndex, run.endIndex + 1)
-          .some((point) => point.note === "No telemetry"),
-      )
-    : findGapRuns(chartPoints);
-
-  const gapAreas = gapRuns.map((run) => {
+  const gapAreas = findGapRuns(trend.points).map((run) => {
     const { x1, x2 } = gapBand(rows, run, scale);
     return (
       <ReferenceArea
@@ -727,9 +705,9 @@ export function TrendChartCard({
         stroke="rgba(124,131,155,0.25)"
         strokeDasharray="3 3"
         label={
-          isMttr || run.endIndex > run.startIndex
+          run.endIndex > run.startIndex
             ? {
-                value: isMttr ? "No telemetry" : "No data",
+                value: "No data",
                 position: "insideTop",
                 fill: "#7c839b",
                 fontSize: 10,
@@ -761,18 +739,10 @@ export function TrendChartCard({
   ) : null;
 
   const suffix = unitSuffix(trend.unit);
-  const mttrMax = Math.max(
-    60,
-    Math.ceil(
-      Math.max(0, ...trend.points.map((point) => point.value ?? 0)) / 30,
-    ) * 30,
-  );
-  const yDomain: [number, number | ((dataMax: number) => number)] = isMttr
-    ? [0, mttrMax]
-    : [0, (dataMax: number) => Math.max(dataMax, threshold?.value ?? 0)];
-  const yTicks = isMttr
-    ? Array.from({ length: mttrMax / 30 + 1 }, (_, index) => index * 30)
-    : undefined;
+  const yDomain: [number, (dataMax: number) => number] = [
+    0,
+    (dataMax: number) => Math.max(dataMax, threshold?.value ?? 0),
+  ];
 
   const axes = [
     <CartesianGrid key="grid" stroke={GRID_STROKE} vertical={false} />,
@@ -792,8 +762,7 @@ export function TrendChartCard({
       tick={AXIS_TICK}
       axisLine={false}
       tickLine={false}
-      tickCount={isMttr ? undefined : 4}
-      ticks={yTicks}
+      tickCount={4}
       domain={yDomain}
       tickFormatter={(v: number) => `${v}${suffix}`}
     />,
@@ -824,7 +793,9 @@ export function TrendChartCard({
           <p className="mt-0.5 font-mono text-[10px] leading-[14px] text-[#7c839b]">
             {hasData
               ? (trend.subtitle ?? "Daily trend")
-              : "No incident or telemetry data received"}
+              : trend.id === "lead_time"
+                ? "Daily Average Trend"
+                : "No incident data received"}
           </p>
         </div>
         {hasData && trend.targetLabel ? (
@@ -832,7 +803,7 @@ export function TrendChartCard({
             {trend.targetLabel}
           </span>
         ) : !hasData ? (
-          <span className="shrink-0 rounded-[4px] border border-[#252b3b] px-2 py-[3px] font-mono text-[10px] uppercase tracking-[0.05em] text-[#7c839b]">
+          <span className="shrink-0 rounded-[4px] border border-[#29372f] bg-[#1b241f] px-2 py-[3px] font-mono text-[10px] uppercase tracking-[0.05em] text-[#84968a]">
             {EMPTY_COPY[emptyVariant].badge}
           </span>
         ) : null}
@@ -889,43 +860,12 @@ export function TrendChartCard({
                   type="linear"
                   dataKey="value"
                   stroke={color}
-                  strokeWidth={isMttr ? 1.5 : 2}
-                  strokeDasharray={isMttr ? "3 5" : "4 3"}
+                  strokeWidth={2}
+                  strokeDasharray="4 3"
                   connectNulls={false}
-                  dot={
-                    isMttr
-                      ? {
-                          r: 4.5,
-                          fill: "#22d3ee",
-                          stroke: "#0f131d",
-                          strokeWidth: 2,
-                        }
-                      : { ...dot, r: 3 }
-                  }
-                  activeDot={
-                    isMttr
-                      ? {
-                          r: 5,
-                          fill: "#22d3ee",
-                          stroke: "#0f131d",
-                          strokeWidth: 2,
-                        }
-                      : undefined
-                  }
+                  dot={{ ...dot, r: 3 }}
                   isAnimationActive={false}
-                >
-                  {isMttr && (
-                    <LabelList
-                      dataKey="value"
-                      position="top"
-                      offset={10}
-                      fill="#22d3ee"
-                      fontSize={11}
-                      fontFamily="monospace"
-                      formatter={(value: number | string) => `${value}m`}
-                    />
-                  )}
-                </Line>
+                />
               </LineChart>
             )}
           </ResponsiveContainer>
@@ -934,12 +874,28 @@ export function TrendChartCard({
         <div
           data-testid="dora-trend-empty"
           className={cn(
-            "flex min-h-[220px] flex-col items-center justify-center gap-3 rounded-[10px] border border-[#1f2433] bg-[#131822] px-6 text-center",
+            "flex min-h-[220px] flex-col items-center justify-center gap-3 rounded-[10px] border border-dashed border-[#29372f] bg-[#10141e] px-6 text-center",
           )}
         >
-          <Activity className="size-5 text-[#3b4257]" aria-hidden="true" />
-          <p className="max-w-[360px] text-[12px] leading-[18px] text-[#a4a8b8]">
-            {trend.emptyReason ?? EMPTY_COPY[emptyVariant].message}
+          <div className="flex size-[36px] items-center justify-center rounded-full bg-[#1b202b]">
+            <LoaderCircle
+              className="size-4 text-[#657468]"
+              aria-hidden="true"
+            />
+          </div>
+          <p className="max-w-[360px] text-[12px] leading-[18px] text-[#c0c6d2]">
+            {emptyVariant === "not_configured"
+              ? "No telemetry data available yet."
+              : trend.id === "mttr"
+                ? "Insufficient incident or restoration data for the selected timeframe."
+                : (trend.emptyReason ?? EMPTY_COPY[emptyVariant].message)}
+          </p>
+          <p className="max-w-[420px] text-[11px] leading-[16px] text-[#87918b]">
+            {emptyVariant === "not_configured"
+              ? "DORA metrics will appear once a verified production deployment signal is configured and events are received."
+              : trend.id === "mttr"
+                ? "Daily MTTR calculations and resolution trend lines will automatically render once verified service restoration signals are detected from monitoring integrations."
+                : "DORA metrics will appear once verified production deployment and related engineering signals have been received."}
           </p>
         </div>
       )}
@@ -966,7 +922,7 @@ interface DeploymentSignalCardProps {
 }
 
 const SHELL =
-  "flex w-full items-center gap-3 rounded-[10px] border border-[#1f2433] bg-[#161b26] px-4 py-3 md:gap-4";
+  "flex flex-col gap-3 rounded-[12px] border border-[#1f2433] bg-[#161b26] px-4 py-3 md:flex-row md:items-center md:gap-4";
 
 export function DeploymentSignalCard({
   state,
@@ -981,35 +937,28 @@ export function DeploymentSignalCard({
         aria-busy="true"
         className={cn(SHELL, "animate-pulse")}
       >
-        <div className="size-9 shrink-0 rounded-[8px] bg-[#1f2433]" />
-        <div className="h-8 flex-1 rounded-[6px] bg-[#1f2433]" />
-        <div className="h-8 w-28 shrink-0 rounded-[6px] bg-[#1f2433]" />
+        <div className="h-[48px] w-full max-w-[480px] rounded-[8px] bg-[#1f2433]" />
+        <div className="h-[32px] w-[128px] rounded-[6px] bg-[#1f2433]" />
       </section>
     );
   }
 
   if (state.status === "error") {
     return (
-      <section
-        data-testid="dora-signal-error"
-        className={cn(SHELL, "flex-wrap")}
-      >
-        <ShieldAlert
-          className="size-5 shrink-0 text-[#ff6b6b]"
-          aria-hidden="true"
-        />
-
-        <div className="min-w-0 flex-1">
-          <p className="text-[12px] font-semibold text-[#e2e8f0]">
-            Unable to load deployment signal
-          </p>
-          <p className="text-[11px] text-[#7c839b]">{state.message}</p>
+      <section data-testid="dora-signal-error" className={SHELL}>
+        <div className="flex items-center gap-3">
+          <ShieldAlert className="size-5 text-[#ff6b6b]" aria-hidden="true" />
+          <div>
+            <p className="font-mono text-[13px] font-semibold text-[#e2e8f0]">
+              Unable to load deployment signal
+            </p>
+            <p className="text-[12px] text-[#7c839b]">{state.message}</p>
+          </div>
         </div>
-
         <button
           type="button"
           onClick={onRetry}
-          className="h-[30px] shrink-0 rounded-[6px] border border-[#252b3b] bg-[#1f2433] px-3 text-[11px] font-medium text-[#e2e8f0] hover:border-[#374151]"
+          className="h-[32px] rounded-[6px] border border-[#252b3b] bg-[#1f2433] px-3 text-[12px] font-medium text-[#e2e8f0] hover:border-[#374151] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#00e599]"
         >
           Retry
         </button>
@@ -1019,9 +968,7 @@ export function DeploymentSignalCard({
 
   const { signal } = state;
   const sync = signal.sync;
-
   const syncMeta = sync?.status ? SYNC_TEXT[sync.status] : null;
-
   const lastSynced = sync?.lastSyncedAt
     ? formatRelativeTime(sync.lastSyncedAt, nowMs)
     : null;
@@ -1031,92 +978,101 @@ export function DeploymentSignalCard({
       data-testid="dora-signal-card"
       data-configured={signal.configured}
       aria-label="Authoritative deployment signal"
-      className={cn(SHELL, "flex-wrap md:flex-nowrap")}
+      className={SHELL}
     >
-      {/* Icon */}
-      <div className="flex size-9 shrink-0 items-center justify-center rounded-[8px] border border-[#252b3b] bg-[#0f131d]">
+      <div className="flex min-w-0 flex-1 items-center gap-3">
+        <div className="flex size-[36px] shrink-0 items-center justify-center rounded-[8px] border border-[#252b3b] bg-[#0f131d]">
+          {signal.configured ? (
+            <ShieldCheck className="size-5 text-[#00e599]" aria-hidden="true" />
+          ) : (
+            <ShieldAlert className="size-5 text-[#7c839b]" aria-hidden="true" />
+          )}
+        </div>
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span
+              className={cn(
+                "rounded-[4px] px-[7px] py-[3px] font-mono text-[10px] font-semibold uppercase leading-none tracking-[0.06em]",
+                signal.configured
+                  ? "bg-[#00e599] text-[#0f131d]"
+                  : "border border-[#4a4a36] bg-[#27271f] text-[#d6b84f]",
+              )}
+            >
+              {signal.configured ? "Configured" : "Pending configuration"}
+            </span>
+            <h3 className="font-mono text-[14px] font-semibold text-[#e2e8f0]">
+              {signal.configured
+                ? `${signalLabel(signal.type)} - Configured`
+                : "Awaiting Deployment Integration"}
+            </h3>
+          </div>
+          <p className="mt-1 max-w-[560px] text-[10px] leading-[15px] text-[#a4a8b8]">
+            {signal.configured
+              ? "Production deployments are verified using the project's authoritative deployment signal. Merges to main alone are not counted as deployments."
+              : "No verified production deployment signal has been bound to this project. Connect GitHub Deployments, ArgoCD, or the Direct Deployment API to initiate zero-trust DORA telemetry calculation."}
+          </p>
+        </div>
+      </div>
+
+      <div className="flex shrink-0 flex-row items-center justify-end gap-5">
         {signal.configured ? (
-          <ShieldCheck
-            className="size-[18px] text-[#00e599]"
-            aria-hidden="true"
-          />
+          (syncMeta || lastSynced || sync?.detail) && (
+            <div
+              data-testid="dora-signal-sync"
+              className="flex flex-col items-end gap-1"
+            >
+              {syncMeta && (
+                <span className="flex items-center gap-2 font-mono text-[11px] text-[#cbd5e1]">
+                  <span
+                    className={cn("size-[6px] rounded-full", syncMeta.dot)}
+                    aria-hidden="true"
+                  />
+                  {syncMeta.text}
+                </span>
+              )}
+              {lastSynced && (
+                <span className="font-mono text-[10px] text-[#7c839b]">
+                  Last sync {lastSynced}
+                </span>
+              )}
+              {sync?.detail && (
+                <span className="font-mono text-[10px] text-[#7c839b]">
+                  {sync.detail}
+                </span>
+              )}
+            </div>
+          )
         ) : (
-          <ShieldAlert
-            className="size-[18px] text-[#7c839b]"
-            aria-hidden="true"
-          />
+          <div
+            data-testid="dora-signal-sync"
+            className="flex flex-col gap-1 md:items-end"
+          >
+            <span className="flex items-center gap-2 font-mono text-[11px] text-[#d6b84f]">
+              <span
+                className="size-[6px] rounded-full bg-[#d6b84f]"
+                aria-hidden="true"
+              />
+              Awaiting Webhook Handshake
+            </span>
+            <span className="font-mono text-[10px] text-[#7c839b]">
+              Zero-Trust Attestation Pending
+            </span>
+          </div>
+        )}
+        {canConfigure ? (
+          <Link
+            href="/projects"
+            data-testid="dora-configure-signals"
+            className="inline-flex h-[32px] shrink-0 items-center whitespace-nowrap rounded-[6px] bg-[#00e599] px-3 text-[11px] font-semibold text-[#0f131d] transition hover:brightness-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00e599]"
+          >
+            Configure signals
+          </Link>
+        ) : (
+          <p className="max-w-[240px] text-[11px] leading-[16px] text-[#7c839b] md:text-right">
+            Ask a workspace administrator to configure the deployment signal.
+          </p>
         )}
       </div>
-
-      {/* Main information */}
-      <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-2">
-          <span
-            className={cn(
-              "rounded-[4px] px-[7px] py-[3px] font-mono text-[9px] font-bold uppercase leading-none tracking-[0.06em]",
-              signal.configured
-                ? "bg-[#00e599] text-[#0f131d]"
-                : "border border-[#252b3b] text-[#fbbf24]",
-            )}
-          >
-            {signal.configured ? "Configured" : "Pending configuration"}
-          </span>
-
-          <h3 className="text-[12px] font-semibold text-[#e2e8f0]">
-            {signal.configured
-              ? `${signalLabel(signal.type)} - Configured`
-              : "Awaiting Deployment Integration"}
-          </h3>
-        </div>
-
-        <p className="mt-1 max-w-[620px] text-[10px] leading-[15px] text-[#a4a8b8]">
-          {signal.configured
-            ? "Production deployment events are verified using cryptographic provenance attestations and ArgoCD sync-completion webhooks. Merge actions to main are strictly isolated from delivery frequency counts to guarantee metric integrity."
-            : "No verified production deployment signal has been configured. Connect GitHub Deployments, ArgoCD, or the Direct Deployment API."}
-        </p>
-      </div>
-
-      {/* Sync status */}
-      {signal.configured && (
-        <div
-          data-testid="dora-signal-sync"
-          className="flex shrink-0 flex-col items-start gap-1 md:items-end"
-        >
-          {syncMeta && (
-            <span className="flex items-center gap-1.5 font-mono text-[9px] font-semibold text-[#00e599]">
-              <span className={cn("size-[6px] rounded-full", syncMeta.dot)} />
-              {syncMeta.text}
-            </span>
-          )}
-
-          {lastSynced && (
-            <span className="font-mono text-[9px] text-[#7c839b]">
-              Last sync {lastSynced}
-            </span>
-          )}
-
-          {sync?.detail && (
-            <span className="font-mono text-[9px] text-[#7c839b]">
-              {sync.detail}
-            </span>
-          )}
-        </div>
-      )}
-
-      {/* Configure button */}
-      {canConfigure ? (
-        <Link
-          href="/projects"
-          data-testid="dora-configure-signals"
-          className="inline-flex h-[30px] shrink-0 items-center justify-center rounded-[6px] bg-[#00e599] px-3 text-[10px] font-semibold text-[#0f131d] transition hover:brightness-105 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00e599]"
-        >
-          Configure signals
-        </Link>
-      ) : (
-        <p className="max-w-[150px] text-[10px] leading-[14px] text-[#7c839b]">
-          Ask a workspace administrator to configure the deployment signal.
-        </p>
-      )}
     </section>
   );
 }
