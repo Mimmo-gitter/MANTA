@@ -110,6 +110,16 @@ async def process_staged_deployment_event_in_session(
             payload,
             received_at=event.received_at,
         )
+    elif provider == "jira":
+        from app.webhooks.jira_processor import ingest_jira_event_in_session
+
+        return await ingest_jira_event_in_session(
+            db,
+            tenant_id=tenant_id,
+            payload=payload,
+            event_id=event_id,
+            integration_id=event.integration_id,
+        )
     else:
         await complete_webhook_event(db, event_id, tenant_id=tenant_id)
         return f"noop_unsupported_provider:{provider}"
