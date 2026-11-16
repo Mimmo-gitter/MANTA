@@ -4,6 +4,7 @@
 import { useState, useRef, useEffect, useId } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { Menu } from "lucide-react";
 import { useAuth } from "@/providers/auth-provider";
 import { usePermissions } from "@/hooks/use-permissions";
@@ -47,6 +48,7 @@ export function PortalHeader({
   const [projectSearch, setProjectSearch] = useState("");
   const pathname = usePathname();
   const router = useRouter();
+  const queryClient = useQueryClient();
 
   const effectiveDisplayName =
     displayName && displayName !== "User"
@@ -108,6 +110,7 @@ export function PortalHeader({
     setSwitchError(null);
     try {
       await switchWorkspace(targetTenantId);
+      queryClient.clear();
       await refresh();
       setWorkspaceMenuOpen(false);
       router.refresh();

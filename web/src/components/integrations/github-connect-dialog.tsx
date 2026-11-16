@@ -6,7 +6,6 @@ import { connectGitHub as connectGitHubApi } from "@/lib/integrations-api";
 import {
   ArrowRight,
   Check,
-  Copy,
   Eye,
   EyeOff,
   Loader2,
@@ -15,6 +14,7 @@ import {
 } from "lucide-react";
 import {
   Badge,
+  ConnectedWebhookCredentials,
   ConnectingStep,
   FailedStep,
   ModalShell,
@@ -33,6 +33,8 @@ export interface GitHubConnection {
   /** Masked token for display only, e.g. "ghp_•••828e". Never the raw token. */
   tokenMask: string;
   webhookUrl: string;
+  webhookSecret?: string | null;
+  webhookSecretMasked?: string | null;
   /** True when a webhook secret was supplied and signatures are verified. */
   webhookVerified: boolean;
 }
@@ -63,7 +65,11 @@ async function connectGitHub(
     account: data.external_account_id ?? "GitHub",
     tokenMask: `ghp_•••${token.slice(-4)}`,
     webhookUrl: data.webhook_url,
-    webhookVerified: Boolean(webhookSecret.trim() || data.webhook_secret_masked),
+    webhookSecret: data.webhook_secret,
+    webhookSecretMasked: data.webhook_secret_masked,
+    webhookVerified: Boolean(
+      webhookSecret.trim() || data.webhook_secret || data.webhook_secret_masked,
+    ),
   };
 }
 
@@ -319,22 +325,6 @@ function ConnectedStep({
   onClose: () => void;
 }) {
   const titleId = useId();
-  const [copied, setCopied] = useState(false);
-  const resetTimer = useRef<number | undefined>(undefined);
-
-  useEffect(() => () => window.clearTimeout(resetTimer.current), []);
-
-  const copyUrl = async () => {
-    try {
-      await navigator.clipboard.writeText(connection.webhookUrl);
-      setCopied(true);
-      window.clearTimeout(resetTimer.current);
-      resetTimer.current = window.setTimeout(() => setCopied(false), 1800);
-    } catch {
-      // Clipboard unavailable (insecure context or permission denied); the URL
-      // stays selectable in the field so the user can copy it manually.
-    }
-  };
 
   return (
     <ModalShell
@@ -382,42 +372,16 @@ function ConnectedStep({
           </Badge>
         </section>
 
-        {/* Webhook payload URL */}
-        <section>
-          <div className="flex items-center justify-between gap-2">
-            <SectionLabel>Webhook payload URL</SectionLabel>
-            {connection.webhookVerified && (
-              <span className="inline-flex items-center gap-1 font-mono text-[10px] text-[#22d3ee]">
-                HMAC-SHA256 verified
-              </span>
-            )}
-          </div>
-          <p className="mt-2 text-[11px] leading-[16px] text-[#7c839b]">
-            Configure this webhook URL in your GitHub repository or organization
-            settings with HMAC-SHA256 verification.
-          </p>
-          <div className="mt-3 flex items-stretch gap-2">
-            <input
-              readOnly
-              aria-label="Webhook payload URL"
-              value={connection.webhookUrl}
-              onFocus={(e) => e.currentTarget.select()}
-              className="h-[36px] min-w-0 flex-1 rounded-[6px] border border-[#252b3b] bg-[#0a0d14] px-3 font-mono text-[11px] text-[#e2e8f0] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00e599]/40"
-            />
-            <button
-              type="button"
-              onClick={copyUrl}
-              className="inline-flex h-[36px] shrink-0 items-center gap-1.5 rounded-[6px] border border-[#252b3b] bg-[#0f131d] px-3 text-[11px] font-medium text-[#e2e8f0] transition-colors hover:border-[#7c839b]/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00e599]"
-            >
-              {copied ? (
-                <Check className="size-3 text-[#00e599]" aria-hidden="true" />
-              ) : (
-                <Copy className="size-3" aria-hidden="true" />
-              )}
-              <span aria-live="polite">{copied ? "Copied" : "Copy URL"}</span>
-            </button>
-          </div>
-        </section>
+        {/* Webhook payload URL & signing secret */}
+        <ConnectedWebhookCredentials
+          webhookUrl={connection.webhookUrl}
+          webhookSecret={connection.webhookSecret}
+          webhookSecretMasked={connection.webhookSecretMasked}
+          urlDescription="Configure this webhook URL in your GitHub repository or organization settings with HMAC-SHA256 verification."
+          verifiedBadge={
+            connection.webhookVerified ? "HMAC-SHA256 verified" : undefined
+          }
+        />
 
         {/* Sync status metrics */}
         <section>

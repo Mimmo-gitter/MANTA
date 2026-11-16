@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useId, useRef } from "react";
-import { AlertCircle, RefreshCw, X } from "lucide-react";
+import { useEffect, useId, useRef, useState } from "react";
+import { AlertCircle, Check, Copy, Eye, EyeOff, RefreshCw, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 /* -------------------------------------------------------------------------- */
@@ -363,5 +363,164 @@ export function FailedStep({
         </p>
       </div>
     </ModalShell>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Shared webhook payload URL & signing secret block                          */
+/* -------------------------------------------------------------------------- */
+
+export function ConnectedWebhookCredentials({
+  webhookUrl,
+  webhookSecret,
+  webhookSecretMasked,
+  urlDescription,
+  verifiedBadge,
+}: {
+  webhookUrl?: string;
+  webhookSecret?: string | null;
+  webhookSecretMasked?: string | null;
+  urlDescription?: string;
+  verifiedBadge?: string;
+}) {
+  const [copiedField, setCopiedField] = useState<"url" | "secret" | null>(null);
+  const [secretVisible, setSecretVisible] = useState(false);
+  const resetTimer = useRef<number | undefined>(undefined);
+
+  useEffect(() => () => window.clearTimeout(resetTimer.current), []);
+
+  const copyValue = async (field: "url" | "secret", value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopiedField(field);
+      window.clearTimeout(resetTimer.current);
+      resetTimer.current = window.setTimeout(() => setCopiedField(null), 1800);
+    } catch {
+      // Clipboard may be unavailable in insecure contexts; input stays selectable.
+    }
+  };
+
+  if (!webhookUrl && !webhookSecret && !webhookSecretMasked) {
+    return null;
+  }
+
+  return (
+    <div className="flex w-full flex-col gap-3.5 text-left">
+      {webhookUrl && (
+        <section>
+          <div className="flex items-center justify-between gap-2">
+            <SectionLabel>Webhook payload URL</SectionLabel>
+            {verifiedBadge && (
+              <span className="inline-flex items-center gap-1 font-mono text-[10px] text-[#22d3ee]">
+                {verifiedBadge}
+              </span>
+            )}
+          </div>
+          {urlDescription && (
+            <p className="mt-1.5 text-[11px] leading-[16px] text-[#7c839b]">
+              {urlDescription}
+            </p>
+          )}
+          <div className="mt-2 flex items-stretch gap-2">
+            <input
+              readOnly
+              aria-label="Webhook payload URL"
+              value={webhookUrl}
+              onFocus={(e) => e.currentTarget.select()}
+              className="h-[36px] min-w-0 flex-1 rounded-[6px] border border-[#252b3b] bg-[#0a0d14] px-3 font-mono text-[11px] text-[#e2e8f0] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00e599]/40"
+            />
+            <button
+              type="button"
+              onClick={() => void copyValue("url", webhookUrl)}
+              data-testid="webhook-url-copy-button"
+              className="inline-flex h-[36px] shrink-0 items-center gap-1.5 rounded-[6px] border border-[#252b3b] bg-[#0f131d] px-3 text-[11px] font-medium text-[#e2e8f0] transition-colors hover:border-[#7c839b]/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00e599]"
+            >
+              {copiedField === "url" ? (
+                <Check className="size-3 text-[#00e599]" aria-hidden="true" />
+              ) : (
+                <Copy className="size-3" aria-hidden="true" />
+              )}
+              <span aria-live="polite">
+                {copiedField === "url" ? "Copied" : "Copy URL"}
+              </span>
+            </button>
+          </div>
+        </section>
+      )}
+
+      {(webhookSecret || webhookSecretMasked) && (
+        <section>
+          <div className="flex items-center justify-between gap-2">
+            <SectionLabel>Webhook signing secret</SectionLabel>
+            <Badge tone={webhookSecret ? "amber" : "muted"}>
+              {webhookSecret ? "Shown once — store securely" : "Configured"}
+            </Badge>
+          </div>
+
+          {webhookSecret ? (
+            <>
+              <p className="mt-1.5 text-[11px] leading-[16px] text-[#7c839b]">
+                Save this HMAC-SHA256 signing secret now. For security, the
+                plaintext secret cannot be viewed again after closing this dialog.
+              </p>
+              <div className="mt-2 flex items-stretch gap-2">
+                <input
+                  readOnly
+                  type={secretVisible ? "text" : "password"}
+                  aria-label="Webhook signing secret"
+                  value={webhookSecret}
+                  onFocus={(e) => e.currentTarget.select()}
+                  className="h-[36px] min-w-0 flex-1 rounded-[6px] border border-[#252b3b] bg-[#0a0d14] px-3 font-mono text-[11px] text-[#e2e8f0] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00e599]/40"
+                />
+                <button
+                  type="button"
+                  onClick={() => setSecretVisible((prev) => !prev)}
+                  aria-label={
+                    secretVisible
+                      ? "Hide webhook secret"
+                      : "Reveal webhook secret"
+                  }
+                  className="inline-flex h-[36px] shrink-0 items-center justify-center rounded-[6px] border border-[#252b3b] bg-[#0f131d] px-2.5 text-[#a3acc2] transition-colors hover:text-[#e2e8f0]"
+                >
+                  {secretVisible ? (
+                    <EyeOff className="size-3.5" aria-hidden="true" />
+                  ) : (
+                    <Eye className="size-3.5" aria-hidden="true" />
+                  )}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void copyValue("secret", webhookSecret)}
+                  data-testid="webhook-secret-copy-button"
+                  className="inline-flex h-[36px] shrink-0 items-center gap-1.5 rounded-[6px] border border-[#252b3b] bg-[#0f131d] px-3 text-[11px] font-medium text-[#e2e8f0] transition-colors hover:border-[#7c839b]/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00e599]"
+                >
+                  {copiedField === "secret" ? (
+                    <Check className="size-3 text-[#00e599]" aria-hidden="true" />
+                  ) : (
+                    <Copy className="size-3" aria-hidden="true" />
+                  )}
+                  <span aria-live="polite">
+                    {copiedField === "secret" ? "Copied" : "Copy Secret"}
+                  </span>
+                </button>
+              </div>
+            </>
+          ) : (
+            <div className="mt-2 rounded-[6px] border border-[#252b3b] bg-[#0a0d14] px-3 py-2.5">
+              <p
+                data-testid="webhook-secret-masked-value"
+                className="font-mono text-[11px] text-[#e2e8f0]"
+              >
+                {webhookSecretMasked}
+              </p>
+              <p className="mt-1 text-[10px] leading-[14px] text-[#7c839b]">
+                Plaintext signing secrets are shown once on creation. Reconnect
+                the integration to rotate if lost.
+              </p>
+            </div>
+          )}
+        </section>
+      )}
+    </div>
   );
 }

@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 import { connectJira as connectJiraApi } from "@/lib/integrations-api";
 import {
   Badge,
+  ConnectedWebhookCredentials,
   ConnectingStep,
   FailedStep,
   ModalShell,
@@ -31,6 +32,9 @@ type Step = "intro" | "connecting" | "connected" | "failed";
 
 export interface JiraConnection {
   siteUrl: string;
+  webhookUrl?: string;
+  webhookSecret?: string | null;
+  webhookSecretMasked?: string | null;
 }
 
 interface JiraConnectDialogProps {
@@ -113,7 +117,7 @@ async function connectJira(
     throw new DOMException("Aborted", "AbortError");
   }
 
-  await connectJiraApi({
+  const data = await connectJiraApi({
     base_url: siteUrl,
     email: email.trim(),
     api_token: apiToken,
@@ -126,6 +130,9 @@ async function connectJira(
 
   return {
     siteUrl,
+    webhookUrl: data.webhook_url,
+    webhookSecret: data.webhook_secret,
+    webhookSecretMasked: data.webhook_secret_masked,
   };
 }
 
@@ -543,11 +550,29 @@ function ConnectedStep({
             </Badge>
           </Row>
           <Row label="Webhook verification">
-            <Badge tone="amber" dot>
-              Pending
+            <Badge
+              tone={
+                connection.webhookSecret || connection.webhookSecretMasked
+                  ? "green"
+                  : "amber"
+              }
+              dot
+            >
+              {connection.webhookSecret || connection.webhookSecretMasked
+                ? "HMAC Ready"
+                : "Pending"}
             </Badge>
           </Row>
         </dl>
+
+        <div className="mt-4 w-full">
+          <ConnectedWebhookCredentials
+            webhookUrl={connection.webhookUrl}
+            webhookSecret={connection.webhookSecret}
+            webhookSecretMasked={connection.webhookSecretMasked}
+            urlDescription="Configure this webhook URL in your Jira System -> WebHooks settings."
+          />
+        </div>
       </div>
     </ModalShell>
   );

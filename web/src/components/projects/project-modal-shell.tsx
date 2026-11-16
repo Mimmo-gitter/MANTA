@@ -93,7 +93,7 @@ export function ProjectModalShell({
         }
       }}
       className={cn(
-        "m-auto w-[calc(100vw-32px)] overflow-visible rounded-[14px] border bg-[#111622] p-0 text-[#f8fafc] shadow-[0px_25px_50px_-12px_rgba(0,0,0,0.75)] backdrop:bg-[#060911]/80 backdrop:backdrop-blur-[2px] focus:outline-none",
+        "m-auto max-h-[calc(100vh-24px)] w-[calc(100vw-32px)] overflow-y-auto overscroll-contain rounded-[14px] border bg-[#111622] p-0 text-[#f8fafc] shadow-[0px_25px_50px_-12px_rgba(0,0,0,0.75)] backdrop:bg-[#060911]/80 backdrop:backdrop-blur-[2px] focus:outline-none",
         accentTone === "danger"
           ? "border-[#ef4444]/40"
           : "border-[#1e293b]",

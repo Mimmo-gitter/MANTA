@@ -20,6 +20,7 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ConnectedWebhookCredentials } from "@/components/integrations/connect-dialog-shell";
 import { GitHubConnectDialog } from "@/components/integrations/github-connect-dialog";
 import { JiraConnectDialog } from "@/components/integrations/jira-connect-dialog";
 import { SlackConnectDialog } from "@/components/integrations/slack-connect-dialog";
@@ -47,6 +48,7 @@ interface Integration {
   status: IntegrationStatus;
   initials: string;
   webhookUrl: string;
+  webhookSecretMasked?: string | null;
 }
 
 interface Provider {
@@ -114,6 +116,7 @@ async function fetchIntegrations(): Promise<Integration[]> {
       status: item.is_active ? "connected" : "needs_reconnect",
       initials: providerInfo.initials,
       webhookUrl: item.webhook_url,
+      webhookSecretMasked: item.webhook_secret_masked,
     };
   });
 }
@@ -910,25 +913,10 @@ function ConfigureIntegrationDialog({
         </div>
 
         <div className="mt-5">
-          <p className="mb-2 font-mono text-[10px] font-semibold uppercase tracking-wider text-[#a3acc2]">
-            Webhook URL
-          </p>
-
-          <div className="flex items-center gap-2">
-            <div className="min-w-0 flex-1 break-all rounded-[7px] border border-[#252b3b] bg-[#0f131d] p-3 font-mono text-[11px] text-[#a3acc2]">
-              {integration.webhookUrl}
-            </div>
-
-            <button
-              type="button"
-              onClick={() =>
-                navigator.clipboard.writeText(integration.webhookUrl)
-              }
-              className="h-[40px] shrink-0 rounded-[6px] border border-[#252b3b] px-3 text-[11px] text-[#e2e8f0] hover:bg-white/[0.05]"
-            >
-              Copy
-            </button>
-          </div>
+          <ConnectedWebhookCredentials
+            webhookUrl={integration.webhookUrl}
+            webhookSecretMasked={integration.webhookSecretMasked}
+          />
         </div>
 
         <div className="mt-6 rounded-[8px] border border-[#7f1d1d]/60 bg-[#7f1d1d]/[0.08] p-4">
@@ -1054,26 +1042,20 @@ export default function IntegrationsPage() {
   const openDialog = () => setDialogOpen(true);
   const closeDialog = useCallback(() => setDialogOpen(false), []);
 
-  // TODO: route to provider setup, e.g. router.push(`/integrations/${provider.id}`)
   const handleSelectProvider = (provider: Provider) => {
     setDialogOpen(false);
 
-    if (provider.id === "github") {
-      setGithubOpen(true);
-      return;
+    switch (provider.id) {
+      case "github":
+        setGithubOpen(true);
+        return;
+      case "jira":
+        setJiraOpen(true);
+        return;
+      case "slack":
+        setSlackOpen(true);
+        return;
     }
-
-    if (provider.id === "jira") {
-      setJiraOpen(true);
-      return;
-    }
-
-    if (provider.id === "slack") {
-      setSlackOpen(true);
-      return;
-    }
-
-    console.info("Configure provider", provider.id);
   };
 
   const closeGithub = useCallback(() => {
