@@ -386,17 +386,28 @@ export async function mockMembersEndpoints(
   return { members, invitations, roleUpdates };
 }
 
+export interface StatefulProjectsApiOptions {
+  currentRoles?: string[];
+}
+
 /**
- * Stateful in-memory FastAPI projects & deployment-signal mock for E2E suites.
+ * Stateful in-memory projects, repository linking, and deployment-signal API mock for Playwright E2E suites.
+ * Supports project creation, unique slug resolution, repo linking/unlinking,
+ * persistence across page reloads, and RBAC enforcement (403 for non-admin roles).
  */
 export async function setupStatefulProjectsApi(
   page: Page,
-  initialProjects: ProjectItem[],
+  initialProjects: ProjectItem[] = [],
+  options?: StatefulProjectsApiOptions,
 ): Promise<ProjectItem[]> {
-  const projects = initialProjects.map((p) => ({
+  const projects: ProjectItem[] = initialProjects.map((p) => ({
     ...p,
-    repositories: [...p.repositories],
+    repositories: [...(p.repositories || [])],
   }));
+
+  const isRoleAdmin = (options?.currentRoles ?? ["TENANT_ADMIN"]).includes(
+    "TENANT_ADMIN",
+  );
 
   await page.route(
     (url) => url.pathname === "/api/v1/projects",
@@ -411,16 +422,27 @@ export async function setupStatefulProjectsApi(
         return;
       }
       if (method === "POST") {
-        const body = route.request().postDataJSON() as {
+        if (!isRoleAdmin) {
+          await fulfillCorsJson(route, 403, {
+            detail: "Forbidden: insufficient permissions",
+          });
+          return;
+        }
+        const body = (route.request().postDataJSON() ?? {}) as {
           name: string;
           slug?: string;
           tier_sla_hours?: number;
           wip_limit_per_dev?: number;
           pr_stale_threshold_hours?: number;
           authoritative_deployment_signal?: string;
+          authoritative_cd_signal?: string;
         };
         const slug =
-          body.slug || body.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+          body.slug ||
+          body.name
+            .toLowerCase()
+            .replace(/[^a-z0-9]+/g, "-")
+            .replace(/^-|-$/g, "");
         if (projects.some((p) => p.slug === slug)) {
           await fulfillCorsJson(route, 409, {
             detail: `Project with slug '${slug}' already exists in this tenant.`,
@@ -435,7 +457,13 @@ export async function setupStatefulProjectsApi(
           wip_limit_per_dev: body.wip_limit_per_dev ?? 3,
           pr_stale_threshold_hours: body.pr_stale_threshold_hours ?? 48,
           authoritative_deployment_signal:
-            body.authoritative_deployment_signal ?? "github_deployments_api",
+            body.authoritative_deployment_signal ??
+            body.authoritative_cd_signal ??
+            "github_deployments_api",
+          authoritative_cd_signal:
+            body.authoritative_cd_signal ??
+            body.authoritative_deployment_signal ??
+            "github_deployments_api",
           repositories: [],
         });
         projects.push(created);
@@ -468,6 +496,12 @@ export async function setupStatefulProjectsApi(
         return;
       }
       if (method === "PATCH") {
+        if (!isRoleAdmin) {
+          await fulfillCorsJson(route, 403, {
+            detail: "Forbidden: insufficient permissions",
+          });
+          return;
+        }
         const body = (route.request().postDataJSON() ?? {}) as Partial<ProjectItem>;
         if (body.name !== undefined) project.name = body.name;
         if (body.slug !== undefined) project.slug = body.slug;
@@ -491,6 +525,12 @@ export async function setupStatefulProjectsApi(
         return;
       }
       if (method === "DELETE") {
+        if (!isRoleAdmin) {
+          await fulfillCorsJson(route, 403, {
+            detail: "Forbidden: insufficient permissions",
+          });
+          return;
+        }
         project.is_active = false;
         project.updated_at = new Date().toISOString();
         await fulfillCorsJson(route, 204);
@@ -512,13 +552,21 @@ export async function setupStatefulProjectsApi(
         /^\/api\/v1\/projects\/([^/]+)\/repositories$/,
       );
       const projectId = match?.[1] ?? "";
-      const project = projects.find((p) => p.id === projectId);
+      const project = projects.find(
+        (p) => p.id === projectId || p.slug === projectId,
+      );
       if (!project) {
         await fulfillCorsJson(route, 404, { detail: "Project not found" });
         return;
       }
       if (method === "POST") {
-        const body = route.request().postDataJSON() as {
+        if (!isRoleAdmin) {
+          await fulfillCorsJson(route, 403, {
+            detail: "Forbidden: insufficient permissions",
+          });
+          return;
+        }
+        const body = (route.request().postDataJSON() ?? {}) as {
           repository_url?: string;
           full_name?: string;
           default_branch?: string;
@@ -527,7 +575,19 @@ export async function setupStatefulProjectsApi(
         };
         const fullName =
           body.full_name ||
-          (body.repository_url || "").replace(/^https?:\/\/github\.com\//, "");
+          (body.repository_url || "")
+            .replace(/^https?:\/\/github\.com\//, "")
+            .replace(/\.git$/, "");
+        if (
+          project.repositories.some(
+            (r) => r.full_name.toLowerCase() === fullName.toLowerCase(),
+          )
+        ) {
+          await fulfillCorsJson(route, 409, {
+            detail: `Repository '${fullName}' is already linked to this project.`,
+          });
+          return;
+        }
         const repo = makeMockRepository({
           id: `22222222-2222-2222-2222-00000000000${project.repositories.length + 1}`,
           project_id: project.id,
@@ -558,12 +618,20 @@ export async function setupStatefulProjectsApi(
       );
       const projectId = match?.[1] ?? "";
       const repoId = match?.[2] ?? "";
-      const project = projects.find((p) => p.id === projectId);
+      const project = projects.find(
+        (p) => p.id === projectId || p.slug === projectId,
+      );
       if (!project) {
         await fulfillCorsJson(route, 404, { detail: "Project not found" });
         return;
       }
       if (method === "DELETE") {
+        if (!isRoleAdmin) {
+          await fulfillCorsJson(route, 403, {
+            detail: "Forbidden: insufficient permissions",
+          });
+          return;
+        }
         project.repositories = project.repositories.filter((r) => r.id !== repoId);
         await fulfillCorsJson(route, 204);
         return;
@@ -573,7 +641,8 @@ export async function setupStatefulProjectsApi(
   );
 
   await page.route(
-    (url) => /^\/api\/v1\/projects\/[^/]+\/deployment-signal$/.test(url.pathname),
+    (url) =>
+      /^\/api\/v1\/projects\/[^/]+\/deployment-signal$/.test(url.pathname),
     async (route) => {
       const method = route.request().method();
       if (method === "OPTIONS") {
@@ -584,7 +653,9 @@ export async function setupStatefulProjectsApi(
         /^\/api\/v1\/projects\/([^/]+)\/deployment-signal$/,
       );
       const projectId = match?.[1] ?? "";
-      const project = projects.find((p) => p.id === projectId);
+      const project = projects.find(
+        (p) => p.id === projectId || p.slug === projectId,
+      );
       if (!project) {
         await fulfillCorsJson(route, 404, { detail: "Project not found" });
         return;
@@ -600,7 +671,13 @@ export async function setupStatefulProjectsApi(
         return;
       }
       if (method === "PATCH") {
-        const body = route.request().postDataJSON() as {
+        if (!isRoleAdmin) {
+          await fulfillCorsJson(route, 403, {
+            detail: "Forbidden: insufficient permissions",
+          });
+          return;
+        }
+        const body = (route.request().postDataJSON() ?? {}) as {
           authoritative_deployment_signal: string;
         };
         project.authoritative_deployment_signal =
@@ -610,7 +687,8 @@ export async function setupStatefulProjectsApi(
         await fulfillCorsJson(route, 200, {
           project_id: project.id,
           tenant_id: project.tenant_id,
-          authoritative_deployment_signal: project.authoritative_deployment_signal,
+          authoritative_deployment_signal:
+            project.authoritative_deployment_signal,
           updated_at: project.updated_at,
         });
         return;
