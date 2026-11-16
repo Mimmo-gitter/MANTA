@@ -83,16 +83,16 @@ export function SprintSummary({
           key={metric.label}
           className="min-w-0 rounded-md border border-[#1c2533] bg-[#151c28] px-4 py-3.5"
         >
-          <div className="mb-2 flex items-center gap-1.5 text-[#84918e]">
+          <div className="mb-2 flex min-h-[24px] items-start gap-1.5 text-[#84918e]">
             {metric.icon}
-            <span className="font-mono text-[10px] font-medium uppercase tracking-[0.12em]">
+            <span className="min-h-[24px] font-mono text-[10px] font-medium uppercase leading-3 tracking-[0.12em]">
               {metric.label}
             </span>
           </div>
 
-          <div className="flex flex-wrap items-baseline gap-2">
+          <div className="flex min-h-[30px] flex-nowrap items-baseline gap-2">
             <span
-              className={`text-[26px] font-semibold leading-none tracking-tight ${metric.tone}`}
+              className={`text-[24px] font-semibold leading-none tracking-tight ${metric.tone}`}
             >
               {metric.value}
             </span>
@@ -104,7 +104,7 @@ export function SprintSummary({
             </span>
           </div>
 
-          <p className="mt-2 text-xs leading-relaxed text-[#9aa5a8]">
+          <p className="mt-2 min-h-[36px] text-xs leading-relaxed text-[#9aa5a8]">
             {metric.note}
           </p>
         </div>
