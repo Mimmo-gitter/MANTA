@@ -1,4 +1,3 @@
-
 "use client";
 
 import {
@@ -43,54 +42,69 @@ export function SprintSummary({
 
   const metrics = [
     {
-      label: "Sprint variance",
+      label: "Backlog delta",
       value: variance,
+      badge: isHealthy ? "Nominal" : isCritical ? "Critical" : "At risk",
       note: isHealthy
-        ? "Ahead of ideal trajectory"
-        : "Remaining work vs. ideal",
+        ? "Current pace within ±8 SP tolerance."
+        : "Remaining work compared with ideal trajectory.",
       tone: varianceColor,
-      icon: <VarianceIcon className="size-4" />,
+      badgeTone: isHealthy
+        ? "text-[#43e0ae]"
+        : isCritical
+          ? "text-[#ff7b83]"
+          : "text-[#f6c453]",
+      icon: <VarianceIcon className="size-3.5" />,
     },
     {
       label: "Blocked issues",
-      value: `${blocked} issues`,
-      note: "Need attention from team",
-      tone:
-        blocked > 2 ? "text-[#f6c453]" : "text-[#e4eaf3]",
-      icon: <ShieldAlert className="size-4" />,
+      value: String(blocked),
+      badge: blocked > 2 ? "Needs attention" : "Nominal",
+      note: "Issues requiring attention.",
+      tone: blocked > 2 ? "text-[#f6c453]" : "text-[#e4eaf3]",
+      badgeTone: blocked > 2 ? "text-[#f6c453]" : "text-[#43e0ae]",
+      icon: <ShieldAlert className="size-3" />,
     },
     {
-      label: "Expected completion",
+      label: "Estimated sprint completion",
       value: completion,
-      note: completionNote,
-      tone: isHealthy
-        ? "text-[#43e0ae]"
-        : "text-[#f6c453]",
-      icon: <CalendarDays className="size-4" />,
+      badge: completionNote,
+      note: "Based on the current sprint progress.",
+      tone: isHealthy ? "text-[#43e0ae]" : "text-[#f6c453]",
+      badgeTone: isHealthy ? "text-[#43e0ae]" : "text-[#f6c453]",
+      icon: <CalendarDays className="size-3" />,
     },
   ];
 
   return (
-    <div className="mt-4 grid grid-cols-1 divide-y divide-[#242d3d] overflow-hidden rounded-lg border border-[#242d3d] bg-[#111824] sm:grid-cols-3 sm:divide-x sm:divide-y-0">
+    <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
       {metrics.map((metric) => (
         <div
           key={metric.label}
-          className="min-w-0 px-5 py-4"
+          className="min-w-0 rounded-md border border-[#1c2533] bg-[#151c28] px-4 py-3.5"
         >
-          <div className="mb-3 flex items-center gap-2 text-[#94a1b5]">
+          <div className="mb-2 flex items-center gap-1.5 text-[#84918e]">
             {metric.icon}
-            <span className="font-mono text-[11px] font-semibold uppercase tracking-[0.1em]">
+            <span className="font-mono text-[10px] font-medium uppercase tracking-[0.12em]">
               {metric.label}
             </span>
           </div>
 
-          <div
-            className={`text-[26px] font-semibold leading-tight tracking-tight ${metric.tone}`}
-          >
-            {metric.value}
+          <div className="flex flex-wrap items-baseline gap-2">
+            <span
+              className={`text-[26px] font-semibold leading-none tracking-tight ${metric.tone}`}
+            >
+              {metric.value}
+            </span>
+
+            <span
+              className={`text-[11px] font-mono font-medium ${metric.badgeTone}`}
+            >
+              {metric.badge}
+            </span>
           </div>
 
-          <p className="mt-2 text-xs leading-relaxed text-[#94a1b5]">
+          <p className="mt-2 text-xs leading-relaxed text-[#9aa5a8]">
             {metric.note}
           </p>
         </div>

@@ -20,6 +20,7 @@ import {
   Lock,
   Network,
   RefreshCw,
+  ChevronsUpDown,
   Rocket,
   Sparkles,
 } from "lucide-react";
@@ -574,27 +575,23 @@ export default function SprintWipPage() {
 
       <section className="flex flex-col gap-3 rounded-[10px] border border-[#202a3b] bg-[#151c28] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 items-center gap-3">
-          <div className="flex size-9 shrink-0 items-center justify-center rounded-lg border border-[#21483f] bg-[#12352e] text-[#38d9a7]">
-            <GitBranch className="size-4" />
-          </div>
+          <button
+            type="button"
+            className="flex h-[52px] w-full items-center gap-2 rounded-md bg-[#191e29] px-2.5 text-left transition hover:bg-[#202633]"
+          >
+            <Rocket className="size-3.5 shrink-0 text-[#38d9a7]" />
 
-          <div className="min-w-0">
-            <p className={LABEL}>Selected project</p>
-            <p className="truncate text-sm font-semibold text-[#e2eaf4]">
-              {selectedProject.name}
-              {sprint ? (
-                <span className="font-normal text-[#8290a6]">
-                  {" "}
-                  · {sprint.sprint}
-                </span>
-              ) : (
-                <span className="font-normal text-[#8290a6]">
-                  {" "}
-                  · Upcoming sprint
-                </span>
-              )}
-            </p>
-          </div>
+            <div className="min-w-0 flex-1">
+              <p className="font-mono text-[8px] font-medium uppercase tracking-[0.12em] text-[#84958d]">
+                Active sprint
+              </p>
+              <p className="truncate text-sm font-medium text-[#e0e4ed]">
+                {sprint?.sprint ?? "No active sprint"}
+              </p>
+            </div>
+
+            <ChevronsUpDown className="size-3.5 shrink-0 text-[#82908b]" />
+          </button>
         </div>
 
         <div className="flex flex-wrap items-center gap-3 sm:justify-end">

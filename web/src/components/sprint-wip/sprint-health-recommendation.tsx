@@ -49,46 +49,46 @@ export function SprintHealthRecommendation({
 
   return (
     <section
-      className={`flex flex-col gap-3 rounded-[10px] border px-4 py-3 md:flex-row md:items-center md:justify-between ${config.container}`}
+      className={`flex flex-col gap-4 rounded-[10px] border px-5 py-4 md:flex-row md:items-center md:justify-between ${config.container}`}
     >
-      <div className="flex min-w-0 items-start gap-3">
+      <div className="flex min-w-0 items-start gap-3.5">
         <div
-          className={`mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg ${config.iconContainer}`}
+          className={`mt-0.5 flex size-11 shrink-0 items-center justify-center rounded-lg ${config.iconContainer}`}
         >
-          <Icon className="size-4" />
+          <Icon className="size-5" />
         </div>
 
         <div className="min-w-0">
-          <div className="mb-1 flex flex-wrap items-center gap-2">
-            <p className="text-[11px] font-semibold text-[#e3eaf4]">
+          <div className="mb-1.5 flex flex-wrap items-center gap-2.5">
+            <p className="text-sm font-semibold text-[#e3eaf4]">
               {recommendation}
             </p>
 
             <span
-              className={`rounded border px-1.5 py-0.5 font-mono text-[8px] font-bold tracking-wider ${config.badgeStyle}`}
+              className={`rounded border px-2 py-1 font-mono text-[9px] font-bold tracking-wider ${config.badgeStyle}`}
             >
               {config.badge}
             </span>
           </div>
 
-          <p className="text-[9px] leading-4 text-[#9ba8ba]">
+          <p className="text-xs leading-relaxed text-[#aab7c9]">
             {recommendationDetail}
           </p>
         </div>
       </div>
 
-      <div className="flex shrink-0 items-center gap-2">
-        <span className="rounded border border-[#344155] bg-[#172131] px-2 py-1 font-mono text-[8px] text-[#8290a6]">
+      <div className="flex shrink-0 items-center gap-2.5">
+        <span className="rounded border border-[#344155] bg-[#172131] px-2.5 py-1.5 font-mono text-[9px] text-[#8290a6]">
           PREVIEW ACTION
         </span>
 
         <button
           type="button"
           disabled
-          className="inline-flex h-8 cursor-not-allowed items-center gap-1.5 rounded-md bg-[#00c995]/70 px-3 text-[10px] font-bold text-[#071b17] opacity-70"
+          className="inline-flex h-10 cursor-not-allowed items-center gap-2 rounded-md bg-[#00c995]/70 px-4 text-xs font-bold text-[#071b17] opacity-70"
         >
           View sprint insights
-          <ArrowRight className="size-3" />
+          <ArrowRight className="size-4" />
         </button>
       </div>
     </section>

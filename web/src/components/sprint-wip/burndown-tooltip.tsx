@@ -48,10 +48,10 @@ export function BurndownTooltip({
           </p>
         </div>
 
-        <span className="shrink-0 rounded-md border border-[#17624e] bg-[#10372e] px-2 py-1 text-[8px] font-bold text-[#40e2b0]">
+        <span className="shrink-0 rounded-md border border-[#17624e] bg-[#10372e] px-2 py-1 text-[9px] font-bold text-[#40e2b0]">
           {sprintDay !== undefined
-            ? `ДЕНЬ СПРИНТУ ${sprintDay}`
-            : "ДЕНЬ СПРИНТУ"}
+            ? `Sprint Day ${sprintDay}`
+            : "Sprint Day"}
         </span>
       </div>
 
