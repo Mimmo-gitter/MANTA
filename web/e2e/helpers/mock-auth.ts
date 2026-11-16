@@ -391,7 +391,7 @@ export interface StatefulProjectsApiOptions {
 }
 
 /**
- * Stateful in-memory projects and repository linking API mock for Playwright E2E suites.
+ * Stateful in-memory projects, repository linking, and deployment-signal API mock for Playwright E2E suites.
  * Supports project creation, unique slug resolution, repo linking/unlinking,
  * persistence across page reloads, and RBAC enforcement (403 for non-admin roles).
  */
@@ -492,6 +492,35 @@ export async function setupStatefulProjectsApi(
         return;
       }
       if (method === "GET") {
+        await fulfillCorsJson(route, 200, project);
+        return;
+      }
+      if (method === "PATCH") {
+        if (!isRoleAdmin) {
+          await fulfillCorsJson(route, 403, {
+            detail: "Forbidden: insufficient permissions",
+          });
+          return;
+        }
+        const body = (route.request().postDataJSON() ?? {}) as Partial<ProjectItem>;
+        if (body.name !== undefined) project.name = body.name;
+        if (body.slug !== undefined) project.slug = body.slug;
+        if (body.tier_sla_hours !== undefined) project.tier_sla_hours = body.tier_sla_hours;
+        if (body.wip_limit_per_dev !== undefined) project.wip_limit_per_dev = body.wip_limit_per_dev;
+        if (body.pr_stale_threshold_hours !== undefined)
+          project.pr_stale_threshold_hours = body.pr_stale_threshold_hours;
+        if (body.lead_time_first_commit_strategy !== undefined)
+          project.lead_time_first_commit_strategy = body.lead_time_first_commit_strategy;
+        if (body.authoritative_deployment_signal !== undefined) {
+          project.authoritative_deployment_signal = body.authoritative_deployment_signal;
+          project.authoritative_cd_signal =
+            body.authoritative_deployment_signal ?? "github_deployments_api";
+        }
+        if (body.authoritative_cd_signal !== undefined) {
+          project.authoritative_deployment_signal = body.authoritative_cd_signal;
+          project.authoritative_cd_signal = body.authoritative_cd_signal;
+        }
+        project.updated_at = new Date().toISOString();
         await fulfillCorsJson(route, 200, project);
         return;
       }
