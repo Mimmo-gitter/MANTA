@@ -91,9 +91,15 @@ test.describe("Portal Shell & Navigation (US-3 / SCRUM-270)", () => {
 
       await expect(sidebar.getByText("M.A.N.T.A.")).toBeVisible();
       await expect(sidebar.getByText("v2.4.0")).toBeVisible();
-      await expect(sidebar.getByText("WORKSPACE", { exact: true })).toBeVisible();
-      await expect(sidebar.getByText("ENGINEERING", { exact: true })).toBeVisible();
-      await expect(sidebar.getByText("ADMINISTRATION", { exact: true })).toBeVisible();
+      await expect(
+        sidebar.getByText("WORKSPACE", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        sidebar.getByText("ENGINEERING", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        sidebar.getByText("ADMINISTRATION", { exact: true }),
+      ).toBeVisible();
 
       // Dynamic projects count badge from /api/v1/projects
       await expect(page.getByTestId("nav-link-projects")).toContainText("1");
@@ -126,16 +132,22 @@ test.describe("Portal Shell & Navigation (US-3 / SCRUM-270)", () => {
         await expect(
           page.getByRole("heading", { level: 1, name: dest.title }),
         ).toBeVisible();
-
+        
         if (dest.id === "overview") {
-          await expect(page.getByTestId("overview-default-state")).toBeVisible();
+          await expect(
+            page.getByTestId("overview-default-state"),
+          ).toBeVisible();
         } else if (dest.id === "projects") {
-          await expect(page.getByTestId("projects-summary-strip")).toBeVisible();
+          await expect(
+            page.getByTestId("projects-summary-strip"),
+          ).toBeVisible();
         } else if (dest.id === "integrations") {
-          await expect(page.getByTestId("integrations-state-bar")).not.toBeAttached();
+          await expect(
+            page.getByTestId("integrations-state-bar"),
+          ).not.toBeAttached();
         } else if (dest.id === "access-roles") {
           await expect(page.getByTestId("members-kpi-strip")).toBeVisible();
-        } else {
+        } else if (dest.id !== "delivery-analytics") {
           await expect(page.getByTestId("placeholder-page")).toBeVisible();
         }
 
@@ -215,12 +227,20 @@ test.describe("Portal Shell & Navigation (US-3 / SCRUM-270)", () => {
       const collapsedBox = await sidebar.boundingBox();
       expect(collapsedBox?.width).toBeCloseTo(72, 1);
 
-      await expect(sidebar.getByText("WORKSPACE", { exact: true })).not.toBeVisible();
-      await expect(sidebar.getByText("ENGINEERING", { exact: true })).not.toBeVisible();
-      await expect(sidebar.getByText("ADMINISTRATION", { exact: true })).not.toBeVisible();
+      await expect(
+        sidebar.getByText("WORKSPACE", { exact: true }),
+      ).not.toBeVisible();
+      await expect(
+        sidebar.getByText("ENGINEERING", { exact: true }),
+      ).not.toBeVisible();
+      await expect(
+        sidebar.getByText("ADMINISTRATION", { exact: true }),
+      ).not.toBeVisible();
 
       const header = page.getByTestId("portal-header");
-      await expect(header.getByText("Workspace", { exact: true })).toBeVisible();
+      await expect(
+        header.getByText("Workspace", { exact: true }),
+      ).toBeVisible();
       await expect(header.getByText("Overview", { exact: true })).toBeVisible();
 
       const toggleBtn = page.getByTestId("sidebar-collapse-toggle");
@@ -231,10 +251,18 @@ test.describe("Portal Shell & Navigation (US-3 / SCRUM-270)", () => {
       const expandedBox = await sidebar.boundingBox();
       expect(expandedBox?.width).toBeCloseTo(240, 1);
 
-      await expect(sidebar.getByText("WORKSPACE", { exact: true })).toBeVisible();
-      await expect(sidebar.getByText("ENGINEERING", { exact: true })).toBeVisible();
-      await expect(sidebar.getByText("ADMINISTRATION", { exact: true })).toBeVisible();
-      await expect(sidebar.getByText("Sprint & WIP", { exact: true })).toBeVisible();
+      await expect(
+        sidebar.getByText("WORKSPACE", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        sidebar.getByText("ENGINEERING", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        sidebar.getByText("ADMINISTRATION", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        sidebar.getByText("Sprint & WIP", { exact: true }),
+      ).toBeVisible();
 
       await toggleBtn.click();
       await expect(sidebar).toHaveCSS("width", "72px");
@@ -275,8 +303,12 @@ test.describe("Portal Shell & Navigation (US-3 / SCRUM-270)", () => {
         await expect(page.getByTestId(`nav-link-${adminId}`)).not.toBeVisible();
       }
 
-      await expect(sidebar.getByText("WORKSPACE", { exact: true })).toBeVisible();
-      await expect(sidebar.getByText("ENGINEERING", { exact: true })).toBeVisible();
+      await expect(
+        sidebar.getByText("WORKSPACE", { exact: true }),
+      ).toBeVisible();
+      await expect(
+        sidebar.getByText("ENGINEERING", { exact: true }),
+      ).toBeVisible();
       await expect(page.getByTestId("nav-link-overview")).toBeVisible();
       await expect(page.getByTestId("nav-link-projects")).toBeVisible();
       await expect(page.getByTestId("nav-link-sprint-wip")).toBeVisible();
