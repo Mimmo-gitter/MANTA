@@ -83,7 +83,7 @@ export const SPRINT_WIP_MOCK_DATA: Record<
 
     wip: [
       { name: "To Do", count: 19, limit: 24, tone: "green" },
-      { name: "In Progress", count: 7, limit: 6, tone: "cyan" },
+      { name: "In Progress", count: 5, limit: 6, tone: "cyan" },
       { name: "In Review", count: 4, limit: 6, tone: "cyan" },
       { name: "Testing / QA", count: 3, limit: 4, tone: "blue" },
       { name: "Done", count: 12, limit: 24, tone: "green" },

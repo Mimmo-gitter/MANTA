@@ -1,19 +1,12 @@
+
 "use client";
 
 import { Gauge, Info, AlertTriangle } from "lucide-react";
-import type { CSSProperties } from "react";
 import type { WipItem, SprintWipStatus } from "@/types/sprint-wip";
 
 interface WipCongestionProps {
   items: WipItem[];
   status: SprintWipStatus;
-}
-
-function getProgressColor(item: WipItem, overLimit: boolean): string {
-  if (overLimit || item.tone === "red") return "#fb7185";
-  if (item.tone === "green") return "#37d9a5";
-  if (item.tone === "cyan") return "#43d6df";
-  return "#9bd8e9";
 }
 
 function WipRow({ item }: { item: WipItem }) {
@@ -23,12 +16,12 @@ function WipRow({ item }: { item: WipItem }) {
 
   const color =
     overLimit || item.tone === "red"
-      ? "rose"
+      ? "#fb7185"
       : item.tone === "green"
-        ? "emerald"
+        ? "#37d9a5"
         : item.tone === "cyan"
-          ? "cyan"
-          : "sky";
+          ? "#43d6df"
+          : "#9bd8e9";
 
   return (
     <div
@@ -53,14 +46,7 @@ function WipRow({ item }: { item: WipItem }) {
           className="h-full rounded-full transition-all duration-300"
           style={{
             width: `${progress}%`,
-            backgroundColor:
-              color === "rose"
-                ? "#fb7185"
-                : color === "emerald"
-                  ? "#37d9a5"
-                  : color === "cyan"
-                    ? "#43d6df"
-                    : "#9bd8e9",
+            backgroundColor: color,
           }}
         />
       </div>
@@ -85,14 +71,18 @@ function WipRow({ item }: { item: WipItem }) {
 export function WipCongestion({ items, status }: WipCongestionProps) {
   const isCritical = status === "critical";
   const isHealthy = status === "healthy";
+  const isWarning = status === "warning";
 
   const hasExceededLimit = items.some(
     (item) => item.limit > 0 && item.count > item.limit,
   );
 
-  const diagnosticMessage =
-    hasExceededLimit || isCritical
-      ? "One or more workflow stages have exceeded their configured WIP limits. Consider redistributing assignments to reduce bottlenecks."
+  const isOverLimit = isCritical || hasExceededLimit;
+
+  const diagnosticMessage = isOverLimit
+    ? "One or more workflow stages have exceeded their configured WIP limits. Consider redistributing assignments to reduce bottlenecks."
+    : isWarning
+      ? "Kanban WIP limits are fully respected across active lanes. The current schedule lag is caused by story size underestimation and scope inflation rather than execution stalls or review bottlenecks."
       : isHealthy
         ? "Kanban WIP limits are strictly respected across all active lanes. Cycle times are optimal with no bottleneck stages detected."
         : "Some workflow stages are approaching their configured capacity. Prioritize finishing active work before starting additional issues.";
@@ -107,14 +97,14 @@ export function WipCongestion({ items, status }: WipCongestionProps) {
 
         <span
           className={`shrink-0 rounded-sm border px-2 py-1 text-center font-mono text-[10px] font-bold leading-tight tracking-wider ${
-            isCritical || hasExceededLimit
+            isOverLimit
               ? "border-[#71333a] bg-[#321e27] text-[#fb7185]"
               : isHealthy
                 ? "border-[#145b4b] bg-[#0d332d] text-[#42e6b2]"
                 : "border-[#66502b] bg-[#30291d] text-[#f6c453]"
           }`}
         >
-          {isCritical || hasExceededLimit ? (
+          {isOverLimit ? (
             <>
               LIMIT
               <br />
@@ -128,9 +118,9 @@ export function WipCongestion({ items, status }: WipCongestionProps) {
             </>
           ) : (
             <>
-              NEAR
+              AT
               <br />
-              LIMITS
+              RISK
             </>
           )}
         </span>
@@ -146,27 +136,29 @@ export function WipCongestion({ items, status }: WipCongestionProps) {
         ))}
       </div>
 
+      {/* Diagnostic Summary */}
       <div
-        className={`mt-4 rounded-md border p-3 ${
-          isCritical || hasExceededLimit
-            ? "border-[#71333a] bg-[#171923]"
-            : "border-[#252d3b] bg-[#10151f]"
+        className={`mt-4 rounded-md p-3 ${
+          isOverLimit
+            ? "border border-[#71333a] bg-[#171923]"
+            : "border border-transparent bg-[#0d121c]"
         }`}
       >
         <div className="mb-2 flex items-center gap-2 text-[10px] font-semibold tracking-wider text-[#dce5f0]">
-          {isCritical || hasExceededLimit ? (
+          {isOverLimit ? (
             <AlertTriangle className="size-3.5 text-[#fb7185]" />
           ) : (
-            <Info
-              className={`size-3.5 ${
-                isHealthy ? "text-[#31c9cf]" : "text-[#f6c453]"
-              }`}
-            />
+            <Info className="size-3.5 text-[#31c9cf]" />
           )}
+
           DIAGNOSTIC SUMMARY
         </div>
 
-        <p className="text-xs leading-relaxed text-[#aab7c9]">
+        <p
+          className={`text-[11px] leading-relaxed ${
+            isOverLimit ? "text-[#aab7c9]" : "text-[#aeb9b5]"
+          }`}
+        >
           {diagnosticMessage}
         </p>
       </div>
