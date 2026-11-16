@@ -1,18 +1,35 @@
 package com.manta.mobile.features.auth
 
+import com.manta.mobile.BuildConfig
+import com.manta.mobile.core.network.DeviceApiService
 import com.manta.mobile.core.security.EncryptedStorage
 import com.manta.mobile.data.auth.AuthState
 import com.manta.mobile.data.auth.BiometricUnlockSubState
 import com.manta.mobile.data.auth.JwtUtils
 import com.manta.mobile.data.auth.UserClaims
 import com.manta.mobile.data.auth.UserSession
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.withContext
+import okhttp3.FormBody
+import okhttp3.OkHttpClient
+import okhttp3.Request
 
-class AuthRepository(private val encryptedStorage: EncryptedStorage) {
+class AuthRepository(
+    private val encryptedStorage: EncryptedStorage,
+    private val deviceApiService: DeviceApiService? = null,
+    private val httpClientProvider: () -> OkHttpClient = { OkHttpClient() }
+) {
     private val _authState = MutableStateFlow<AuthState>(AuthState.Unauthenticated)
     val authState: StateFlow<AuthState> = _authState.asStateFlow()
+
+    private val httpClient: OkHttpClient by lazy { httpClientProvider() }
+
+    suspend fun getAccessToken(): String? = encryptedStorage.readString(KEY_ACCESS_TOKEN)
+    suspend fun getRefreshToken(): String? = encryptedStorage.readString(KEY_REFRESH_TOKEN)
+    suspend fun getIdToken(): String? = encryptedStorage.readString(KEY_ID_TOKEN)
 
     suspend fun checkInitialAuthState(): AuthState {
         val accessToken = encryptedStorage.readString(KEY_ACCESS_TOKEN)
@@ -126,14 +143,77 @@ class AuthRepository(private val encryptedStorage: EncryptedStorage) {
         _authState.value = AuthState.Authenticated(session)
     }
 
-    suspend fun logout() {
+    suspend fun purgeLocalSession(reason: String? = null) {
         encryptedStorage.remove(KEY_ACCESS_TOKEN)
         encryptedStorage.remove(KEY_REFRESH_TOKEN)
         encryptedStorage.remove(KEY_ID_TOKEN)
         encryptedStorage.remove(KEY_USER_NAME)
         encryptedStorage.remove(KEY_USER_EMAIL)
         encryptedStorage.remove(KEY_PRIMARY_ROLE)
-        _authState.value = AuthState.Unauthenticated
+        _authState.value = if (reason != null) {
+            AuthState.ReauthRequired(reason)
+        } else {
+            AuthState.Unauthenticated
+        }
+    }
+
+    suspend fun signOut(fcmToken: String? = null): Result<Unit> = withContext(Dispatchers.IO) {
+        if (!fcmToken.isNullOrBlank() && deviceApiService != null) {
+            try {
+                val response = deviceApiService.unregisterDevice(fcmToken)
+                if (!response.isSuccessful) {
+                    return@withContext Result.failure(
+                        Exception(
+                            "Sign-out failed: Unable to unregister device (${response.code()})."
+                        )
+                    )
+                }
+            } catch (_: Exception) {
+                return@withContext Result.failure(
+                    Exception(
+                        "Sign-out failed: Unable to unregister device. Please check your network connection."
+                    )
+                )
+            }
+        }
+
+        val refreshToken = getRefreshToken()
+        val idToken = getIdToken()
+        if (!refreshToken.isNullOrBlank()) {
+            try {
+                val logoutUrl =
+                    "${BuildConfig.KEYCLOAK_URL}/realms/manta/protocol/openid-connect/logout"
+                val formBuilder = FormBody.Builder()
+                    .add("client_id", "manta-mobile")
+                    .add("refresh_token", refreshToken)
+                if (!idToken.isNullOrBlank()) {
+                    formBuilder.add("id_token_hint", idToken)
+                }
+                val request = Request.Builder()
+                    .url(logoutUrl)
+                    .post(formBuilder.build())
+                    .build()
+
+                httpClient.newCall(request).execute().use { response ->
+                    if (!response.isSuccessful && response.code != 400 && response.code != 401) {
+                        return@withContext Result.failure(
+                            Exception(
+                                "Sign-out failed: Unable to revoke Keycloak session (${response.code})."
+                            )
+                        )
+                    }
+                }
+            } catch (_: Exception) {
+                return@withContext Result.failure(
+                    Exception(
+                        "Sign-out failed: Unable to revoke session. Please check your network connection."
+                    )
+                )
+            }
+        }
+
+        purgeLocalSession()
+        return@withContext Result.success(Unit)
     }
 
     companion object {

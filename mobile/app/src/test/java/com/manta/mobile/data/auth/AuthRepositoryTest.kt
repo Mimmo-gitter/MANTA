@@ -5,11 +5,14 @@ import com.google.crypto.tink.Aead
 import com.google.crypto.tink.KeyTemplates
 import com.google.crypto.tink.KeysetHandle
 import com.google.crypto.tink.aead.AeadConfig
+import com.manta.mobile.core.network.DeviceApiService
 import com.manta.mobile.core.security.EncryptedStorage
 import com.manta.mobile.features.auth.AuthRepository
 import kotlinx.coroutines.test.runTest
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -19,6 +22,7 @@ import org.junit.rules.TemporaryFolder
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import retrofit2.Response
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -137,16 +141,35 @@ class AuthRepositoryTest {
     }
 
     @Test
-    fun logout_clearsTokensAndProfileMetadata() = runTest {
+    fun purgeLocalSession_clearsLocalDataAndEmitsReauthRequired() = runTest {
         authRepository.saveTokens(mockAccessToken, "refresh_token", "id_token")
-        authRepository.logout()
 
-        assertEquals(AuthState.Unauthenticated, authRepository.authState.value)
+        authRepository.purgeLocalSession(reason = "Session expired")
+
+        val state = authRepository.authState.value
+        assertTrue(state is AuthState.ReauthRequired)
+        assertEquals("Session expired", (state as AuthState.ReauthRequired).reason)
         assertNull(encryptedStorage.readString("auth_access_token"))
-        assertNull(encryptedStorage.readString("auth_refresh_token"))
-        assertNull(encryptedStorage.readString("auth_id_token"))
-        assertNull(encryptedStorage.readString("auth_user_name"))
-        assertNull(encryptedStorage.readString("auth_user_email"))
-        assertNull(encryptedStorage.readString("auth_primary_role"))
+    }
+
+    @Test
+    fun signOut_whenFcmUnregistrationFails_abortsAndRetainsLocalTokens() = runTest {
+        val failingDeviceApi = object : DeviceApiService {
+            override suspend fun unregisterDevice(token: String): Response<Unit> =
+                Response.error(500, "Internal Server Error".toResponseBody(null))
+        }
+
+        val repositoryWithFailingApi = AuthRepository(
+            encryptedStorage = encryptedStorage,
+            deviceApiService = failingDeviceApi
+        )
+
+        repositoryWithFailingApi.saveTokens(mockAccessToken, "refresh_token", "id_token")
+
+        val result = repositoryWithFailingApi.signOut(fcmToken = "device_fcm_token_123")
+
+        assertTrue(result.isFailure)
+        assertNotNull(encryptedStorage.readString("auth_access_token"))
+        assertTrue(repositoryWithFailingApi.authState.value is AuthState.Authenticated)
     }
 }

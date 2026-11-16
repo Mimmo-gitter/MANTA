@@ -3,6 +3,8 @@ package com.manta.mobile.core.network
 import com.manta.mobile.BuildConfig
 import java.util.concurrent.TimeUnit
 import kotlinx.serialization.json.Json
+import okhttp3.Authenticator
+import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.logging.HttpLoggingInterceptor
@@ -16,7 +18,10 @@ object RetrofitClientFactory {
         encodeDefaults = true
     }
 
-    fun createOkHttpClient(): OkHttpClient {
+    fun createOkHttpClient(
+        authInterceptor: Interceptor? = null,
+        authenticator: Authenticator? = null
+    ): OkHttpClient {
         val loggingInterceptor = HttpLoggingInterceptor().apply {
             level = if (BuildConfig.DEBUG) {
                 HttpLoggingInterceptor.Level.BODY
@@ -25,12 +30,20 @@ object RetrofitClientFactory {
             }
         }
 
-        return OkHttpClient.Builder()
+        val builder = OkHttpClient.Builder()
             .addInterceptor(loggingInterceptor)
             .connectTimeout(30, TimeUnit.SECONDS)
             .readTimeout(30, TimeUnit.SECONDS)
             .writeTimeout(30, TimeUnit.SECONDS)
-            .build()
+
+        if (authInterceptor != null) {
+            builder.addInterceptor(authInterceptor)
+        }
+        if (authenticator != null) {
+            builder.authenticator(authenticator)
+        }
+
+        return builder.build()
     }
 
     fun createRetrofit(
