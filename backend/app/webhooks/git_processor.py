@@ -340,9 +340,9 @@ async def ingest_github_pull_request_in_session(
     # Resolve author pseudonym without internal user constraint
     user_dict = pr_dict.get("user") if isinstance(pr_dict.get("user"), dict) else {}
     author_actor = (
-        user_dict.get("id")
-        or user_dict.get("login")
+        user_dict.get("login")
         or user_dict.get("username")
+        or user_dict.get("id")
         or user_dict.get("email")
         or "unknown_pr_author"
     )
