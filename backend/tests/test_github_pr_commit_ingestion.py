@@ -161,7 +161,9 @@ class TestGitHubPushCommitIngestionUnit:
         c3_sha = _sha("commit-3")
 
         canon_alice = canonicalize_contributor_identity("github", "alice-dev", "alice@acme.com")
-        canon_bob = canonicalize_contributor_identity("github", "bob-contractor", "bob@contractor.io")
+        canon_bob = canonicalize_contributor_identity(
+            "github", "bob-contractor", "bob@contractor.io"
+        )
 
         pseudo_alice = compute_contributor_pseudonym(salt_alice, canon_alice)
         pseudo_bob = compute_contributor_pseudonym(salt_bob, canon_bob)
@@ -547,7 +549,9 @@ class TestCommitLinkageAndUnlinkedRepositoryUnit:
 
         payload = {
             "repository": {"id": 999999, "full_name": "acme/unlinked-repo"},
-            "commits": [{"id": "e999", "author": {"name": "Stranger", "email": "stranger@ext.com"}}],
+            "commits": [
+                {"id": "e999", "author": {"name": "Stranger", "email": "stranger@ext.com"}}
+            ],
         }
 
         result = await ingest_github_push_in_session(
@@ -585,7 +589,9 @@ class TestCommitLinkageAndUnlinkedRepositoryUnit:
         """TC-GIT-UNL-003: Verifies invalid GitHub HMAC signature raises HTTP 401 Unauthorized."""
         secret = "correct-webhook-secret-12345"
         raw_body = b'{"action":"ping"}'
-        headers = {"x-hub-signature-256": "sha256=0000000000000000000000000000000000000000000000000000000000000000"}
+        headers = {
+            "x-hub-signature-256": "sha256=0000000000000000000000000000000000000000000000000000000000000000"
+        }
 
         with pytest.raises(HTTPException) as exc_info:
             verify_github_signature(secret, raw_body, headers)
@@ -779,12 +785,24 @@ class TestGitHubPRCommitIngestionLiveDB:
 
         push_payload = {
             "ref": "refs/heads/feature/auth-guard",
-            "repository": {"id": 20202, "full_name": "acme/backend-service", "default_branch": "main"},
+            "repository": {
+                "id": 20202,
+                "full_name": "acme/backend-service",
+                "default_branch": "main",
+            },
             "commits": [
                 {
                     "id": c1,
-                    "author": {"name": "Alice Developer", "email": "alice@acme.com", "username": "alice-dev"},
-                    "committer": {"name": "Alice Developer", "email": "alice@acme.com", "username": "alice-dev"},
+                    "author": {
+                        "name": "Alice Developer",
+                        "email": "alice@acme.com",
+                        "username": "alice-dev",
+                    },
+                    "committer": {
+                        "name": "Alice Developer",
+                        "email": "alice@acme.com",
+                        "username": "alice-dev",
+                    },
                     "parent_shas": ["m000000000000000000000000000000000000000"],
                     "lines_added": 45,
                     "lines_deleted": 0,
@@ -793,8 +811,16 @@ class TestGitHubPRCommitIngestionLiveDB:
                 },
                 {
                     "id": c2,
-                    "author": {"name": "Bob Pair", "email": "bob@contractor.io", "username": "bob-contractor"},
-                    "committer": {"name": "Alice Developer", "email": "alice@acme.com", "username": "alice-dev"},
+                    "author": {
+                        "name": "Bob Pair",
+                        "email": "bob@contractor.io",
+                        "username": "bob-contractor",
+                    },
+                    "committer": {
+                        "name": "Alice Developer",
+                        "email": "alice@acme.com",
+                        "username": "alice-dev",
+                    },
                     "parent_shas": [c1],
                     "lines_added": 82,
                     "lines_deleted": 12,
@@ -802,8 +828,16 @@ class TestGitHubPRCommitIngestionLiveDB:
                 },
                 {
                     "id": c3,
-                    "author": {"name": "Alice Developer", "email": "alice@acme.com", "username": "alice-dev"},
-                    "committer": {"name": "Alice Developer", "email": "alice@acme.com", "username": "alice-dev"},
+                    "author": {
+                        "name": "Alice Developer",
+                        "email": "alice@acme.com",
+                        "username": "alice-dev",
+                    },
+                    "committer": {
+                        "name": "Alice Developer",
+                        "email": "alice@acme.com",
+                        "username": "alice-dev",
+                    },
                     "parent_shas": [c2],
                     "lines_added": 60,
                     "lines_deleted": 0,
@@ -933,12 +967,16 @@ class TestGitHubPRCommitIngestionLiveDB:
 
             # Verify commit linkage and pseudonym consistency
             commits = (
-                await db.execute(
-                    select(Commit)
-                    .where(Commit.tenant_id == tenant_id, Commit.sha.in_([c1, c2, c3]))
-                    .order_by(Commit.authored_at.asc())
+                (
+                    await db.execute(
+                        select(Commit)
+                        .where(Commit.tenant_id == tenant_id, Commit.sha.in_([c1, c2, c3]))
+                        .order_by(Commit.authored_at.asc())
+                    )
                 )
-            ).scalars().all()
+                .scalars()
+                .all()
+            )
 
             assert len(commits) == 3
             assert commits[0].author_pseudonym_id == pr_row.author_pseudonym_id

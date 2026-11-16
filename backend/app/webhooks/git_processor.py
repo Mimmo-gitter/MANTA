@@ -154,7 +154,9 @@ async def ingest_github_push_in_session(
             continue
 
         # 1. Resolve author pseudonym
-        author_dict = commit_data.get("author") if isinstance(commit_data.get("author"), dict) else {}
+        author_dict = (
+            commit_data.get("author") if isinstance(commit_data.get("author"), dict) else {}
+        )
         author_actor = (
             author_dict.get("username")
             or author_dict.get("login")
@@ -237,10 +239,7 @@ async def ingest_github_push_in_session(
             or parse_iso_datetime(commit_data.get("authored_at"))
             or datetime.now(timezone.utc)
         )
-        committed_at = (
-            parse_iso_datetime(commit_data.get("committed_at"))
-            or authored_at
-        )
+        committed_at = parse_iso_datetime(commit_data.get("committed_at")) or authored_at
 
         commit_pr_id = pull_request_id
         if commit_data.get("pull_request_id"):
@@ -370,9 +369,8 @@ async def ingest_github_pull_request_in_session(
             await complete_webhook_event(db, event_id, tenant_id=tenant_id)
             return f"idempotent_duplicate_pr:{existing_pr.id}"
 
-        created_in_git_at = (
-            parse_iso_datetime(pr_dict.get("created_at"))
-            or datetime.now(timezone.utc)
+        created_in_git_at = parse_iso_datetime(pr_dict.get("created_at")) or datetime.now(
+            timezone.utc
         )
         new_pr = PullRequest(
             id=uuid.uuid4(),
@@ -408,9 +406,8 @@ async def ingest_github_pull_request_in_session(
     elif action == "synchronize":
         if existing_pr is None:
             # Out-of-order synchronize before opened
-            created_in_git_at = (
-                parse_iso_datetime(pr_dict.get("created_at"))
-                or datetime.now(timezone.utc)
+            created_in_git_at = parse_iso_datetime(pr_dict.get("created_at")) or datetime.now(
+                timezone.utc
             )
             existing_pr = PullRequest(
                 id=uuid.uuid4(),
@@ -449,9 +446,8 @@ async def ingest_github_pull_request_in_session(
             existing_pr.entity_version += 1
             if inbound_token > existing_pr.active_fencing_token:
                 existing_pr.active_fencing_token = inbound_token
-            existing_pr.updated_at = (
-                parse_iso_datetime(pr_dict.get("updated_at"))
-                or datetime.now(timezone.utc)
+            existing_pr.updated_at = parse_iso_datetime(pr_dict.get("updated_at")) or datetime.now(
+                timezone.utc
             )
 
         await db.flush()
@@ -467,9 +463,8 @@ async def ingest_github_pull_request_in_session(
 
     elif action == "closed":
         if existing_pr is None:
-            created_in_git_at = (
-                parse_iso_datetime(pr_dict.get("created_at"))
-                or datetime.now(timezone.utc)
+            created_in_git_at = parse_iso_datetime(pr_dict.get("created_at")) or datetime.now(
+                timezone.utc
             )
             existing_pr = PullRequest(
                 id=uuid.uuid4(),
@@ -499,21 +494,18 @@ async def ingest_github_pull_request_in_session(
             existing_pr.merge_commit_sha = (
                 str(pr_dict.get("merge_commit_sha") or "").strip().lower() or None
             )
-            existing_pr.merged_at = (
-                parse_iso_datetime(pr_dict.get("merged_at"))
-                or datetime.now(timezone.utc)
+            existing_pr.merged_at = parse_iso_datetime(pr_dict.get("merged_at")) or datetime.now(
+                timezone.utc
             )
             existing_pr.closed_at = (
-                parse_iso_datetime(pr_dict.get("closed_at"))
-                or existing_pr.merged_at
+                parse_iso_datetime(pr_dict.get("closed_at")) or existing_pr.merged_at
             )
         else:
             existing_pr.state = "closed"
             existing_pr.merge_commit_sha = None
             existing_pr.merged_at = None
-            existing_pr.closed_at = (
-                parse_iso_datetime(pr_dict.get("closed_at"))
-                or datetime.now(timezone.utc)
+            existing_pr.closed_at = parse_iso_datetime(pr_dict.get("closed_at")) or datetime.now(
+                timezone.utc
             )
 
         existing_pr.updated_at = datetime.now(timezone.utc)
