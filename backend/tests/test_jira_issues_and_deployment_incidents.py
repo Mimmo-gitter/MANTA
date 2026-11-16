@@ -41,6 +41,34 @@ from app.db.session import async_engine, get_tenant_db_context
 from app.main import app
 
 
+def is_live_db_available() -> bool:
+    """Check if PostgreSQL live database is reachable with configured credentials."""
+    import asyncio
+
+    try:
+
+        async def _ping() -> None:
+            await async_engine.dispose()
+            try:
+                async with async_engine.connect() as conn:
+                    await conn.execute(text("SELECT 1"))
+            finally:
+                await async_engine.dispose()
+
+        asyncio.run(_ping())
+        return True
+    except Exception:
+        return False
+
+
+LIVE_DB_AVAILABLE = is_live_db_available()
+skip_without_live_db = pytest.mark.skipif(
+    not LIVE_DB_AVAILABLE,
+    reason="PostgreSQL live database not reachable or authentication failed; skipping live DB test",
+)
+pytestmark = [pytest.mark.asyncio, skip_without_live_db]
+
+
 @pytest.fixture(autouse=True)
 async def cleanup_engine():
     """Teardown database engine connections and reset rate limiters per test."""
