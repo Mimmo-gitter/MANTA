@@ -42,6 +42,7 @@ from unittest.mock import AsyncMock, MagicMock
 import uuid
 
 from fastapi import HTTPException
+from httpx import ASGITransport, AsyncClient
 import pytest
 from sqlalchemy import inspect, select, text
 
@@ -59,6 +60,7 @@ from app.db.models.models import (
 )
 from app.db.session import async_engine, get_tenant_db_context
 from app.integrations.crypto import encryption_service
+from app.main import app
 from app.tenants.rate_limiter import registration_rate_limiter
 from app.webhooks.git_processor import (
     _link_branch_commits_to_pr,
@@ -105,6 +107,23 @@ async def _cleanup_state():
     yield
     await async_engine.dispose()
     registration_rate_limiter.reset()
+
+
+async def register_test_tenant(slug_prefix: str) -> tuple[uuid.UUID, str]:
+    """Helper to register a clean tenant via /tenants/register."""
+    unique = uuid.uuid4().hex[:8]
+    payload = {
+        "name": f"Git Tenant {unique}",
+        "slug": f"{slug_prefix}-{unique}",
+        "admin_email": f"git-{unique}@test.org",
+        "admin_name": f"Admin {unique}",
+    }
+    transport = ASGITransport(app=app)
+    async with AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post("/tenants/register", json=payload)
+        assert resp.status_code == 201, f"Failed to register test tenant: {resp.text}"
+        data = resp.json()
+        return uuid.UUID(data["tenant_id"]), payload["slug"]
 
 
 def _sha(label: str) -> str:
@@ -752,7 +771,7 @@ class TestGitHubPRCommitIngestionLiveDB:
     @pytest.mark.asyncio
     async def test_live_db_push_and_pr_full_lifecycle(self):
         """TC-GIT-PUSH-001 & TC-GIT-PR-001..005: Full transactional intake of push and PR lifecycle."""
-        tenant_id = uuid.uuid4()
+        tenant_id, _ = await register_test_tenant("git-push-pr")
         project_id = uuid.uuid4()
         repo_id = uuid.uuid4()
 
@@ -768,7 +787,6 @@ class TestGitHubPRCommitIngestionLiveDB:
                 id=repo_id,
                 tenant_id=tenant_id,
                 project_id=project_id,
-                name="backend-service",
                 full_name="acme/backend-service",
                 external_repo_id=20202,
                 default_branch="main",
@@ -987,7 +1005,8 @@ class TestGitHubPRCommitIngestionLiveDB:
     @pytest.mark.asyncio
     async def test_live_db_full_information_schema_zero_raw_pii_scan(self):
         """TC-GIT-PRIV-001: Comprehensive SQL scan across all domain tables proving zero raw PII."""
-        async with get_tenant_db_context(uuid.uuid4()) as db:
+        tenant_id, _ = await register_test_tenant("git-priv-scan")
+        async with get_tenant_db_context(tenant_id) as db:
             # Query all text/varchar columns across non-vault tables
             cols_query = text(
                 """
@@ -1022,7 +1041,7 @@ class TestGitHubPRCommitIngestionLiveDB:
     @pytest.mark.asyncio
     async def test_live_db_concurrent_pseudonym_resolution_race(self):
         """TC-GIT-CONC-001: Verifies concurrent resolution of identical contributor resolves cleanly without error."""
-        tenant_id = uuid.uuid4()
+        tenant_id, _ = await register_test_tenant("git-conc")
         actor_id = f"concurrent-{uuid.uuid4().hex[:6]}"
         email = f"concurrent-{actor_id}@example.com"
 
