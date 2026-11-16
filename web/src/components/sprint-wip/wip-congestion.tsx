@@ -1,6 +1,5 @@
 "use client";
 
-import { ProgressBar } from "@tremor/react";
 import { Gauge, Info, AlertTriangle } from "lucide-react";
 import type { CSSProperties } from "react";
 import type { WipItem, SprintWipStatus } from "@/types/sprint-wip";
