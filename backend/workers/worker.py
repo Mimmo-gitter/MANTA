@@ -22,7 +22,10 @@ import inspect
 import json
 import logging
 import os
+from pathlib import Path
+import signal
 import socket
+import time
 from typing import Any
 from unittest.mock import Mock
 import uuid
@@ -929,18 +932,73 @@ class WorkerSettings:
     redis_settings = get_default_redis_settings()
 
 
+def _write_worker_heartbeat_file(path: Path) -> None:
+    """Write the current epoch timestamp to the container healthcheck heartbeat file."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(str(time.time()), encoding="utf-8")
+    except Exception as exc:
+        logger.warning("Failed to write worker heartbeat to %s: %s", path, exc)
+
+
+async def _run_daemon_heartbeat(
+    redis: Any,
+    worker_id: str,
+    heartbeat_path: Path,
+    stop_event: asyncio.Event,
+    *,
+    interval_seconds: float = DEFAULT_HEARTBEAT_INTERVAL,
+    ttl_seconds: int = HEARTBEAT_TTL_SECONDS,
+) -> None:
+    """Refresh both the Redis worker heartbeat key and container healthcheck file."""
+    while not stop_event.is_set():
+        await record_worker_heartbeat(redis, worker_id, ttl_seconds=ttl_seconds)
+        _write_worker_heartbeat_file(heartbeat_path)
+        try:
+            await asyncio.wait_for(stop_event.wait(), timeout=interval_seconds)
+            break
+        except TimeoutError:
+            continue
+
+
 async def run_worker_daemon() -> None:
     """Start the production fetch/lease/retry worker loop consuming Valkey webhook queues."""
-    import socket
-
     import redis.asyncio as aioredis
 
-    from app.db.session import AsyncSessionLocal
+    from app.db.session import AsyncSessionLocal, async_engine
 
-    redis_client = aioredis.from_url(settings.REDIS_URL, decode_responses=True)
-    worker_id = f"{socket.gethostname()}-{os.getpid()}"
+    logging.basicConfig(
+        level=os.getenv("LOG_LEVEL", "INFO").upper(),
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+
+    redis_url = (
+        settings.REDIS_URL
+        if settings is not None
+        else os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    )
+    redis_client = aioredis.from_url(redis_url, decode_responses=True)
+    worker_id = generate_worker_id()
+    heartbeat_path = Path(os.getenv("WORKER_HEARTBEAT_FILE", "/tmp/worker.heartbeat"))
     stop_event = asyncio.Event()
+    loop = asyncio.get_running_loop()
+
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        try:
+            loop.add_signal_handler(sig, stop_event.set)
+        except (NotImplementedError, ValueError):
+            signal.signal(sig, lambda *_: loop.call_soon_threadsafe(stop_event.set))
+
+    heartbeat_task: asyncio.Task[None] | None = None
     try:
+        await record_worker_heartbeat(redis_client, worker_id)
+        _write_worker_heartbeat_file(heartbeat_path)
+        await sweep_dead_workers(redis_client, exclude_worker_ids=(worker_id,))
+        heartbeat_task = asyncio.create_task(
+            _run_daemon_heartbeat(redis_client, worker_id, heartbeat_path, stop_event)
+        )
+        logger.info("Worker daemon %s started (in-flight list: %s)", worker_id, get_in_flight_key(worker_id))
+
         async with AsyncSessionLocal() as session:
             await run_worker_fetch_loop(
                 redis_client,
@@ -953,7 +1011,14 @@ async def run_worker_daemon() -> None:
                 retry_on_failure=True,
             )
     finally:
+        stop_event.set()
+        if heartbeat_task is not None and not heartbeat_task.done():
+            heartbeat_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await heartbeat_task
         await redis_client.aclose()
+        await async_engine.dispose()
+        logger.info("Worker daemon %s stopped cleanly.", worker_id)
 
 
 if __name__ == "__main__":
