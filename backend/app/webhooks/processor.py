@@ -20,6 +20,10 @@ from app.deployments.service import (
     resolve_argocd_project,
     resolve_github_project,
 )
+from app.webhooks.git_processor import (
+    ingest_github_pull_request_in_session,
+    ingest_github_push_in_session,
+)
 from app.webhooks.sweeper import cas_transition_to_processing, complete_webhook_event
 
 logger = logging.getLogger("app.webhooks.processor")
@@ -77,11 +81,29 @@ async def process_staged_deployment_event_in_session(
 
     normalized: Optional[NormalizationResult] = None
     if provider == "github":
-        normalized = normalize_github_deployment_status(
-            event.event_type,
-            payload,
-            received_at=event.received_at,
-        )
+        event_type_clean = (event.event_type or "").strip().lower()
+        if event_type_clean == "push":
+            return await ingest_github_push_in_session(
+                db,
+                tenant_id=tenant_id,
+                payload=payload,
+                event_id=event_id,
+                integration_id=event.integration_id,
+            )
+        elif event_type_clean == "pull_request":
+            return await ingest_github_pull_request_in_session(
+                db,
+                tenant_id=tenant_id,
+                payload=payload,
+                event_id=event_id,
+                integration_id=event.integration_id,
+            )
+        else:
+            normalized = normalize_github_deployment_status(
+                event.event_type,
+                payload,
+                received_at=event.received_at,
+            )
     elif provider == "argocd":
         normalized = normalize_argocd_postsync(
             event.event_type,
