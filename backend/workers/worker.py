@@ -997,7 +997,9 @@ async def run_worker_daemon() -> None:
         heartbeat_task = asyncio.create_task(
             _run_daemon_heartbeat(redis_client, worker_id, heartbeat_path, stop_event)
         )
-        logger.info("Worker daemon %s started (in-flight list: %s)", worker_id, get_in_flight_key(worker_id))
+        logger.info(
+            "Worker daemon %s started (in-flight list: %s)", worker_id, get_in_flight_key(worker_id)
+        )
 
         async with AsyncSessionLocal() as session:
             await run_worker_fetch_loop(
