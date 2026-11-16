@@ -132,7 +132,7 @@ test.describe("Portal Shell & Navigation (US-3 / SCRUM-270)", () => {
         await expect(
           page.getByRole("heading", { level: 1, name: dest.title }),
         ).toBeVisible();
-        
+
         if (dest.id === "overview") {
           await expect(
             page.getByTestId("overview-default-state"),
@@ -147,7 +147,10 @@ test.describe("Portal Shell & Navigation (US-3 / SCRUM-270)", () => {
           ).not.toBeAttached();
         } else if (dest.id === "access-roles") {
           await expect(page.getByTestId("members-kpi-strip")).toBeVisible();
-        } else if (dest.id !== "delivery-analytics") {
+        } else if (
+          dest.id !== "delivery-analytics" &&
+          dest.id !== "sprint-wip"
+        ) {
           await expect(page.getByTestId("placeholder-page")).toBeVisible();
         }
 
