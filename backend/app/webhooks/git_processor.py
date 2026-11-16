@@ -487,6 +487,20 @@ async def ingest_github_pull_request_in_session(
             )
             db.add(existing_pr)
             await db.flush()
+        else:
+            # Optimistic fencing validation: reject stale events
+            if inbound_token > 0 and inbound_token <= existing_pr.active_fencing_token:
+                logger.warning(
+                    "Rejecting stale closed event for PR #%s (inbound=%s <= active=%s)",
+                    pr_number,
+                    inbound_token,
+                    existing_pr.active_fencing_token,
+                )
+                await complete_webhook_event(db, event_id, tenant_id=tenant_id)
+                return "stale_rejected:fencing_token_too_low"
+
+            if inbound_token > existing_pr.active_fencing_token:
+                existing_pr.active_fencing_token = inbound_token
 
         is_merged = bool(pr_dict.get("merged", False))
         if is_merged:
