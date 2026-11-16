@@ -9,7 +9,9 @@
 - `SCRUM-311`: Role-access test scenarios & automated matrix verification ([`docs/role-access-test-scenarios.md`](role-access-test-scenarios.md))  
 - `SCRUM-244` / `SCRUM-294` / `SCRUM-295`: Database-enforced tenant isolation via PostgreSQL RLS ([`docs/rls-test-scenarios.md`](rls-test-scenarios.md))  
 - `SCRUM-301`: Adversarial tenant boundary security test scenarios ([`docs/tenant-boundary-test-scenarios.md`](tenant-boundary-test-scenarios.md))  
-- `Task 18.5`: Automated test suite for deployment signal persistence and DORA metrics reporting ([`backend/tests/test_deployment_signal_persistence.py`](../backend/tests/test_deployment_signal_persistence.py))  
+- `Task 18.4`: Create test scenarios for deployment signal selection persistence and DORA response reporting (`SCRUM-384`)  
+- `Task 18.5`: Automated Playwright E2E verification of deployment signal persistence across page reloads (`SCRUM-385`, [`web/e2e/deployment-signal-persistence.spec.ts`](../web/e2e/deployment-signal-persistence.spec.ts))  
+- Automated backend test suite for deployment signal persistence and DORA metrics reporting ([`backend/tests/test_deployment_signal_persistence.py`](../backend/tests/test_deployment_signal_persistence.py))  
 
 **Target Database Tables:**  
 - `projects` (`id`, `tenant_id`, `created_by`, `name`, `slug`, `tier_sla_hours`, `authoritative_cd_signal`, `lead_time_first_commit_strategy`, `wip_limit_per_dev`, `pr_stale_threshold_hours`, `is_active`, `deleted_at`, `created_at`, `updated_at`, `uq_projects_tenant_slug`)  
@@ -730,7 +732,7 @@ WHERE id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
 | **SCRUM-384 / Task 18.4** | **Switch to `argocd_postsync_webhook`** | `TC-SIGNAL-002` | `test_deployment_signal_persistence.py::test_switch_signal_to_argocd_postsync_webhook` | **SPECIFIED** |
 | **SCRUM-384 / Task 18.4** | **Switch to `direct_deployment_api`** | `TC-SIGNAL-003` | `test_deployment_signal_persistence.py::test_switch_signal_to_direct_deployment_api` | **SPECIFIED** |
 | **SCRUM-384 / Task 18.4** | **Continuous cyclic switching across all 3 signals** | `TC-SIGNAL-004` | `test_deployment_signal_persistence.py::test_cyclic_deployment_signal_transitions` | **SPECIFIED** |
-| **SCRUM-384 / Task 18.4** | **Page reload persistence in web UI** | `TC-SIGNAL-PERSIST-005A`, `005B` | `deployment-signal-persistence.spec.ts::test_ui_signal_persistence_across_page_reload` | **SPECIFIED** |
+| **SCRUM-385 / Task 18.5** | **Page reload persistence in web UI** | `TC-SIGNAL-PERSIST-005A`, `005B` | [`web/e2e/deployment-signal-persistence.spec.ts`](../web/e2e/deployment-signal-persistence.spec.ts) | **AUTOMATED** |
 | **SCRUM-384 / Task 18.4** | **`HTTP 422` on invalid enum / payload** | `TC-SIGNAL-ERR-006A` – `006D` | `test_deployment_signal_persistence.py::test_reject_invalid_deployment_signal_enum` | **SPECIFIED** |
 | **SCRUM-384 / Task 18.4** | **`HTTP 403` for non-admin roles** | `TC-SIGNAL-RBAC-007A` – `007F` | `test_deployment_signal_persistence.py::test_developer_denied_signal_mutation`<br>`test_permission_enforcement.py::test_role_permission_matrix_endpoints` | **SPECIFIED** |
 | **SCRUM-384 / Task 18.4** | **Presence in `GET /api/v1/projects/{id}/dora-metrics`** | `TC-SIGNAL-DORA-008A` – `008D` | `test_deployment_signal_persistence.py::test_dora_response_reports_authoritative_signal` | **SPECIFIED** |
