@@ -1295,7 +1295,7 @@ async def test_tc_dora_lt_live_postgres_e2e():
             pull_request_id=pr.id,
         )
         session.add(join_row)
-        await session.commit()
+        await session.flush()
 
         # Query rolling Lead Time via service
         res = await calculate_rolling_lead_time(
@@ -1312,3 +1312,18 @@ async def test_tc_dora_lt_live_postgres_e2e():
         assert res.median_lead_time_seconds == 95400.0
         assert len(res.pull_requests) == 1
         assert res.pull_requests[0].external_pr_number == 101
+
+        # Also verify against live PostgreSQL percentile_cont query
+        sql_row = (
+            await session.execute(
+                build_project_median_lead_time_sql_query(
+                    tenant_id=tenant_id,
+                    project_id=project.id,
+                    start_at=t_deploy - timedelta(days=14),
+                    end_at=t_deploy + timedelta(hours=1),
+                )
+            )
+        ).first()
+        assert sql_row is not None
+        assert float(sql_row[0]) == 95400.0
+        assert int(sql_row[1]) == 1
