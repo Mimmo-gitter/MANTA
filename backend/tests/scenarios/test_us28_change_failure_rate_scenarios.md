@@ -753,20 +753,21 @@ The scenarios specified in this design document are verified by the automated py
 
 | Scenario ID | Test Method in Test Suite (`test_dora_change_failure_rate.py`) | Target Invariant & Scope | Status |
 | :--- | :--- | :--- | :--- |
-| **`TC-DORA-CFR-001`** | `test_task_28_3_canonical_10_deployment_benchmark_asserting_30_percent_vs_40_percent` | Canonical 10-deployment benchmark fixture: D1..D10, 30.0% CFR | **Verified** |
-| **`TC-DORA-CFR-002`** | `test_task_28_3_canonical_10_deployment_benchmark_asserting_30_percent_vs_40_percent` | 30.0% vs. 40.0% defect contrast (temporal leakage, double-count) | **Verified** |
-| **`TC-DORA-CFR-003`** | `test_task_28_2_left_join_row_multiplication_deduplicated_by_distinct_id` | Deduplication of multiple incidents on single deployment | **Verified** |
-| **`TC-DORA-CFR-004`** | `test_task_28_2_empty_window_returns_none_vs_zero_failure_window_returns_zero` | 14-day zero-deployment window returns `null` | **Verified** |
-| **`TC-DORA-CFR-005`** | `test_task_28_2_empty_window_returns_none_vs_zero_failure_window_returns_zero` | 30-day zero-deployment window returns `null` | **Verified** |
-| **`TC-DORA-CFR-006`** | `test_task_28_2_empty_window_returns_none_vs_zero_failure_window_returns_zero` | Clean production deployments evaluate to `0.00` ($0.0\%$) | **Verified** |
-| **`TC-DORA-CFR-007`** | `test_task_28_2_incident_correlation_24h_boundary_and_staging_exclusion` | Staging environment exclusion | **Verified** |
-| **`TC-DORA-CFR-008`** | `test_task_28_2_sql_queries_and_calculate_rolling_change_failure_rate_async` | Authoritative CD signal source enforcement | **Verified** |
-| **`TC-DORA-CFR-009`** | `test_task_28_2_incident_correlation_24h_boundary_and_staging_exclusion` | Exact 24h boundary and negative delta exclusion | **Verified** |
-| **`TC-DORA-CFR-010`** | `test_task_28_3_canonical_10_deployment_benchmark_asserting_30_percent_vs_40_percent` | Cancelled / False positive / Inactive incident filtering | **Verified** |
-| **`TC-DORA-CFR-011`** | `test_task_28_3_canonical_10_deployment_benchmark_asserting_30_percent_vs_40_percent` | 30-day window evaluation with canonical fixture | **Verified** |
-| **`TC-DORA-CFR-012`** | `test_task_28_2_daily_trend_series_and_window_validation` | Daily time-series generation and idle day `null` representation | **Verified** |
-| **`TC-DORA-CFR-013`** | `test_task_28_2_live_postgres_10_deployment_benchmark_e2e` | Live PostgreSQL 16 E2E multi-tenant RLS isolation | **Verified** |
-| **`TC-DORA-CFR-014`** | `test_task_28_2_daily_trend_series_and_window_validation` | Unsupported `window_days` raises `ValueError` | **Verified** |
+| **`TC-DORA-CFR-001`** | `test_tc_dora_cfr_001_canonical_10_deployment_benchmark_fixture` | Canonical 10-deployment benchmark fixture: D1..D10, 30.0% CFR | **Verified** |
+| **`TC-DORA-CFR-002`** | `test_tc_dora_cfr_002_defect_differential_30_percent_vs_40_percent` | 30.0% vs. 40.0% defect contrast (temporal leakage, double-count) | **Verified** |
+| **`TC-DORA-CFR-003`** | `test_tc_dora_cfr_003_left_join_row_multiplication_deduplication` | Deduplication of multiple incidents on single deployment | **Verified** |
+| **`TC-DORA-CFR-004`** | `test_tc_dora_cfr_004_zero_deployment_window_14_day_null_semantics` | 14-day zero-deployment window returns `null` | **Verified** |
+| **`TC-DORA-CFR-005`** | `test_tc_dora_cfr_005_zero_deployment_window_30_day_null_semantics` | 30-day zero-deployment window returns `null` | **Verified** |
+| **`TC-DORA-CFR-006`** | `test_tc_dora_cfr_006_zero_failure_window_clean_deployments` | Clean production deployments evaluate to `0.00` ($0.0\%$) | **Verified** |
+| **`TC-DORA-CFR-007`** | `test_tc_dora_cfr_007_staging_environment_exclusion` | Staging environment exclusion | **Verified** |
+| **`TC-DORA-CFR-008`** | `test_tc_dora_cfr_008_authoritative_cd_signal_mismatch_exclusion` | Authoritative CD signal source enforcement | **Verified** |
+| **`TC-DORA-CFR-009`** | `test_tc_dora_cfr_009_strict_24h_boundary_and_negative_offset` | Exact 24h boundary and negative delta exclusion | **Verified** |
+| **`TC-DORA-CFR-010`** | `test_tc_dora_cfr_010_incident_lifecycle_and_inactive_filtering` | Cancelled / False positive / Inactive incident filtering | **Verified** |
+| **`TC-DORA-CFR-011`** | `test_tc_dora_cfr_011_rolling_30_day_window_evaluation` | 30-day window evaluation with canonical fixture | **Verified** |
+| **`TC-DORA-CFR-012`** | `test_tc_dora_cfr_012_daily_cfr_trend_time_series_generation` | Daily time-series generation and idle day `null` representation | **Verified** |
+| **`TC-DORA-CFR-013`** | `test_tc_dora_cfr_013_multi_tenant_rls_boundary_isolation` | Multi-tenant RLS boundary and data isolation | **Verified** |
+| **`TC-DORA-CFR-014`** | `test_tc_dora_cfr_014_unsupported_window_validation` | Unsupported `window_days` raises `ValueError` | **Verified** |
+| **`TC-DORA-CFR-LIVE`** | `test_tc_dora_cfr_live_postgres_10_deployment_benchmark_and_zero_deployment_e2e` | Live PostgreSQL 16 E2E multi-tenant RLS & zero-deployment verification | **Verified** |
 
 ---
 
