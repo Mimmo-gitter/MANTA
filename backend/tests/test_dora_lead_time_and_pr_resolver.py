@@ -1,9 +1,14 @@
 """
-US-26 (Task 26.2 & Task 26.3): Automated Unit & Integration Tests for:
+US-26 (Task 26.2, Task 26.3, Task 26.4 & Task 26.5): Automated Unit & Integration Tests for:
+- Task 26.1: Commit-to-deployment association algorithm design (SCRUM-433, docs/dora-pr-to-deployment-mapping-design.md).
 - Task 26.2: Commit-range resolver mapping deployed commits to pull requests across
-  merge, squash, and rebase strategies while excluding trunk-only commits and already-shipped PRs.
+  merge, squash, and rebase strategies while excluding trunk-only commits and already-shipped PRs (SCRUM-434).
 - Task 26.3: Per-PR Lead Time (T_prod_deployed - T_first_commit) and project median Lead Time
-  (percentile_cont(0.5)) calculator over 14d and 30d windows using contributor pseudonyms.
+  (percentile_cont(0.5)) calculator over 14d and 30d windows using contributor pseudonyms (SCRUM-435).
+- Task 26.4: Test scenarios for single merge commits (26.5h), batched squash-merged PRs (23.5h median)
+  and trunk filtering (SCRUM-436, docs/dora-lead-time-for-changes-test-scenarios.md,
+  backend/tests/scenarios/test_us26_lead_time_for_changes_scenarios.md).
+- Task 26.5: Automated pytest verification suite for Lead Time for Changes (SCRUM-437).
 """
 
 import asyncio
