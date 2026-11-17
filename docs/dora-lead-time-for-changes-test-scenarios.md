@@ -6,7 +6,7 @@
 - `SCRUM-433`: Design commit-to-deployment association algorithm via pull request merge commits and git DAG reachability (`Task 26.1`, [`docs/dora-pr-to-deployment-mapping-design.md`](dora-pr-to-deployment-mapping-design.md))  
 - `SCRUM-434`: Implement commit-range resolver mapping deployed commits to pull requests across merge, squash, and rebase strategies while excluding trunk-only commits and already-shipped PRs (`Task 26.2`, [`backend/app/deployments/service.py`](../backend/app/deployments/service.py))  
 - `SCRUM-435`: Implement per-PR Lead Time ($T_{\text{prod\_deployed}} - T_{\text{first\_commit}}$) and project median Lead Time calculator over 14d and 30d windows using contributor pseudonyms (`Task 26.3`, [`backend/app/dora/service.py`](../backend/app/dora/service.py), [`backend/app/dora/schemas.py`](../backend/app/dora/schemas.py))  
-- `SCRUM-437`: Automated pytest unit and integration test suite for Lead Time for Changes and PR resolver (`Task 26.5`, [`backend/tests/test_dora_lead_time_and_pr_resolver.py`](../backend/tests/test_dora_lead_time_and_pr_resolver.py))  
+- `SCRUM-437`: Automated pytest unit and integration test suite for Lead Time for Changes and PR resolver (`Task 26.5`, [`backend/tests/test_dora_lead_time.py`](../backend/tests/test_dora_lead_time.py), [`backend/tests/test_dora_lead_time_and_pr_resolver.py`](../backend/tests/test_dora_lead_time_and_pr_resolver.py))  
 - `SCRUM-427` / `SCRUM-431`: Production deployment ingestion pipeline and outcome mapping (`US-25` / `Task 25.1` / `Task 25.5`, [`docs/deployment-signals-outcomes-and-staging-exclusion-test-scenarios.md`](deployment-signals-outcomes-and-staging-exclusion-test-scenarios.md))  
 - `SCRUM-396` / `SCRUM-397`: PR open, commit push, merge tracking & contributor pseudonym isolation (`US-20` / `Task 20.1` / `Task 20.6`, [`docs/pr-open-commit-push-merge-and-pseudonym-isolation-test-scenarios.md`](pr-open-commit-push-merge-and-pseudonym-isolation-test-scenarios.md))  
 - `SCRUM-384`: Deployment signal selection persistence and DORA response reporting (`US-18` / `Task 18.4`, [`docs/deployment-signal-selection-persistence-and-dora-response-reporting-test-scenarios.md`](deployment-signal-selection-persistence-and-dora-response-reporting-test-scenarios.md))  
@@ -14,7 +14,7 @@
 
 **Target Storage Engine:** PostgreSQL 16 with Row-Level Security (`pgvector/pgvector:pg16`)  
 **Target Implementation Modules:** [`backend/app/deployments/service.py`](../backend/app/deployments/service.py), [`backend/app/dora/service.py`](../backend/app/dora/service.py), [`backend/app/dora/schemas.py`](../backend/app/dora/schemas.py), [`backend/app/dora/router.py`](../backend/app/dora/router.py)  
-**Authoritative Automated Test Suites:** [`backend/tests/test_dora_lead_time_and_pr_resolver.py`](../backend/tests/test_dora_lead_time_and_pr_resolver.py)  
+**Authoritative Automated Test Suites:** [`backend/tests/test_dora_lead_time.py`](../backend/tests/test_dora_lead_time.py), [`backend/tests/test_dora_lead_time_and_pr_resolver.py`](../backend/tests/test_dora_lead_time_and_pr_resolver.py)  
 **Specification Location in Test Suite:** [`backend/tests/scenarios/test_us26_lead_time_for_changes_scenarios.md`](../backend/tests/scenarios/test_us26_lead_time_for_changes_scenarios.md)  
 **Assignee:** Matvii Yeromenko  
 **Category:** Testing - Design  
@@ -719,22 +719,22 @@ gitGraph
 
 ## 6. Automated Pytest Verification Suite Mapping (`Task 26.5` / `SCRUM-437`)
 
-The scenarios specified in this design document are directly implemented and verified by the automated pytest suite in [`backend/tests/test_dora_lead_time_and_pr_resolver.py`](../backend/tests/test_dora_lead_time_and_pr_resolver.py):
+The scenarios specified in this design document are directly implemented and verified by the automated pytest suites in [`backend/tests/test_dora_lead_time.py`](../backend/tests/test_dora_lead_time.py) and [`backend/tests/test_dora_lead_time_and_pr_resolver.py`](../backend/tests/test_dora_lead_time_and_pr_resolver.py):
 
-| Scenario ID | Test Method in Test Suite | Target Invariant & Scope | Status |
-| :--- | :--- | :--- | :--- |
-| **`TC-DORA-LT-001`** | `test_task_26_3_single_pr_26_5_hours_acceptance_criterion` | Single merge commit PR, $T_0 \rightarrow T_0 + 26\text{h } 30\text{m} = \mathbf{26.5\text{h}}$ ($95,400.0\text{s}$) | **PASSING** |
-| **`TC-DORA-LT-002`** | `test_task_26_3_batched_prs_exact_median_23_5_hours_acceptance_criterion` | Even batch ($N=4$, $[16.0, 22.0, 25.0, 31.0]$) $\rightarrow \mathbf{23.5\text{h}}$ continuous median | **PASSING** |
-| **`TC-DORA-LT-003`** | `test_task_26_3_batched_prs_exact_median_23_5_hours_acceptance_criterion` | Odd batch ($N=3$, $[19.0, 23.5, 29.0]$) $\rightarrow \mathbf{23.5\text{h}}$ continuous median | **PASSING** |
-| **`TC-DORA-LT-004`** | `test_task_26_2_batched_multi_pr_deployment_across_all_three_strategies_and_trunk_exclusion` | Direct trunk commit (`pull_request_id = NULL`) traversed but excluded from PR attribution | **PASSING** |
-| **`TC-DORA-LT-005`** | `test_task_26_3_empty_window_returns_none_acceptance_criterion` | Zero-deployment window returns `null` medians across 14d and 30d windows | **PASSING** |
-| **`TC-DORA-LT-006`** | `test_task_26_2_single_pr_rebase_and_merge_strategy` | Rebase-and-merge linear commit matching via rebased SHA or commit FK | **PASSING** |
-| **`TC-DORA-LT-007`** | `test_task_26_2_batched_multi_pr_deployment_across_all_three_strategies_and_trunk_exclusion` | Heterogeneous multi-strategy batched deployment | **PASSING** |
-| **`TC-DORA-LT-008`** | `test_task_26_2_redeploy_and_already_claimed_pr_prevention` | Re-deployment / rollback returns empty range $\mathcal{S}_i = \emptyset$ | **PASSING** |
-| **`TC-DORA-LT-009`** | `test_task_26_3_daily_trend_series_and_contributor_pseudonym_isolation` | Contributor pseudonym isolation and per-pseudonym Lead Time query | **PASSING** |
-| **`TC-DORA-LT-010`** | `test_task_26_2_resolve_deployment_pull_requests_async_session` | Authoritative signal filtering and preceding `SUCCESS` boundary resolution | **PASSING** |
-| **`TC-DORA-LT-011`** | `test_task_26_3_daily_trend_series_and_contributor_pseudonym_isolation` | UTC midnight bucketization and daily trend series | **PASSING** |
-| **E2E Live DB** | `test_tasks_26_2_and_26_3_live_postgres_e2e` | End-to-end PostgreSQL 16 schema, CTE, and RLS validation | **PASSING (CI)** |
+| Scenario ID | Test Method in Test Suite (`test_dora_lead_time.py`) | Test Method in Resolver Suite (`test_dora_lead_time_and_pr_resolver.py`) | Target Invariant & Scope | Status |
+| :--- | :--- | :--- | :--- | :--- |
+| **`TC-DORA-LT-001`** | `test_tc_dora_lt_001_single_merge_commit_pr_26_5_hours` | `test_task_26_3_single_pr_26_5_hours_acceptance_criterion` | Single merge commit PR, $T_0 \rightarrow T_0 + 26\text{h } 30\text{m} = \mathbf{26.5\text{h}}$ ($95,400.0\text{s}$) | **PASSING** |
+| **`TC-DORA-LT-002`** | `test_tc_dora_lt_002_batched_squash_merged_prs_even_batch_23_5_hours` | `test_task_26_3_batched_prs_exact_median_23_5_hours_acceptance_criterion` | Even batch ($N=4$, $[16.0, 22.0, 25.0, 31.0]$) $\rightarrow \mathbf{23.5\text{h}}$ continuous median | **PASSING** |
+| **`TC-DORA-LT-003`** | `test_tc_dora_lt_003_batched_squash_merged_prs_odd_batch_23_5_hours` | `test_task_26_3_batched_prs_exact_median_23_5_hours_acceptance_criterion` | Odd batch ($N=3$, $[19.0, 23.5, 29.0]$) $\rightarrow \mathbf{23.5\text{h}}$ continuous median | **PASSING** |
+| **`TC-DORA-LT-004`** | `test_tc_dora_lt_004_trunk_commit_exclusion_and_direct_push_filtering` | `test_task_26_2_batched_multi_pr_deployment_across_all_three_strategies_and_trunk_exclusion` | Direct trunk commit (`pull_request_id = NULL`) traversed but excluded from PR attribution | **PASSING** |
+| **`TC-DORA-LT-005`** | `test_tc_dora_lt_005_zero_deployment_window_null_semantics` | `test_task_26_3_empty_window_returns_none_acceptance_criterion` | Zero-deployment window returns `null` medians across 14d and 30d windows | **PASSING** |
+| **`TC-DORA-LT-006`** | `test_tc_dora_lt_006_rebase_and_merge_linear_dag_attribution` | `test_task_26_2_single_pr_rebase_and_merge_strategy` | Rebase-and-merge linear commit matching via rebased SHA or commit FK | **PASSING** |
+| **`TC-DORA-LT-007`** | `test_tc_dora_lt_007_heterogeneous_multi_strategy_batched_release` | `test_task_26_2_batched_multi_pr_deployment_across_all_three_strategies_and_trunk_exclusion` | Heterogeneous multi-strategy batched deployment | **PASSING** |
+| **`TC-DORA-LT-008`** | `test_tc_dora_lt_008_redeploy_and_rollback_no_op_idempotency` | `test_task_26_2_redeploy_and_already_claimed_pr_prevention` | Re-deployment / rollback returns empty range $\mathcal{S}_i = \emptyset$ | **PASSING** |
+| **`TC-DORA-LT-009`** | `test_tc_dora_lt_009_multi_tenant_rls_and_pseudonym_isolation` | `test_task_26_3_daily_trend_series_and_contributor_pseudonym_isolation` | Contributor pseudonym isolation and per-pseudonym Lead Time query | **PASSING** |
+| **`TC-DORA-LT-010`** | `test_tc_dora_lt_010_authoritative_cd_signal_source_filtering` | `test_task_26_2_resolve_deployment_pull_requests_async_session` | Authoritative signal filtering and preceding `SUCCESS` boundary resolution | **PASSING** |
+| **`TC-DORA-LT-011`** | `test_tc_dora_lt_011_window_temporal_boundaries_and_utc_midnight_grouping` | `test_task_26_3_daily_trend_series_and_contributor_pseudonym_isolation` | UTC midnight bucketization and daily trend series | **PASSING** |
+| **E2E Live DB** | `test_tc_dora_lt_live_postgres_e2e` | `test_tasks_26_2_and_26_3_live_postgres_e2e` | End-to-end PostgreSQL 16 schema, CTE, and RLS validation | **PASSING (CI)** |
 
 ---
 
