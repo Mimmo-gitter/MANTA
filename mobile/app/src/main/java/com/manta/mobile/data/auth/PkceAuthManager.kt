@@ -3,6 +3,7 @@ package com.manta.mobile.data.auth
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.util.Log
 import androidx.core.net.toUri
 import com.manta.mobile.BuildConfig
 import com.manta.mobile.core.auth.PkceUtils
@@ -31,6 +32,7 @@ data class RefreshedTokens(val accessToken: String, val refreshToken: String?, v
 
 object PkceAuthManager {
 
+    private const val TAG = "PkceAuthManager"
     private const val CLIENT_ID = "manta-mobile"
     private const val REDIRECT_URI = "manta://auth/callback"
     private const val SCOPE = "openid profile email offline_access"
@@ -115,6 +117,7 @@ object PkceAuthManager {
                 _flowState.value = PkceFlowState.Success
                 return@withContext true
             } catch (e: Exception) {
+                Log.e(TAG, "Exception during token exchange: ${e.message}", e)
                 _flowState.value =
                     PkceFlowState.Error("Network error: ${e.localizedMessage ?: "Unknown error"}")
                 return@withContext false
@@ -142,6 +145,10 @@ object PkceAuthManager {
             httpClient.newCall(request).execute().use { response ->
                 val responseBody = response.body?.string()
                 if (!response.isSuccessful || responseBody.isNullOrBlank()) {
+                    Log.e(
+                        TAG,
+                        "Token endpoint error (${response.code}): $responseBody"
+                    )
                     return null
                 }
 
@@ -153,7 +160,8 @@ object PkceAuthManager {
 
                 RefreshedTokens(newAccessToken, newRefreshToken, newIdToken)
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            Log.e(TAG, "Exception executing token request: ${e.message}", e)
             null
         }
     }
