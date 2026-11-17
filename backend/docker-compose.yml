@@ -92,6 +92,9 @@ services:
       - REDIS_URL=${REDIS_URL:-redis://valkey:6379/0}
       - KEYCLOAK_URL=${KEYCLOAK_INTERNAL_URL:-http://keycloak:8080}
       - KEYCLOAK_REALM=${KEYCLOAK_REALM:-manta}
+      - OIDC_AUDIENCE=${OIDC_AUDIENCE:-manta-backend}
+      - OIDC_ISSUER=${OIDC_ISSUER:-}
+      - OIDC_EXTRA_ISSUERS=${OIDC_EXTRA_ISSUERS:-}
       - KEYCLOAK_ADMIN=${KEYCLOAK_ADMIN:-admin}
       - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:-admin}
       - KC_SERVICE_CLIENT_ID=${KC_SERVICE_CLIENT_ID:-manta-backend}
