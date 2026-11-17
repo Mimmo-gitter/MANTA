@@ -23,11 +23,12 @@ import com.manta.mobile.core.theme.ui.SecondaryTransparent
 import com.manta.mobile.core.theme.ui.TextLight
 import com.manta.mobile.features.actions.ActionsScreen
 import com.manta.mobile.features.alerts.AlertsScreen
+import com.manta.mobile.features.auth.AuthRepository
 import com.manta.mobile.features.projects.ProjectScreen
 import com.manta.mobile.features.settings.SettingsScreen
 
 @Composable
-fun NavShell() {
+fun NavShell(authRepository: AuthRepository? = null, fcmToken: String? = null) {
     val navController = rememberNavController()
     Scaffold(
         bottomBar = {
@@ -81,7 +82,12 @@ fun NavShell() {
             composable(NavItem.Alerts.route) { AlertsScreen() }
             composable(NavItem.Project.route) { ProjectScreen() }
             composable(NavItem.Actions.route) { ActionsScreen() }
-            composable(NavItem.Settings.route) { SettingsScreen() }
+            composable(NavItem.Settings.route) {
+                SettingsScreen(
+                    authRepository = authRepository,
+                    fcmToken = fcmToken
+                )
+            }
         }
     }
 }

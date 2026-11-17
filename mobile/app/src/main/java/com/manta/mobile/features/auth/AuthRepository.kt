@@ -1,7 +1,11 @@
 package com.manta.mobile.features.auth
 
+import android.util.Log
 import com.manta.mobile.BuildConfig
+import com.manta.mobile.core.network.AuthApiService
 import com.manta.mobile.core.network.DeviceApiService
+import com.manta.mobile.core.network.RetrofitClientFactory
+import com.manta.mobile.core.network.UserProfileResponse
 import com.manta.mobile.core.security.EncryptedStorage
 import com.manta.mobile.data.auth.AuthState
 import com.manta.mobile.data.auth.BiometricUnlockSubState
@@ -20,16 +24,61 @@ import okhttp3.Request
 class AuthRepository(
     private val encryptedStorage: EncryptedStorage,
     private val deviceApiService: DeviceApiService? = null,
+    private val authApiService: AuthApiService? = null,
     private val httpClientProvider: () -> OkHttpClient = { OkHttpClient() }
 ) {
     private val _authState = MutableStateFlow<AuthState>(AuthState.Unauthenticated)
     val authState: StateFlow<AuthState> = _authState.asStateFlow()
 
     private val httpClient: OkHttpClient by lazy { httpClientProvider() }
+    private val activeDeviceApiService: DeviceApiService by lazy {
+        deviceApiService ?: RetrofitClientFactory.createAuthenticatedService(this)
+    }
+    private val activeAuthApiService: AuthApiService by lazy {
+        authApiService ?: RetrofitClientFactory.createAuthenticatedService(this)
+    }
 
     suspend fun getAccessToken(): String? = encryptedStorage.readString(KEY_ACCESS_TOKEN)
     suspend fun getRefreshToken(): String? = encryptedStorage.readString(KEY_REFRESH_TOKEN)
     suspend fun getIdToken(): String? = encryptedStorage.readString(KEY_ID_TOKEN)
+
+    suspend fun fetchCurrentUser(): Result<UserProfileResponse> = withContext(Dispatchers.IO) {
+        val currentToken = getAccessToken()
+        if (currentToken != null) {
+            Log.d(TAG, "Current JWT Payload: ${JwtUtils.getRawPayload(currentToken)}")
+        }
+        try {
+            val response = activeAuthApiService.getCurrentUser()
+            val body = response.body()
+            if (response.isSuccessful && body != null) {
+                Log.d(
+                    TAG,
+                    "Successfully fetched user profile from /api/v1/auth/me: ${body.name}"
+                )
+                if (body.name.isNotBlank()) {
+                    encryptedStorage.writeString(KEY_USER_NAME, body.name)
+                }
+                if (body.email.isNotBlank()) {
+                    encryptedStorage.writeString(KEY_USER_EMAIL, body.email)
+                }
+                if (body.roles.isNotEmpty()) {
+                    val userRole = body.roles.firstOrNull { role ->
+                        !role.startsWith("default-roles") &&
+                            role != "offline_access" &&
+                            role != "uma_authorization"
+                    } ?: body.roles.first()
+                    encryptedStorage.writeString(KEY_PRIMARY_ROLE, userRole)
+                }
+                Result.success(body)
+            } else {
+                Log.e(TAG, "Failed to fetch user profile: HTTP ${response.code()}")
+                Result.failure(Exception("Failed to fetch user profile (${response.code()})."))
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Network error fetching user profile: ${e.message}")
+            Result.failure(e)
+        }
+    }
 
     suspend fun checkInitialAuthState(): AuthState {
         val accessToken = encryptedStorage.readString(KEY_ACCESS_TOKEN)
@@ -158,9 +207,9 @@ class AuthRepository(
     }
 
     suspend fun signOut(fcmToken: String? = null): Result<Unit> = withContext(Dispatchers.IO) {
-        if (!fcmToken.isNullOrBlank() && deviceApiService != null) {
+        if (!fcmToken.isNullOrBlank()) {
             try {
-                val response = deviceApiService.unregisterDevice(fcmToken)
+                val response = activeDeviceApiService.unregisterDevice(fcmToken)
                 if (!response.isSuccessful) {
                     return@withContext Result.failure(
                         Exception(
@@ -189,6 +238,7 @@ class AuthRepository(
                 if (!idToken.isNullOrBlank()) {
                     formBuilder.add("id_token_hint", idToken)
                 }
+
                 val request = Request.Builder()
                     .url(logoutUrl)
                     .post(formBuilder.build())
@@ -223,5 +273,6 @@ class AuthRepository(
         private const val KEY_USER_NAME = "auth_user_name"
         private const val KEY_USER_EMAIL = "auth_user_email"
         private const val KEY_PRIMARY_ROLE = "auth_primary_role"
+        private const val TAG = "AuthRepository"
     }
 }

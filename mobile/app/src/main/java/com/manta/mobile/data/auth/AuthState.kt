@@ -7,9 +7,37 @@ data class UserSession(
     val tenantId: String,
     val roles: List<String>,
     val accessToken: String,
-    val refreshToken: String?,
-    val idToken: String?
-)
+    val refreshToken: String? = null,
+    val idToken: String? = null,
+    val squadName: String = "Core Infrastructure Squad"
+) {
+    val primaryRole: String
+        get() = roles.firstOrNull { role ->
+            !role.startsWith("default-roles") &&
+                role != "offline_access" &&
+                role != "uma_authorization"
+        } ?: roles.firstOrNull() ?: DEFAULT.roles.first()
+
+    val displayName: String
+        get() = name.ifBlank { DEFAULT.name }
+
+    val displayEmail: String
+        get() = email.ifBlank { DEFAULT.email }
+
+    companion object {
+        val DEFAULT = UserSession(
+            userId = "preview-user-id",
+            email = "alex.vance@manta-labs.io",
+            name = "Alex Mercer",
+            tenantId = "preview-tenant-id",
+            roles = listOf("Lead"),
+            accessToken = "",
+            refreshToken = null,
+            idToken = null,
+            squadName = "Core Infrastructure Squad"
+        )
+    }
+}
 
 sealed interface BiometricUnlockSubState {
     data object Ready : BiometricUnlockSubState

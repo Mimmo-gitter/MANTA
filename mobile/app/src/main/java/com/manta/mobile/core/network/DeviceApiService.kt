@@ -5,6 +5,6 @@ import retrofit2.http.DELETE
 import retrofit2.http.Path
 
 interface DeviceApiService {
-    @DELETE("api/v1/mobile/devices/{token}")
+    @DELETE("mobile/devices/{token}")
     suspend fun unregisterDevice(@Path("token") token: String): Response<Unit>
 }

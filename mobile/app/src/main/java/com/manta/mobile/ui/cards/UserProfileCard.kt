@@ -1,4 +1,4 @@
-package com.manta.mobile.ui
+package com.manta.mobile.ui.cards
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable

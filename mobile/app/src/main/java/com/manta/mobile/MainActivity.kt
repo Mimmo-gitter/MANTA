@@ -156,7 +156,10 @@ class MainActivity : FragmentActivity() {
                         )
                     }
                     is AuthState.Authenticated -> {
-                        NavShell()
+                        NavShell(
+                            authRepository = authRepository,
+                            fcmToken = currentFcmToken
+                        )
                     }
                 }
             }

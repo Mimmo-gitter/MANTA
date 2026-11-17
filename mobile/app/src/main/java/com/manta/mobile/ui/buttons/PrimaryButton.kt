@@ -1,4 +1,4 @@
-package com.manta.mobile.ui
+package com.manta.mobile.ui.buttons
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
