@@ -3,10 +3,11 @@
 **Parent User Story:** US-26 — DORA Lead Time for Changes & PR-to-Deployment Attribution  
 **Task:** Task 26.1 (Design)  
 **Is Blocked By:** Task 20.1 (Git/PR/Commit Schema), Task 25.1 ([Production Deployment Ingestion Pipeline](deployment-ingestion-pipeline.md))  
-**Blocks / Enables:** Task 26.2, Task 26.3, Task 26.4, Task 30.1  
+**Blocks / Enables:** Task 26.2, Task 26.3, Task 26.4 ([Test Scenarios](dora-lead-time-for-changes-test-scenarios.md)), Task 30.1  
 **Authoritative References:**
 - M.A.N.T.A. Software Requirements Specification (SRS) V1.0 (§3.2.1, §3.2.2)
 - [Production Deployment Ingestion Pipeline](deployment-ingestion-pipeline.md) (Task 25.1)
+- [Lead Time for Changes Test Scenarios](dora-lead-time-for-changes-test-scenarios.md) (Task 26.4 / SCRUM-436)
 - [ORM Models](file:///c:/Users/idusc/Desktop/MANTA/dev/backend/app/db/models/models.py) (`Deployment`, `DeploymentPullRequest`, `PullRequest`, `Commit`, `Project`, `Repository`)
 - [Authoritative Deployment Query](file:///c:/Users/idusc/Desktop/MANTA/dev/backend/app/deployments/service.py#L415-L459) (`build_authoritative_production_deployments_query`)
 
