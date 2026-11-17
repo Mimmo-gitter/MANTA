@@ -35,6 +35,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.dialects import postgresql
 
+from app.contributors.service import resolve_or_create_contributor_pseudonym
 from app.db.models.models import (
     Commit,
     Deployment,
@@ -1231,17 +1232,22 @@ async def test_tc_dora_lt_live_postgres_e2e():
         )
         session.add(project)
 
-        # Create Repository
+        # Create Repository with valid schema attributes
         repo = Repository(
             id=uuid.uuid4(),
             tenant_id=tenant_id,
             project_id=project.id,
-            name="dora-lt-repo",
-            url=f"https://github.com/manta-live/{uuid.uuid4().hex[:6]}",
+            external_repo_id=int(tenant_id.int % 1_000_000_000),
+            full_name=f"acme/dora-lt-{uuid.uuid4().hex[:6]}",
             default_branch="main",
+            is_private=True,
         )
         session.add(repo)
         await session.flush()
+
+        pseudo_author = await resolve_or_create_contributor_pseudonym(
+            session, tenant_id=tenant_id, provider="github", external_actor_id="live-alice"
+        )
 
         # Create 1 Single PR with 26.5h Lead Time
         t_first = t_deploy - timedelta(hours=26, minutes=30)
@@ -1251,7 +1257,7 @@ async def test_tc_dora_lt_live_postgres_e2e():
             tenant_id=tenant_id,
             project_id=project.id,
             repository_id=repo.id,
-            author_pseudonym_id=_pseudonym("live-alice"),
+            author_pseudonym_id=pseudo_author,
             external_pr_number=101,
             title="Live E2E 26.5h PR",
             state="merged",
@@ -1271,7 +1277,7 @@ async def test_tc_dora_lt_live_postgres_e2e():
             tenant_id=tenant_id,
             project_id=project.id,
             repository_id=repo.id,
-            actor_pseudonym_id=_pseudonym("live-deployer"),
+            actor_pseudonym_id=None,
             external_deployment_id=f"deploy-{uuid.uuid4().hex[:8]}",
             environment="production",
             commit_sha=sha_merge,
