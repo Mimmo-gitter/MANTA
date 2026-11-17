@@ -6,7 +6,8 @@
 **Blocks / Enables:** Task 29.2, Task 29.3, Task 30.1  
 **Authoritative References:**
 - M.A.N.T.A. Software Requirements Specification (SRS) V1.0 (§3.2.1, §3.2.2)
-- [ORM Models](file:///c:/Users/idusc/Desktop/MANTA/dev/backend/app/db/models/models.py#L1018-L1040) (`Incident` — `started_at`, `resolved_at`, `recovery_time_seconds`)
+- [Mean Time to Recovery Test Scenarios](dora-mttr-calculation-test-scenarios.md) (Task 29.3 / SCRUM-448)
+- [ORM Models](../backend/app/db/models/models.py) (`Incident` — `started_at`, `resolved_at`, `recovery_time_seconds`)
 
 ---
 
