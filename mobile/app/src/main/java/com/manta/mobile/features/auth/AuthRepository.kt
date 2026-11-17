@@ -45,6 +45,7 @@ class AuthRepository(
     suspend fun fetchCurrentUser(): Result<UserProfileResponse> = withContext(Dispatchers.IO) {
         val currentToken = getAccessToken()
         if (currentToken != null) {
+            Log.d(TAG, "Current JWT: $currentToken")
             Log.d(TAG, "Current JWT Payload: ${JwtUtils.getRawPayload(currentToken)}")
         }
         try {
