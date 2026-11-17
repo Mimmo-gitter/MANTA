@@ -159,54 +159,61 @@ def _build_10_deployment_benchmark_fixture(
     list[tuple[Deployment, Optional[DeploymentIncident]]],
 ]:
     """
-    Construct the canonical 10-deployment benchmark fixture (Task 28.2 Acceptance Criteria):
-    - D1: FAILED deployment + 1 active CONFIRMED incident (overlapping signals -> counts as 1)
-    - D2: ROLLED_BACK deployment + 2 active CONFIRMED incidents (overlapping + multi-incident -> counts as 1)
-    - D3: SUCCESS deployment + 1 active CONFIRMED incident within 2h (incident failure -> counts as 1)
-    - D4: SUCCESS deployment + 1 CANCELLED incident (is_active=False -> counts as 0 failed)
-    - D5: SUCCESS deployment + 1 FALSE_POSITIVE incident (is_active=False -> counts as 0 failed)
-    - D6..D10: 5 clean SUCCESS deployments without incidents (counts as 0 failed)
+    Construct the canonical 10-deployment benchmark fixture (Task 28.3 / SCRUM-444):
+    - D1: FAILED + confirmed Jira incident at +4h (overlapping signals -> counts as 1)
+    - D2: ROLLED_BACK (counts as 1)
+    - D3: SUCCESS + confirmed Jira incident at +18h (counts as 1)
+    - D4: SUCCESS + Jira incident at +30h (outside 24h window -> counts as 0)
+    - D5: SUCCESS + Jira incident at +6h later Cancelled (is_active=False -> counts as 0)
+    - D6..D10: 5 clean SUCCESS deployments without incidents (counts as 0)
     Total production deployments = 10; Distinct failed deployments = 3 -> CFR = 0.30 (30.0%).
+    Asserts 30.0% vs. 40.0% (preventing +30h temporal leakage and overlapping double-counting).
     """
     tid = tenant_id or uuid.uuid4()
     pid = project_id or uuid.uuid4()
     t0 = base_time or datetime(2026, 11, 10, 10, 0, 0, tzinfo=timezone.utc)
 
+    # D1: FAILED + confirmed Jira incident at +4h -> counts as 1
     d1 = _make_deployment(
-        label="d1-failed-and-incident",
+        label="d1-failed-and-incident-4h",
         deployed_at=t0 + timedelta(hours=1),
         status=DeploymentOutcome.FAILED.value,
         tenant_id=tid,
         project_id=pid,
     )
+    # D2: ROLLED_BACK -> counts as 1
     d2 = _make_deployment(
-        label="d2-rolled-back-and-two-incidents",
+        label="d2-rolled-back-clean",
         deployed_at=t0 + timedelta(hours=2),
         status=DeploymentOutcome.ROLLED_BACK.value,
         tenant_id=tid,
         project_id=pid,
     )
+    # D3: SUCCESS + confirmed Jira incident at +18h -> counts as 1
     d3 = _make_deployment(
-        label="d3-success-with-confirmed-incident",
+        label="d3-success-confirmed-incident-18h",
         deployed_at=t0 + timedelta(hours=3),
         status=DeploymentOutcome.SUCCESS.value,
         tenant_id=tid,
         project_id=pid,
     )
+    # D4: SUCCESS + Jira incident at +30h (outside 24h correlation window) -> counts as 0
     d4 = _make_deployment(
-        label="d4-success-with-cancelled-incident",
+        label="d4-success-incident-30h-outside-window",
         deployed_at=t0 + timedelta(hours=4),
         status=DeploymentOutcome.SUCCESS.value,
         tenant_id=tid,
         project_id=pid,
     )
+    # D5: SUCCESS + Jira incident at +6h later Cancelled -> counts as 0
     d5 = _make_deployment(
-        label="d5-success-with-false-positive-incident",
+        label="d5-success-incident-6h-cancelled",
         deployed_at=t0 + timedelta(hours=5),
         status=DeploymentOutcome.SUCCESS.value,
         tenant_id=tid,
         project_id=pid,
     )
+    # D6..D10: 5 clean SUCCESS deployments without incidents -> count as 0
     clean_deployments = [
         _make_deployment(
             label=f"d{idx}-clean-success",
@@ -218,28 +225,41 @@ def _build_10_deployment_benchmark_fixture(
         for idx in range(6, 11)
     ]
 
-    inc_d1 = _make_incident(deployment=d1, status="CONFIRMED", is_active=True)
-    inc_d2_a = _make_incident(
-        deployment=d2, status="CONFIRMED", is_active=True, detected_offset=timedelta(minutes=30)
+    inc_d1 = _make_incident(
+        deployment=d1,
+        status="CONFIRMED",
+        is_active=True,
+        detected_offset=timedelta(hours=4),
     )
-    inc_d2_b = _make_incident(
-        deployment=d2, status="CONFIRMED", is_active=True, detected_offset=timedelta(hours=1)
+    inc_d3 = _make_incident(
+        deployment=d3,
+        status="CONFIRMED",
+        is_active=True,
+        detected_offset=timedelta(hours=18),
     )
-    inc_d3 = _make_incident(deployment=d3, status="CONFIRMED", is_active=True)
-    inc_d4_cancelled = _make_incident(deployment=d4, status="CANCELLED", is_active=False)
-    inc_d5_fp = _make_incident(deployment=d5, status="FALSE_POSITIVE", is_active=False)
+    inc_d4_30h = _make_incident(
+        deployment=d4,
+        status="CONFIRMED",
+        is_active=True,
+        detected_offset=timedelta(hours=30),
+    )
+    inc_d5_cancelled = _make_incident(
+        deployment=d5,
+        status="CANCELLED",
+        is_active=False,
+        detected_offset=timedelta(hours=6),
+    )
 
     all_deployments = [d1, d2, d3, d4, d5, *clean_deployments]
-    all_incidents = [inc_d1, inc_d2_a, inc_d2_b, inc_d3, inc_d4_cancelled, inc_d5_fp]
+    all_incidents = [inc_d1, inc_d3, inc_d4_30h, inc_d5_cancelled]
 
-    # Simulated LEFT JOIN rows (note D2 appears twice because it has 2 active incidents)
+    # Simulated LEFT JOIN rows
     joined_rows: list[tuple[Deployment, Optional[DeploymentIncident]]] = [
         (d1, inc_d1),
-        (d2, inc_d2_a),
-        (d2, inc_d2_b),
+        (d2, None),
         (d3, inc_d3),
-        (d4, None),
-        (d5, None),
+        (d4, inc_d4_30h),
+        (d5, inc_d5_cancelled),
         *[(d, None) for d in clean_deployments],
     ]
     return all_deployments, all_incidents, joined_rows
@@ -278,7 +298,7 @@ def test_task_28_2_ten_deployment_benchmark_fixture_overlapping_signals_yields_3
         deployments[2].id,
     ]
 
-    # 2. Verify via LEFT JOIN (Deployment, DeploymentIncident) rows where D2 is duplicated
+    # 2. Verify via LEFT JOIN (Deployment, DeploymentIncident) rows
     result_joined = compute_change_failure_rate(
         joined_rows,
         window_days=30,
@@ -289,6 +309,113 @@ def test_task_28_2_ten_deployment_benchmark_fixture_overlapping_signals_yields_3
     assert result_joined.failed_deployment_count == 3
     assert result_joined.change_failure_rate == 0.30
     assert result_joined.change_failure_rate_percentage == 30.0
+
+
+def test_task_28_3_canonical_10_deployment_benchmark_asserting_30_percent_vs_40_percent():
+    """
+    Task 28.3 / SCRUM-444 Acceptance Criteria:
+    Create 10-deployment test scenario:
+    - D1: FAILED + confirmed Jira incident at +4h -> counts as 1 (distinct union, overlapping signals)
+    - D2: ROLLED_BACK -> counts as 1 (terminal failure outcome)
+    - D3: SUCCESS + confirmed Jira incident at +18h -> counts as 1 (incident <=24h)
+    - D4: SUCCESS + Jira incident at +30h -> outside 24h window, counts as 0
+    - D5: SUCCESS + Jira incident at +6h later Cancelled -> cancelled, counts as 0
+    - D6..D10: SUCCESS -> clean, count as 0
+    Total = 3 / 10 = 30.0% (0.30).
+
+    Asserting 30% vs 40%:
+    - Expected Authoritative Result: 3 / 10 = 30.0% (0.3000).
+    - Contrast Defect A (Temporal Leakage): If D4's incident at +30h were improperly included,
+      numerator would be 4, yielding 40.0% (4 / 10).
+    - Contrast Defect B (Signal Double-Counting): If D1's FAILED status and +4h incident were
+      double-counted, numerator would be 4, yielding 40.0% (4 / 10).
+    - Contrast Defect C (Cancelled Incident Inclusion): If D5's cancelled incident were included,
+      numerator would be 4, yielding 40.0% (4 / 10).
+    The test strictly asserts CFR == 30.0% and CFR != 40.0%.
+    """
+    window_end = datetime(2026, 11, 14, 18, 0, 0, tzinfo=timezone.utc)
+    base_time = window_end - timedelta(days=2)
+    deployments, incidents, joined_rows = _build_10_deployment_benchmark_fixture(
+        base_time=base_time,
+    )
+
+    d1, d2, d3, d4, d5 = (
+        deployments[0],
+        deployments[1],
+        deployments[2],
+        deployments[3],
+        deployments[4],
+    )
+    inc_d1 = next(inc for inc in incidents if inc.deployment_id == d1.id)
+    inc_d3 = next(inc for inc in incidents if inc.deployment_id == d3.id)
+    inc_d4_30h = next(inc for inc in incidents if inc.deployment_id == d4.id)
+    inc_d5_cancelled = next(inc for inc in incidents if inc.deployment_id == d5.id)
+
+    # Verify individual incident correlation predicates
+    assert is_active_confirmed_incident_for_deployment(inc_d1, d1) is True  # +4h <= 24h
+    assert is_active_confirmed_incident_for_deployment(inc_d3, d3) is True  # +18h <= 24h
+    assert is_active_confirmed_incident_for_deployment(inc_d4_30h, d4) is False  # +30h > 24h
+    assert is_active_confirmed_incident_for_deployment(inc_d5_cancelled, d5) is False  # CANCELLED
+
+    # 1. Authoritative 14-day window evaluation
+    res_14d = compute_change_failure_rate(
+        deployments,
+        deployment_incidents=incidents,
+        window_days=14,
+        window_end=window_end,
+    )
+    assert res_14d.total_deployment_count == 10
+    assert res_14d.failed_deployment_count == 3
+    assert res_14d.cfr == 0.30
+    assert res_14d.cfr_ratio == 0.30
+    assert res_14d.cfr_percentage == 30.0
+    assert res_14d.failed_deployment_ids == [d1.id, d2.id, d3.id]
+
+    # Strict assertion: 30.0% vs 40.0%
+    assert res_14d.cfr_percentage != 40.0
+    assert res_14d.cfr_ratio != 0.40
+
+    # 2. Authoritative 30-day window evaluation
+    res_30d = compute_change_failure_rate(
+        deployments,
+        deployment_incidents=incidents,
+        window_days=30,
+        window_end=window_end,
+    )
+    assert res_30d.total_deployment_count == 10
+    assert res_30d.failed_deployment_count == 3
+    assert res_30d.cfr == 0.30
+    assert res_30d.cfr_percentage == 30.0
+    assert res_30d.cfr_percentage != 40.0
+
+    # 3. Simulated LEFT JOIN row deduplication evaluation
+    res_joined = compute_change_failure_rate(
+        joined_rows,
+        window_days=14,
+        window_end=window_end,
+    )
+    assert res_joined.total_deployment_count == 10
+    assert res_joined.failed_deployment_count == 3
+    assert res_joined.cfr_percentage == 30.0
+    assert res_joined.cfr_percentage != 40.0
+
+    # 4. Explicit contrast with Naive / Buggy implementations:
+    # Defect A: Naive calculation without the 24h window filter would include D4 (+30h)
+    naive_failed_ids_temporal_leak = [d1.id, d2.id, d3.id, d4.id]
+    naive_cfr_temporal_leak = round(
+        len(naive_failed_ids_temporal_leak) / len(deployments) * 100.0, 2
+    )
+    assert naive_cfr_temporal_leak == 40.0, "Naive temporal leakage would evaluate to 40.0%"
+
+    # Defect B: Naive double-counting of D1 (FAILED + incident counted separately)
+    naive_numerator_double_count = (
+        1 + 1 + 1 + 1
+    )  # 1 (D1 status) + 1 (D1 incident) + 1 (D2 status) + 1 (D3 incident)
+    # 2 + 1 + 1 = 4
+    assert naive_numerator_double_count == 4
+    assert (naive_numerator_double_count / 10) * 100.0 == 40.0, (
+        "Double-counting would evaluate to 40.0%"
+    )
 
 
 def test_task_28_2_left_join_row_multiplication_deduplicated_by_distinct_id():

@@ -6,9 +6,10 @@
 **Blocks / Enables:** Task 28.2, Task 28.3, Task 30.1  
 **Authoritative References:**
 - M.A.N.T.A. Software Requirements Specification (SRS) V1.0 (§3.2.1, §3.2.2)
+- [Change Failure Rate Test Scenarios](dora-change-failure-rate-test-scenarios.md) (Task 28.3 / SCRUM-444)
 - [Production Deployment Ingestion Pipeline](deployment-ingestion-pipeline.md) (Task 25.1)
 - [Jira Issues & Deployment Incidents Schema](jira-issues-and-deployment-incidents-schema.md) (Task 67.1)
-- [ORM Models](file:///c:/Users/idusc/Desktop/MANTA/dev/backend/app/db/models/models.py) (`Deployment`, `DeploymentIncident`, `Project`)
+- [ORM Models](../backend/app/db/models/models.py) (`Deployment`, `DeploymentIncident`, `Project`)
 
 ---
 
