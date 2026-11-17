@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 import { useAuth } from "@/providers/auth-provider";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useProjectsQuery } from "@/hooks/use-projects";
+import { useDeadLettersQuery } from "@/hooks/use-dead-letters";
 import {
   FigmaOverviewIcon,
   FigmaProjectsIcon,
@@ -22,6 +23,7 @@ import {
   FigmaVerificationIcon,
   FigmaSettingsIcon,
   FigmaIntegrationsIcon,
+  FigmaDeadLettersIcon,
   FigmaMembersIcon,
   FigmaTrashIcon,
   FigmaActiveChevron,
@@ -40,6 +42,7 @@ const FIGMA_NAV_ICONS: Record<string, React.ComponentType<{ className?: string }
   "refactoring-verification": FigmaVerificationIcon,
   "workspace-settings": FigmaSettingsIcon,
   integrations: FigmaIntegrationsIcon,
+  "dead-letters": FigmaDeadLettersIcon,
   "access-roles": FigmaMembersIcon,
   "privacy-erasure": FigmaTrashIcon,
   "adr-governance": FigmaVerificationIcon,
@@ -65,6 +68,14 @@ export function Sidebar({
   const { isAuthenticated, backendUser } = useAuth();
   const { can } = usePermissions();
   const { data: projects } = useProjectsQuery(isAuthenticated);
+  const canManageWebhooks = can("MANAGE_WEBHOOK_INTEGRATIONS");
+  const deadLettersQuery = useDeadLettersQuery(
+    "all",
+    isAuthenticated && canManageWebhooks,
+  );
+  const deadLettersUnresolvedCount = deadLettersQuery.data?.unresolved_count ?? 0;
+  const showDeadLettersLoadingBadge =
+    pathname.startsWith("/dead-letters") && deadLettersQuery.isLoading;
 
   const visibleNavigationSections = NAVIGATION_SECTIONS.map((section) => ({
     ...section,
@@ -284,12 +295,32 @@ export function Sidebar({
 
                             <div className="flex items-center gap-[6px] shrink-0">
                               {item.id === "projects" && (
-                                <div className="bg-[#0a0e18] border border-[#1c2433] border-solid flex flex-col items-start px-[7px] py-px relative rounded-[2px] shrink-0">
-                                  <span className="font-mono font-normal text-[#a4a8b8] text-[10px] leading-[15px] whitespace-nowrap">
+                                <div className="bg-[#0a0e18] border border-[#1c2433] border-solid flex flex-col items-start px-[5px] py-[3px] relative rounded-[4px] shrink-0">
+                                  <span className="font-mono font-medium text-[#94a3b8] text-[9px] leading-[9px] whitespace-nowrap">
                                     {projectsBadge}
                                   </span>
                                 </div>
                               )}
+                              {item.id === "dead-letters" &&
+                                (showDeadLettersLoadingBadge ? (
+                                  <div
+                                    data-testid="nav-dead-letters-badge"
+                                    className="bg-[#0a0e18] border border-[#252b3b] border-solid flex items-center justify-center px-[5px] py-[2px] relative rounded-[4px] shrink-0"
+                                  >
+                                    <span className="font-mono font-bold text-[#94a3b8] text-[9px] leading-[9px] whitespace-nowrap">
+                                      ...
+                                    </span>
+                                  </div>
+                                ) : deadLettersUnresolvedCount > 0 ? (
+                                  <div
+                                    data-testid="nav-dead-letters-badge"
+                                    className="bg-[rgba(245,158,11,0.16)] border border-[rgba(245,158,11,0.45)] border-solid flex items-center justify-center px-[5px] py-[2px] relative rounded-[4px] shrink-0"
+                                  >
+                                    <span className="font-mono font-bold text-[#fbbf24] text-[9px] leading-[9px] whitespace-nowrap">
+                                      {deadLettersUnresolvedCount}
+                                    </span>
+                                  </div>
+                                ) : null)}
                               {active && (
                                 <FigmaActiveChevron className="shrink-0" aria-hidden="true" />
                               )}
@@ -438,6 +469,27 @@ export function Sidebar({
                               </span>
                             </div>
                           )}
+
+                          {item.id === "dead-letters" &&
+                            (showDeadLettersLoadingBadge ? (
+                              <div
+                                data-testid="nav-dead-letters-badge"
+                                className="bg-[#0a0e18] border border-[#252b3b] border-solid flex items-center justify-center px-[5px] py-[2px] relative rounded-[4px] shrink-0"
+                              >
+                                <span className="font-mono font-bold text-[#94a3b8] text-[9px] leading-[9px] whitespace-nowrap">
+                                  ...
+                                </span>
+                              </div>
+                            ) : deadLettersUnresolvedCount > 0 ? (
+                              <div
+                                data-testid="nav-dead-letters-badge"
+                                className="bg-[rgba(245,158,11,0.16)] border border-[rgba(245,158,11,0.45)] border-solid flex items-center justify-center px-[5px] py-[2px] relative rounded-[4px] shrink-0"
+                              >
+                                <span className="font-mono font-bold text-[#fbbf24] text-[9px] leading-[9px] whitespace-nowrap">
+                                  {deadLettersUnresolvedCount}
+                                </span>
+                              </div>
+                            ) : null)}
 
                           {(showOverviewErrorDot || showRisksAlertDot) && (
                             <div className="bg-[#ff4d4d] relative rounded-full shrink-0 size-[6px]" />

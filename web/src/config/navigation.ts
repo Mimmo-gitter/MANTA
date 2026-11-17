@@ -262,6 +262,27 @@ export const NAVIGATION_SECTIONS: NavSectionConfig[] = [
           "Configure and monitor GitHub, GitLab, Jira, Linear, and CI/CD webhook connectors.",
       },
       {
+        id: "dead-letters",
+        label: "Dead Letters",
+        tabletLabel: "Dead Letters",
+        href: "/dead-letters",
+        section: "ADMINISTRATION",
+        requiredAction: "MANAGE_WEBHOOK_INTEGRATIONS",
+        requiredRole: "TENANT_ADMIN",
+        icon: "/icons/shell/597b1.svg",
+        activeIcon: "/icons/shell/597b1-active.svg",
+        tabletCollapsedIcon: "/icons/shell/c1f3b.svg",
+        tabletCollapsedActiveIcon: "/icons/shell/c1f3b-active.svg",
+        tabletCollapsedWidth: 14,
+        tabletCollapsedHeight: 14,
+        tabletExpandedIcon: "/icons/shell/18eb6.svg",
+        tabletExpandedActiveIcon: "/icons/shell/18eb6-active.svg",
+        tabletExpandedWidth: 24,
+        tabletExpandedHeight: 14,
+        description:
+          "Inspect quarantined webhook events, stack traces, and re-drive failed deliveries.",
+      },
+      {
         id: "access-roles",
         label: "Access & Roles",
         tabletLabel: "Access & Roles",
@@ -349,6 +370,10 @@ export function canAccessPortalRoute(
   pathname: string,
   can: (action: ActionId) => boolean,
 ): boolean {
+  if (pathname === "/dead-letters" || pathname.startsWith("/dead-letters/")) {
+    return true;
+  }
+
   const matchedItem = getNavItemByPathname(pathname);
   if (matchedItem?.requiredAction) {
     return can(matchedItem.requiredAction);
