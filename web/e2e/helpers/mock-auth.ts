@@ -286,6 +286,23 @@ export async function mockAuthenticatedSession(
       await route.fallback();
     },
   );
+
+  await page.route(
+    (url) => url.pathname === "/api/v1/dead-letters",
+    async (route) => {
+      if (route.request().method() === "GET" || route.request().method() === "OPTIONS") {
+        await fulfillCorsJson(route, 200, {
+          items: [],
+          unresolved_count: 0,
+          total: 0,
+          limit: 50,
+          offset: 0,
+        });
+        return;
+      }
+      await route.fallback();
+    },
+  );
 }
 
 /**
