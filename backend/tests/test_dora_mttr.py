@@ -574,21 +574,29 @@ def test_task_29_3_daily_mttr_trend_time_series_generation():
     assert len(result.daily_series) == 14
 
     # Day 3 check
-    day_3_metric = next(d for d in result.daily_series if d.date.strftime("%Y-%m-%d") == "2026-11-03")
+    day_3_metric = next(
+        d for d in result.daily_series if d.date.strftime("%Y-%m-%d") == "2026-11-03"
+    )
     assert day_3_metric.resolved_outage_count == 1
     assert day_3_metric.mttr_seconds == 6480.0
     assert day_3_metric.mttr_hours == 1.80
     assert day_3_metric.mttr_minutes == 108.0
 
     # Day 7 check (mean of 2160s and 9360s = 5760s = 1.60h)
-    day_7_metric = next(d for d in result.daily_series if d.date.strftime("%Y-%m-%d") == "2026-11-07")
+    day_7_metric = next(
+        d for d in result.daily_series if d.date.strftime("%Y-%m-%d") == "2026-11-07"
+    )
     assert day_7_metric.resolved_outage_count == 2
     assert day_7_metric.mttr_seconds == 5760.0
     assert day_7_metric.mttr_hours == 1.60
     assert day_7_metric.mttr_minutes == 96.0
 
     # Idle days check
-    idle_days = [d for d in result.daily_series if d.date.strftime("%Y-%m-%d") not in ("2026-11-03", "2026-11-07")]
+    idle_days = [
+        d
+        for d in result.daily_series
+        if d.date.strftime("%Y-%m-%d") not in ("2026-11-03", "2026-11-07")
+    ]
     assert len(idle_days) == 12
     assert all(d.resolved_outage_count == 0 for d in idle_days)
     assert all(d.mttr_seconds is None for d in idle_days)

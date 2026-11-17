@@ -986,9 +986,7 @@ def build_mttr_sql_query(
     Build native PostgreSQL 16 aggregate query computing MTTR in seconds, hours, and minutes
     for resolved health failure sessions per Task 29.1 §4 & Task 29.2.
     """
-    epoch_diff = func.extract(
-        text("epoch"), Incident.resolved_at - Incident.started_at
-    )
+    epoch_diff = func.extract(text("epoch"), Incident.resolved_at - Incident.started_at)
     count_resolved = func.count(Incident.id)
 
     stmt = (
@@ -1000,15 +998,11 @@ def build_mttr_sql_query(
             ).label("mttr_seconds"),
             case(
                 (count_resolved == 0, None),
-                else_=func.round(
-                    func.cast(func.avg(epoch_diff) / Decimal("3600.0"), Numeric), 2
-                ),
+                else_=func.round(func.cast(func.avg(epoch_diff) / Decimal("3600.0"), Numeric), 2),
             ).label("mttr_hours"),
             case(
                 (count_resolved == 0, None),
-                else_=func.round(
-                    func.cast(func.avg(epoch_diff) / Decimal("60.0"), Numeric), 2
-                ),
+                else_=func.round(func.cast(func.avg(epoch_diff) / Decimal("60.0"), Numeric), 2),
             ).label("mttr_minutes"),
         )
         .select_from(Incident)
@@ -1101,4 +1095,3 @@ async def calculate_rolling_mttr(
         window_days=window_days,
         window_end=end_utc,
     )
-

@@ -151,4 +151,3 @@ class MTTRResult(BaseModel):
     def mttr(self) -> Optional[float]:
         """Convenience accessor returning MTTR in hours."""
         return self.mttr_hours
-
