@@ -1,4 +1,4 @@
-"""Backend DORA metrics calculation services (US-26 / Task 26.3, US-27 / Task 27.2 & US-28 / Task 28.2)."""
+"""Backend DORA metrics calculation services (US-26 / Task 26.3, US-27 / Task 27.2, US-28 / Task 28.2 & US-29 / Task 29.2)."""
 
 from collections import Counter, defaultdict
 from datetime import date, datetime, timedelta, timezone
@@ -13,6 +13,7 @@ from app.db.models.models import (
     Deployment,
     DeploymentIncident,
     DeploymentPullRequest,
+    Incident,
     Project,
     PullRequest,
 )
@@ -23,14 +24,18 @@ from app.dora.schemas import (
     DailyChangeFailureRateMetric,
     DailyDeploymentCount,
     DailyLeadTimeMetric,
+    DailyMTTRMetric,
     DeploymentFrequencyResult,
     LeadTimeResult,
+    MTTROutageItem,
+    MTTRResult,
     PullRequestLeadTimeItem,
 )
 
 SUPPORTED_DEPLOYMENT_FREQUENCY_WINDOWS: tuple[int, ...] = (14, 30)
 SUPPORTED_LEAD_TIME_WINDOWS: tuple[int, ...] = (14, 30)
 SUPPORTED_CFR_WINDOWS: tuple[int, ...] = (14, 30)
+SUPPORTED_MTTR_WINDOWS: tuple[int, ...] = (14, 30)
 INCIDENT_CORRELATION_WINDOW_SECONDS: int = 86400
 
 
@@ -848,6 +853,245 @@ async def calculate_rolling_change_failure_rate(
 
     return compute_change_failure_rate(
         rows,
+        window_days=window_days,
+        window_end=end_utc,
+    )
+
+
+# ---------------------------------------------------------------------------
+# US-29 / Task 29.2: Mean Time to Recovery (MTTR) Calculator & Daily Trends
+# ---------------------------------------------------------------------------
+
+
+def compute_mttr(
+    incidents: Sequence[Incident],
+    *,
+    window_days: Literal[14, 30] = 14,
+    window_end: Optional[datetime] = None,
+) -> MTTRResult:
+    """
+    Compute rolling 14-day or 30-day Mean Time to Recovery (MTTR) and daily trend series
+    strictly based on resolved production health failure sessions (US-29 / Task 29.2 & Task 29.3).
+
+    Invariants Enforced:
+    1. Canonical Math: Mean duration of resolved failure sessions: mean(resolved_at - started_at).
+    2. Strict Independence: Completely independent of PR merges, commits, or deployments.
+    3. Self-Contained Pairing: Each outage pairs its own started_at and resolved_at.
+    4. Ongoing Outage Exclusion: Incidents with resolved_at IS NULL are strictly excluded.
+    5. Null Semantics: When zero resolved failure sessions exist in window, MTTR returns None (null).
+    6. Non-Negative Guard: Records with resolved_at < started_at are excluded.
+    """
+    if window_days not in SUPPORTED_MTTR_WINDOWS:
+        raise ValueError(
+            f"Unsupported window_days={window_days}. Expected one of {SUPPORTED_MTTR_WINDOWS}."
+        )
+
+    end_utc = _ensure_utc(window_end or datetime.now(timezone.utc))
+    start_utc = end_utc - timedelta(days=window_days)
+
+    daily_durations: dict[date, list[float]] = defaultdict(list)
+    outages: list[MTTROutageItem] = []
+    durations: list[float] = []
+
+    for inc in incidents:
+        if inc.resolved_at is None:
+            continue
+
+        started_utc = _ensure_utc(inc.started_at)
+        resolved_utc = _ensure_utc(inc.resolved_at)
+
+        if resolved_utc < started_utc:
+            continue
+
+        if resolved_utc < start_utc or resolved_utc > end_utc:
+            continue
+
+        delta_seconds = (resolved_utc - started_utc).total_seconds()
+        durations.append(delta_seconds)
+        daily_durations[resolved_utc.date()].append(delta_seconds)
+
+        outages.append(
+            MTTROutageItem(
+                incident_id=inc.id,
+                project_id=inc.project_id,
+                started_at=started_utc,
+                resolved_at=resolved_utc,
+                duration_seconds=_round_two_decimals(delta_seconds),
+                duration_hours=_round_two_decimals(delta_seconds / 3600.0),
+                severity=getattr(inc, "severity", "SEV-2") or "SEV-2",
+            )
+        )
+
+    resolved_count = len(durations)
+    if resolved_count == 0:
+        mttr_seconds = None
+        mttr_hours = None
+        mttr_minutes = None
+    else:
+        avg_seconds = sum(durations) / resolved_count
+        mttr_seconds = _round_two_decimals(avg_seconds)
+        mttr_hours = _round_two_decimals(avg_seconds / 3600.0)
+        mttr_minutes = _round_two_decimals(avg_seconds / 60.0)
+
+    end_date = end_utc.date()
+    start_date = end_date - timedelta(days=window_days - 1)
+    daily_series: list[DailyMTTRMetric] = []
+
+    for offset in range(window_days):
+        current_date = start_date + timedelta(days=offset)
+        day_vals = daily_durations.get(current_date, [])
+        if not day_vals:
+            daily_series.append(
+                DailyMTTRMetric(
+                    date=current_date,
+                    resolved_outage_count=0,
+                    mttr_seconds=None,
+                    mttr_hours=None,
+                    mttr_minutes=None,
+                )
+            )
+        else:
+            day_avg = sum(day_vals) / len(day_vals)
+            daily_series.append(
+                DailyMTTRMetric(
+                    date=current_date,
+                    resolved_outage_count=len(day_vals),
+                    mttr_seconds=_round_two_decimals(day_avg),
+                    mttr_hours=_round_two_decimals(day_avg / 3600.0),
+                    mttr_minutes=_round_two_decimals(day_avg / 60.0),
+                )
+            )
+
+    return MTTRResult(
+        window_days=window_days,
+        resolved_outage_count=resolved_count,
+        mttr_seconds=mttr_seconds,
+        mttr_hours=mttr_hours,
+        mttr_minutes=mttr_minutes,
+        outages=outages,
+        daily_series=daily_series,
+        window_start=start_utc,
+        window_end=end_utc,
+    )
+
+
+def build_mttr_sql_query(
+    *,
+    tenant_id: uuid.UUID,
+    project_id: uuid.UUID,
+    start_at: Optional[datetime] = None,
+    end_at: Optional[datetime] = None,
+) -> Select[tuple[int, Optional[float], Optional[float], Optional[float]]]:
+    """
+    Build native PostgreSQL 16 aggregate query computing MTTR in seconds, hours, and minutes
+    for resolved health failure sessions per Task 29.1 §4 & Task 29.2.
+    """
+    epoch_diff = func.extract(text("epoch"), Incident.resolved_at - Incident.started_at)
+    count_resolved = func.count(Incident.id)
+
+    stmt = (
+        select(
+            count_resolved.label("resolved_outage_count"),
+            case(
+                (count_resolved == 0, None),
+                else_=func.round(func.cast(func.avg(epoch_diff), Numeric), 2),
+            ).label("mttr_seconds"),
+            case(
+                (count_resolved == 0, None),
+                else_=func.round(func.cast(func.avg(epoch_diff) / Decimal("3600.0"), Numeric), 2),
+            ).label("mttr_hours"),
+            case(
+                (count_resolved == 0, None),
+                else_=func.round(func.cast(func.avg(epoch_diff) / Decimal("60.0"), Numeric), 2),
+            ).label("mttr_minutes"),
+        )
+        .select_from(Incident)
+        .join(
+            Project,
+            and_(
+                Project.id == Incident.project_id,
+                Project.tenant_id == Incident.tenant_id,
+            ),
+        )
+        .where(
+            Incident.tenant_id == tenant_id,
+            Incident.project_id == project_id,
+            Project.deleted_at.is_(None),
+            Incident.resolved_at.is_not(None),
+            Incident.resolved_at >= Incident.started_at,
+        )
+    )
+    if start_at is not None:
+        stmt = stmt.where(Incident.resolved_at >= start_at)
+    if end_at is not None:
+        stmt = stmt.where(Incident.resolved_at <= end_at)
+    return stmt
+
+
+def build_mttr_incidents_query(
+    *,
+    tenant_id: uuid.UUID,
+    project_id: uuid.UUID,
+    start_at: Optional[datetime] = None,
+    end_at: Optional[datetime] = None,
+) -> Select[tuple[Incident]]:
+    """Build query fetching resolved incidents in window for project under tenant context."""
+    stmt = (
+        select(Incident)
+        .join(
+            Project,
+            and_(
+                Project.id == Incident.project_id,
+                Project.tenant_id == Incident.tenant_id,
+            ),
+        )
+        .where(
+            Incident.tenant_id == tenant_id,
+            Incident.project_id == project_id,
+            Project.deleted_at.is_(None),
+            Incident.resolved_at.is_not(None),
+            Incident.resolved_at >= Incident.started_at,
+        )
+        .order_by(Incident.resolved_at.asc(), Incident.id.asc())
+    )
+    if start_at is not None:
+        stmt = stmt.where(Incident.resolved_at >= start_at)
+    if end_at is not None:
+        stmt = stmt.where(Incident.resolved_at <= end_at)
+    return stmt
+
+
+async def calculate_rolling_mttr(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    project_id: uuid.UUID,
+    window_days: Literal[14, 30] = 14,
+    window_end: Optional[datetime] = None,
+) -> MTTRResult:
+    """
+    Query resolved production incidents in window and compute rolling 14d/30d MTTR (Task 29.2).
+    """
+    if window_days not in SUPPORTED_MTTR_WINDOWS:
+        raise ValueError(
+            f"Unsupported window_days={window_days}. Expected one of {SUPPORTED_MTTR_WINDOWS}."
+        )
+
+    end_utc = _ensure_utc(window_end or datetime.now(timezone.utc))
+    start_utc = end_utc - timedelta(days=window_days)
+
+    stmt = build_mttr_incidents_query(
+        tenant_id=tenant_id,
+        project_id=project_id,
+        start_at=start_utc,
+        end_at=end_utc,
+    )
+
+    result = await db.execute(stmt)
+    incidents = list(result.scalars().all())
+
+    return compute_mttr(
+        incidents,
         window_days=window_days,
         window_end=end_utc,
     )

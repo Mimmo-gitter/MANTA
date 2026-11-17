@@ -1,4 +1,4 @@
-"""Pydantic schemas for DORA metrics (US-26 / Task 26.3, US-27 / Task 27.2 & US-28 / Task 28.2)."""
+"""Pydantic schemas for DORA metrics (US-26 / Task 26.3, US-27 / Task 27.2, US-28 / Task 28.2 & US-29 / Task 29.2)."""
 
 from datetime import date, datetime
 from typing import Literal, Optional
@@ -110,3 +110,44 @@ class ChangeFailureRateResult(BaseModel):
     @property
     def cfr_percentage(self) -> Optional[float]:
         return self.change_failure_rate_percentage
+
+
+class DailyMTTRMetric(BaseModel):
+    """Daily Mean Time to Recovery trend point in UTC (US-29 / Task 29.2)."""
+
+    date: date
+    resolved_outage_count: int = Field(ge=0)
+    mttr_seconds: Optional[float] = None
+    mttr_hours: Optional[float] = None
+    mttr_minutes: Optional[float] = None
+
+
+class MTTROutageItem(BaseModel):
+    """Detailed item representation of an individual resolved outage session (US-29)."""
+
+    incident_id: uuid.UUID
+    project_id: uuid.UUID
+    started_at: datetime
+    resolved_at: datetime
+    duration_seconds: float = Field(ge=0.0)
+    duration_hours: float = Field(ge=0.0)
+    severity: str = "SEV-2"
+
+
+class MTTRResult(BaseModel):
+    """Rolling 14-day or 30-day Mean Time to Recovery (MTTR) calculation result (US-29 / Task 29.2)."""
+
+    window_days: Literal[14, 30]
+    resolved_outage_count: int = Field(ge=0)
+    mttr_seconds: Optional[float] = None
+    mttr_hours: Optional[float] = None
+    mttr_minutes: Optional[float] = None
+    outages: list[MTTROutageItem] = Field(default_factory=list)
+    daily_series: list[DailyMTTRMetric]
+    window_start: datetime
+    window_end: datetime
+
+    @property
+    def mttr(self) -> Optional[float]:
+        """Convenience accessor returning MTTR in hours."""
+        return self.mttr_hours
