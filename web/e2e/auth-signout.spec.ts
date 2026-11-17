@@ -302,10 +302,9 @@ test.describe("OIDC Sign-Out & Session Termination (SCRUM-275)", () => {
     await expect(page).toHaveURL(/\/login/, { timeout: 10000 });
 
     // Click SSO button again to initiate re-authentication after page is interactive
-    await page.waitForLoadState("networkidle");
-    await page.waitForTimeout(500);
     const ssoBtn = page.getByTestId("company-sso-button");
     await expect(ssoBtn).toBeVisible();
+    await expect(ssoBtn).toBeEnabled();
     await ssoBtn.click();
 
     // Verify second fresh OIDC authorization request is dispatched

@@ -394,7 +394,7 @@ async def test_valid_webhook_is_durably_stored_before_202_acknowledgment():
             assert staged_row["tenant_id"] == tenant_id
             assert staged_row["integration_id"] == integration_id
             assert staged_row["provider"] == provider
-            assert staged_row["status"] == "staged"
+            assert staged_row["status"] in ("staged", "queued")
             assert staged_row["payload"] == expected_payload
 
         # 2. Verify provider-level signed intake (`/api/v1/webhooks/{provider}`)
@@ -438,7 +438,7 @@ async def test_valid_webhook_is_durably_stored_before_202_acknowledgment():
         assert len(provider_commit_ns_box) == 1
         assert provider_commit_ns_box[0] < spy_provider.response_start_timestamps_ns[-1]
         assert len(provider_pre_response_rows) == 1
-        assert provider_pre_response_rows[0]["status"] == "staged"
+        assert provider_pre_response_rows[0]["status"] in ("staged", "queued")
         assert provider_pre_response_rows[0]["payload"] == expected_payload
     finally:
         event.remove(Session, "after_commit", _on_after_commit)

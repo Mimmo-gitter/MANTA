@@ -20,12 +20,27 @@ class TokenClaims(BaseModel):
     preferred_username: str | None = None
     name: str | None = None
     tenant_id: str  # Guaranteed non-empty canonical UUID string
+    tenant_name: str | None = None
+    allowed_domain: str | None = None
     roles: list[str] = []
     raw: dict[str, Any] = {}
 
     @property
     def tenant_uuid(self) -> uuid.UUID:
         return uuid.UUID(self.tenant_id)
+
+    @property
+    def user_id(self) -> uuid.UUID | None:
+        raw_uid = self.raw.get("user_id")
+        if raw_uid:
+            try:
+                return uuid.UUID(str(raw_uid))
+            except ValueError:
+                pass
+        try:
+            return uuid.UUID(self.sub)
+        except ValueError:
+            return None
 
     @classmethod
     def from_claims(cls, claims: dict[str, Any]) -> "TokenClaims":
@@ -60,3 +75,19 @@ class TokenClaims(BaseModel):
             roles=roles,
             raw=claims,
         )
+
+
+class WorkspaceItem(BaseModel):
+    """Active workspace membership summary for the authenticated user."""
+
+    tenant_id: uuid.UUID
+    tenant_name: str
+    tenant_slug: str
+    role: str
+    is_current: bool = False
+
+
+class SwitchWorkspaceRequest(BaseModel):
+    """Payload to switch the user's active tenant context in Keycloak."""
+
+    tenant_id: uuid.UUID

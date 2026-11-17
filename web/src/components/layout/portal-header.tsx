@@ -4,9 +4,17 @@
 import { useState, useRef, useEffect, useId } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useQueryClient } from "@tanstack/react-query";
 import { Menu } from "lucide-react";
 import { useAuth } from "@/providers/auth-provider";
-import { setIsLoggingOut } from "@/lib/auth";
+import { usePermissions } from "@/hooks/use-permissions";
+import { getPrimaryRoleLabel } from "@/lib/permissions";
+import {
+  listWorkspaces,
+  setIsLoggingOut,
+  switchWorkspace,
+  type WorkspaceItem,
+} from "@/lib/auth";
 import { sidebarSections } from "@/config/navigation";
 import { cn } from "@/lib/utils";
 
@@ -16,42 +24,43 @@ interface PortalHeaderProps {
   isTablet?: boolean;
 }
 
-interface WorkspaceOption {
-  id: string;
-  name: string;
-  status: "Active" | "Idle";
-  isCanary?: boolean;
-}
-
-const WORKSPACE_OPTIONS: WorkspaceOption[] = [
-  { id: "acme", name: "Acme Consulting", status: "Active" },
-  { id: "apex", name: "Apex Labs (Canary)", status: "Idle", isCanary: true },
-];
+const ENV_LABEL = process.env.NEXT_PUBLIC_ENV_LABEL || "PRODUCTION";
 
 export function PortalHeader({
   onMobileMenuToggle,
   isTablet = false,
 }: PortalHeaderProps) {
-  const { isAuthenticated, displayName, tenantName, logout, user } = useAuth();
+  const {
+    isAuthenticated,
+    displayName,
+    email,
+    tenantId,
+    tenantName,
+    logout,
+    refresh,
+  } = useAuth();
+  const { roles } = usePermissions();
   const [workspaceMenuOpen, setWorkspaceMenuOpen] = useState(false);
+  const [workspaces, setWorkspaces] = useState<WorkspaceItem[]>([]);
+  const [switchingTenantId, setSwitchingTenantId] = useState<string | null>(null);
+  const [switchError, setSwitchError] = useState<string | null>(null);
   const [userMenuOpen, setUserMenuOpen] = useState(false);
-  const [activeWorkspace, setActiveWorkspace] = useState("Acme Consulting");
-  const [workspaceSearch, setWorkspaceSearch] = useState("");
+  const [projectSearch, setProjectSearch] = useState("");
   const pathname = usePathname();
   const router = useRouter();
+  const queryClient = useQueryClient();
 
-  // Figma 321:1283 default specification: Pavlo Zhuk (director@manta.ai)
   const effectiveDisplayName =
-    displayName && displayName !== "User" ? displayName : "Pavlo Zhuk";
-  const effectiveEmail =
     displayName && displayName !== "User"
-      ? ((user?.profile?.email as string) ||
-        `${displayName.toLowerCase().replace(/\s+/g, ".")}@manta.ai`)
-      : "director@manta.ai";
+      ? displayName
+      : email || "Authenticated User";
+  const effectiveEmail = email;
+  const roleLabel = getPrimaryRoleLabel(roles);
 
   const workspaceRef = useRef<HTMLDivElement>(null);
   const userMenuRef = useRef<HTMLDivElement>(null);
-  const searchInputId = useId();
+  const desktopSearchInputId = useId();
+  const tabletSearchInputId = useId();
   const [isSignedOut, setIsSignedOut] = useState(false);
 
   useEffect(() => {
@@ -60,7 +69,59 @@ export function PortalHeader({
     }
   }, [pathname, isAuthenticated]);
 
-  const showProfile = isAuthenticated || !isSignedOut;
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (pathname === "/projects") {
+      const q = new URLSearchParams(window.location.search).get("q") ?? "";
+      setProjectSearch(q);
+    } else {
+      setProjectSearch("");
+    }
+  }, [pathname]);
+
+  const showProfile = isAuthenticated && !isSignedOut;
+
+  useEffect(() => {
+    if (!showProfile) {
+      setWorkspaces([]);
+      return;
+    }
+    let cancelled = false;
+    void listWorkspaces()
+      .then((items) => {
+        if (!cancelled) {
+          setWorkspaces(items);
+          setSwitchError(null);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setWorkspaces([]);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [showProfile, tenantId]);
+
+  const handleSwitchWorkspace = async (targetTenantId: string) => {
+    if (switchingTenantId) return;
+    setSwitchingTenantId(targetTenantId);
+    setSwitchError(null);
+    try {
+      await switchWorkspace(targetTenantId);
+      queryClient.clear();
+      await refresh();
+      setWorkspaceMenuOpen(false);
+      router.refresh();
+    } catch (err: unknown) {
+      setSwitchError(
+        err instanceof Error ? err.message : "Failed to switch workspace.",
+      );
+    } finally {
+      setSwitchingTenantId(null);
+    }
+  };
 
   // Close dropdowns when clicking outside or pressing Escape
   useEffect(() => {
@@ -97,11 +158,10 @@ export function PortalHeader({
   const handleSignOut = () => {
     setIsLoggingOut(true);
     if (typeof window !== "undefined") {
-      window.sessionStorage.removeItem("manta_demo");
       window.sessionStorage.setItem("user_signed_out", "true");
     }
     const workspaceQuery =
-      currentWorkspaceName && currentWorkspaceName !== "Unknown Tenant"
+      currentWorkspaceName && currentWorkspaceName !== "Active Workspace"
         ? `?workspace=${encodeURIComponent(currentWorkspaceName)}`
         : "";
     router.replace(`/signed-out${workspaceQuery}`);
@@ -111,9 +171,9 @@ export function PortalHeader({
     }
   };
 
-  // Compute initials for avatar (e.g. "Pavlo Zhuk" -> "PZ")
+  // Compute initials for avatar
   const getInitials = (name?: string | null) => {
-    if (!name) return "PZ";
+    if (!name) return "?";
     const parts = name.trim().split(/\s+/);
     if (parts.length >= 2) {
       return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
@@ -124,11 +184,13 @@ export function PortalHeader({
   const currentWorkspaceName =
     tenantName && tenantName !== "Unknown Tenant"
       ? tenantName
-      : activeWorkspace;
+      : "Active Workspace";
 
-  const filteredWorkspaces = WORKSPACE_OPTIONS.filter((ws) =>
-    ws.name.toLowerCase().includes(workspaceSearch.toLowerCase().trim())
-  );
+  const handleProjectSearchSubmit = (event: React.FormEvent) => {
+    event.preventDefault();
+    const trimmed = projectSearch.trim();
+    router.push(trimmed ? `/projects?q=${encodeURIComponent(trimmed)}` : "/projects");
+  };
 
   // Match exact sidebar label for breadcrumb
   const getBreadcrumbInfo = () => {
@@ -155,101 +217,100 @@ export function PortalHeader({
   /* ------------------------------------------------------------------ */
   /*Workspace Dropdown Content (Figma 334:5977 - 1-to-1)                 */
   /* ------------------------------------------------------------------ */
-  const renderWorkspaceDropdown = () =>
-    workspaceMenuOpen && (
+  const renderWorkspaceDropdown = () => {
+    if (!workspaceMenuOpen) return null;
+
+    const displayedWorkspaces: WorkspaceItem[] =
+      workspaces.length > 0
+        ? workspaces
+        : [
+            {
+              tenant_id: tenantId || "active",
+              tenant_name: currentWorkspaceName,
+              tenant_slug: "",
+              role: roleLabel,
+              is_current: true,
+            },
+          ];
+
+    return (
       <div
         data-testid="workspace-dropdown-menu"
         role="menu"
         aria-label="Workspace Switcher"
         className="absolute left-0 top-[calc(100%+8px)] w-[320px] rounded-[12px] border border-[#1f2433] bg-[#161b26] p-px shadow-[0px_25px_50px_-12px_rgba(0,0,0,0.7)] z-50 flex flex-col overflow-hidden"
       >
-        {/* Header & Search (Figma 334:5982) */}
-        <div className="border-b border-[#1f2433] pt-[12px] pb-[13px] px-[12px] flex flex-col gap-[8px]">
-          <div className="px-[4px] font-mono text-[10px] leading-[15px] text-[#7c839b] tracking-[0.5px] uppercase">
-            Workspaces
-          </div>
-          <div className="relative w-full">
-            <img
-              src="/icons/shell/aaf0a.svg"
-              alt=""
-              aria-hidden="true"
-              className="pointer-events-none absolute left-[10px] top-1/2 -translate-y-1/2 size-[14px]"
-            />
-            <label htmlFor={searchInputId} className="sr-only">
-              Search workspaces
-            </label>
-            <input
-              id={searchInputId}
-              type="text"
-              value={workspaceSearch}
-              onChange={(e) => setWorkspaceSearch(e.target.value)}
-              placeholder="Search workspaces..."
-              className="w-full rounded-[8px] border border-[#1f2433] bg-[#0f131d] pl-[33px] pr-[13px] py-[7px] text-[12px] leading-[16px] text-[#e2e8f0] placeholder:text-[rgba(124,131,155,0.5)] focus:border-[#00e599] focus:outline-none"
-            />
+        {/* Header */}
+        <div className="border-b border-[#1f2433] px-[14px] py-[10px]">
+          <div className="font-mono text-[10px] leading-[15px] text-[#7c839b] tracking-[0.5px] uppercase">
+            {displayedWorkspaces.length > 1
+              ? "Switch Workspace"
+              : "Active Workspace"}
           </div>
         </div>
 
-        {/* Workspaces List (Figma 334:5992) */}
-        <div className="p-[6px] flex flex-col gap-[2px]" role="none">
-          {filteredWorkspaces.map((ws) => {
-            const isSelected = currentWorkspaceName === ws.name;
+        {/* Workspace List */}
+        <div className="p-[6px] flex flex-col gap-[6px]" role="none">
+          {displayedWorkspaces.map((ws) => {
+            const isCurrent = ws.is_current || (tenantId ? ws.tenant_id === tenantId : false);
+            const isSwitching = switchingTenantId === ws.tenant_id;
+
             return (
               <button
-                key={ws.id}
+                key={ws.tenant_id}
                 type="button"
                 role="menuitem"
+                disabled={Boolean(switchingTenantId)}
                 onClick={() => {
-                  setActiveWorkspace(ws.name);
-                  setWorkspaceMenuOpen(false);
+                  if (isCurrent) {
+                    setWorkspaceMenuOpen(false);
+                  } else {
+                    void handleSwitchWorkspace(ws.tenant_id);
+                  }
                 }}
                 className={cn(
-                  "flex w-full items-center justify-between rounded-[8px] text-left transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#00e599]",
-                  isSelected
-                    ? "bg-[rgba(0,229,153,0.1)] border border-[rgba(0,229,153,0.2)] px-[11px] py-[9px]"
-                    : "px-[10px] py-[8px] hover:bg-white/[0.03]"
+                  "flex w-full items-center justify-between rounded-[8px] text-left px-[11px] py-[9px] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#00e599]",
+                  isCurrent
+                    ? "bg-[rgba(0,229,153,0.1)] border border-[rgba(0,229,153,0.2)]"
+                    : "border border-transparent hover:bg-[rgba(255,255,255,0.04)] hover:border-[#262d3d] cursor-pointer",
                 )}
               >
-                <div className="flex items-center gap-[10px]">
-                  {ws.isCanary ? (
+                <div className="flex items-center gap-[10px] min-w-0">
+                  <div
+                    className={cn(
+                      "flex size-[28px] shrink-0 items-center justify-center rounded-[4px]",
+                      isCurrent
+                        ? "bg-[rgba(0,229,153,0.2)]"
+                        : "bg-[#0f131d] border border-[#252b3b]",
+                    )}
+                  >
                     <img
-                      src="/icons/shell/0c159.svg"
+                      src="/icons/shell/lightning-emerald.svg"
                       alt=""
                       aria-hidden="true"
-                      className="size-[28px] shrink-0"
+                      className="h-[14px] w-[8px]"
                     />
-                  ) : (
-                    <div className="bg-[rgba(0,229,153,0.2)] flex size-[28px] shrink-0 items-center justify-center rounded-[4px]">
-                      <img
-                        src="/icons/shell/lightning-emerald.svg"
-                        alt=""
-                        aria-hidden="true"
-                        className="h-[14px] w-[8px]"
-                      />
-                    </div>
-                  )}
-                  <div className="flex flex-col">
-                    <span
-                      className={cn(
-                        "text-[12px] font-medium leading-[16px]",
-                        isSelected ? "text-[#e2e8f0]" : "text-[#7c839b]"
-                      )}
-                    >
-                      {ws.name}
+                  </div>
+                  <div className="flex flex-col min-w-0">
+                    <span className="text-[12px] font-medium leading-[16px] text-[#e2e8f0] truncate">
+                      {ws.tenant_name}
                     </span>
                     <span
                       className={cn(
                         "font-mono text-[10px] leading-[15px]",
-                        ws.status === "Active"
-                          ? "text-[#00e599]"
-                          : "text-[rgba(124,131,155,0.6)]"
+                        isCurrent ? "text-[#00e599]" : "text-[#7c839b]",
                       )}
                     >
-                      {ws.status}
+                      {isSwitching
+                        ? "Switching..."
+                        : isCurrent
+                          ? "Active"
+                          : ws.role}
                     </span>
                   </div>
                 </div>
 
-                {isSelected && (
+                {isCurrent && (
                   <div
                     className="bg-[#00e599] rounded-full size-[6px] shadow-[0px_0px_6px_0px_#00e599] shrink-0"
                     aria-hidden="true"
@@ -259,14 +320,18 @@ export function PortalHeader({
             );
           })}
 
-          {filteredWorkspaces.length === 0 && (
-            <p className="py-[8px] text-center text-[12px] text-[#7c839b]">
-              No matching workspaces found
+          {switchError && (
+            <p
+              role="alert"
+              className="px-[8px] pb-[4px] font-sans text-[11px] leading-[15px] text-[#fca5a5]"
+            >
+              {switchError}
             </p>
           )}
         </div>
       </div>
     );
+  };
 
   /* ------------------------------------------------------------------ */
   /* User Profile Dropdown Content (Figma 321:1453 - 1-to-1)             */
@@ -291,15 +356,17 @@ export function PortalHeader({
               <span className="font-semibold text-[#e2e8f0] text-[12px] leading-[16px] truncate">
                 {effectiveDisplayName}
               </span>
-              <span className="font-mono text-[#7c839b] text-[10px] leading-[15px] truncate">
-                {effectiveEmail}
-              </span>
+              {effectiveEmail && (
+                <span className="font-mono text-[#7c839b] text-[10px] leading-[15px] truncate">
+                  {effectiveEmail}
+                </span>
+              )}
             </div>
           </div>
 
           <div className="flex items-center">
             <span className="bg-[rgba(0,229,153,0.1)] border border-[rgba(0,229,153,0.2)] inline-flex items-center px-[9px] py-[3px] rounded-[4px] font-mono text-[#00e599] text-[9px] leading-[13.5px] tracking-[0.45px] uppercase">
-              Tenant Admin
+              {roleLabel}
             </span>
           </div>
         </div>
@@ -402,7 +469,7 @@ export function PortalHeader({
               aria-expanded={workspaceMenuOpen}
               aria-haspopup="menu"
               aria-label={`Current Workspace: ${currentWorkspaceName}. Click to switch.`}
-              className="bg-[#121722] border border-[#1e2638] border-solid flex gap-[8px] h-[32px] items-center px-[11px] py-px rounded-[6px]"
+              className="bg-[#121722] border border-[#1e2638] border-solid flex min-w-[150px] max-w-[240px] gap-[8px] h-[32px] items-center px-[11px] py-px rounded-[6px]"
             >
               <img
                 src="/icons/shell/lightning-emerald.svg"
@@ -410,7 +477,7 @@ export function PortalHeader({
                 aria-hidden="true"
                 className="h-[9px] w-[5px] shrink-0"
               />
-              <span className="font-medium text-[#f0f4f8] text-[12px] leading-[16px] whitespace-nowrap">
+              <span className="font-medium text-[#f0f4f8] text-[12px] leading-[16px] whitespace-nowrap truncate min-w-0">
                 {currentWorkspaceName}
               </span>
               <img
@@ -422,7 +489,7 @@ export function PortalHeader({
                 alt=""
                 aria-hidden="true"
                 className={cn(
-                  "size-[12px] shrink-0 transition-transform duration-150",
+                  "ml-auto size-[12px] shrink-0 transition-transform duration-150",
                   workspaceMenuOpen && "rotate-180",
                 )}
               />
@@ -433,21 +500,30 @@ export function PortalHeader({
           {/* Environment Badge */}
           <div
             data-testid="environment-badge"
-            aria-label="Deployment Environment: Production US-East-1"
+            aria-label={`Deployment Environment: ${ENV_LABEL}`}
             className="hidden min-[769px]:flex bg-[rgba(16,185,129,0.1)] border border-[rgba(16,185,129,0.3)] border-solid gap-[6px] h-[28px] items-center px-[11px] py-px rounded-[6px]"
           >
-            <span className="font-mono font-semibold text-[#10b981] text-[11px] leading-[16.5px] tracking-[0.275px] whitespace-nowrap">
-              PROD US-EAST-1
+            <span className="font-mono font-semibold text-[#10b981] text-[11px] leading-[16.5px] tracking-[0.275px] uppercase whitespace-nowrap">
+              {ENV_LABEL}
             </span>
           </div>
 
           {/* Search Field */}
-          <div className="relative h-[32px] w-[140px] sm:w-[160px]">
+          <form
+            role="search"
+            onSubmit={handleProjectSearchSubmit}
+            className="relative h-[32px] w-[140px] sm:w-[160px]"
+          >
+            <label htmlFor={tabletSearchInputId} className="sr-only">
+              Search projects
+            </label>
             <input
+              id={tabletSearchInputId}
               type="text"
-              placeholder="Search..."
-              aria-label="Search projects"
-              className="bg-[#0A0E18] border border-[#1e2638] border-solid h-[32px] w-full rounded-[6px] pl-[32px] pr-[36px] py-[7px] text-[12px] leading-[16px] text-[#f0f4f8] placeholder:text-[#6b7280] focus:border-[#10b981] focus:outline-none"
+              value={projectSearch}
+              onChange={(e) => setProjectSearch(e.target.value)}
+              placeholder="Search projects..."
+              className="bg-[#0A0E18] border border-[#1e2638] border-solid h-[32px] w-full rounded-[6px] pl-[32px] pr-[12px] py-[7px] text-[12px] leading-[16px] text-[#f0f4f8] placeholder:text-[#6b7280] focus:border-[#10b981] focus:outline-none"
             />
             <img
               src="/icons/shell/6dd21.svg"
@@ -455,7 +531,7 @@ export function PortalHeader({
               aria-hidden="true"
               className="pointer-events-none absolute left-[10px] top-1/2 -translate-y-1/2 size-[12px]"
             />
-          </div>
+          </form>
 
           {/* Notification Bell */}
           <Link
@@ -475,7 +551,7 @@ export function PortalHeader({
           {/* User Profile & Sign Out */}
           <div ref={userMenuRef} className="relative flex items-center gap-[10px] pl-[4px]">
             <span data-testid="user-tenant-badge" className="sr-only">
-              {tenantName || "Acme Consulting"}
+              {currentWorkspaceName}
             </span>
 
             <button
@@ -487,7 +563,7 @@ export function PortalHeader({
               aria-label={`User menu for ${effectiveDisplayName}`}
               className="flex items-center gap-[8px] rounded-[6px]"
             >
-              <div className="bg-[#0A0E18)] border border-[rgba(16,185,129,0.3)] border-solid flex size-[28px] items-center justify-center rounded-[6px] p-px">
+              <div className="bg-[#0A0E18] border border-[rgba(16,185,129,0.3)] border-solid flex size-[28px] items-center justify-center rounded-[6px] p-px">
                 <span className="font-mono font-bold text-[#10b981] text-[11px] leading-[16.5px]">
                   {getInitials(effectiveDisplayName)}
                 </span>
@@ -547,7 +623,7 @@ export function PortalHeader({
             aria-haspopup="menu"
             aria-label={`Current Workspace: ${currentWorkspaceName}. Click to switch.`}
             className={cn(
-              "flex w-[150px] h-[32px] shrink-0 gap-[8px] items-center px-[11px] rounded-[6px] border border-solid transition-all focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#00e599]",
+              "flex min-w-[150px] max-w-[240px] h-[32px] shrink-0 gap-[8px] items-center px-[11px] rounded-[6px] border border-solid transition-all focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#00e599]",
               workspaceMenuOpen
                 ? "bg-[#171B26] border-[#00e599] shadow-[0px_0px_10px_0px_rgba(0,229,153,0.1)]"
                 : "bg-[#171B26] border-[#252B3B] hover:border-[#7c839b]/40",
@@ -559,7 +635,7 @@ export function PortalHeader({
               aria-hidden="true"
               className="h-[9px] w-[5px] shrink-0"
             />
-            <span className="font-medium text-[#e2e8f0] text-[12px] leading-[16px] whitespace-nowrap">
+            <span className="font-medium text-[#e2e8f0] text-[12px] leading-[16px] whitespace-nowrap truncate min-w-0">
               {currentWorkspaceName}
             </span>
             <img
@@ -583,34 +659,43 @@ export function PortalHeader({
         {/* 2. Environment Badge (Figma 325:2837) */}
         <div
           data-testid="environment-badge"
-          aria-label="Deployment Environment: Production US-East-1"
-          className="hidden sm:flex h-[28px] w-[102px] shrink-0 items-center justify-center bg-[rgba(0,229,153,0.1)] border border-[rgba(0,229,153,0.2)] border-solid rounded-[6px]"
+          aria-label={`Deployment Environment: ${ENV_LABEL}`}
+          className="hidden sm:flex h-[28px] min-w-[96px] px-[10px] shrink-0 items-center justify-center bg-[rgba(0,229,153,0.1)] border border-[rgba(0,229,153,0.2)] border-solid rounded-[6px]"
         >
           <span className="font-mono text-[#00e599] text-[10px] leading-[15px] tracking-[0.5px] uppercase whitespace-nowrap">
-            PROD US-EAST-1
+            {ENV_LABEL}
           </span>
         </div>
 
         {/* 3. Global Search Field (Figma 325:2839) */}
-        <div className="relative hidden lg:flex bg-[#0a0e18] border border-[#252b3b] border-solid h-[32px] items-center px-[9px] py-px rounded-[6px] w-[192px] gap-[6px]">
+        <form
+          role="search"
+          onSubmit={handleProjectSearchSubmit}
+          className="relative hidden lg:flex bg-[#0a0e18] border border-[#252b3b] border-solid h-[32px] items-center px-[9px] py-px rounded-[6px] w-[192px] gap-[6px] focus-within:border-[#00e599] transition-colors"
+        >
           <img
             src="/icons/shell/4738c.svg"
             alt=""
             aria-hidden="true"
             className="size-[12px] shrink-0"
           />
+          <label htmlFor={desktopSearchInputId} className="sr-only">
+            Search projects
+          </label>
           <input
+            id={desktopSearchInputId}
             type="text"
+            value={projectSearch}
+            onChange={(e) => setProjectSearch(e.target.value)}
             placeholder="Search projects..."
-            aria-label="Search projects"
             className="w-full bg-transparent border-0 border-none outline-none focus:outline-none focus:ring-0 text-[#e2e8f0] placeholder:text-[#64748b] text-[11px] leading-normal p-0 m-0"
           />
-        </div>
+        </form>
 
         {/* 4. Notification Bell Icon Button (Figma 325:2845) */}
         <Link
           href="/risks-alerts"
-          aria-label="View Risks and Alerts (active notifications pending)"
+          aria-label="View Risks and Alerts"
           data-testid="header-alerts-link"
           className="bg-[#171b26] border border-[#252b3b] border-solid flex items-center justify-center rounded-[6px] relative shrink-0 size-[32px] hover:border-[#7c839b]/40 transition-colors"
         >
@@ -620,17 +705,13 @@ export function PortalHeader({
             aria-hidden="true"
             className="size-[14px]"
           />
-          <span
-            className="absolute bg-[#fbbf24] right-[8px] rounded-full size-[6px] top-[7px]"
-            aria-hidden="true"
-          />
         </Link>
 
         {/* 6. User Profile Trigger & Sign Out (Figma 325:2849 & 321:1972) */}
         {showProfile ? (
           <div ref={userMenuRef} className="relative flex gap-[6px] items-center">
             <span data-testid="user-tenant-badge" className="sr-only">
-              {tenantName || "Acme Consulting"}
+              {currentWorkspaceName}
             </span>
 
             <button
@@ -654,7 +735,7 @@ export function PortalHeader({
                 </span>
               </div>
 
-              {/* Name + Tenant Admin Badge */}
+              {/* Name + Role Badge */}
               <div className="hidden sm:flex items-center">
                 <span
                   data-testid="user-profile-name"
@@ -663,8 +744,11 @@ export function PortalHeader({
                   {effectiveDisplayName}
                 </span>
                 <span className="hidden md:inline-flex pl-[6px]">
-                  <span className="bg-[background: rgba(10, 14, 24, 0.1);] border border-[rgba(0,229,153,0.3)] border-solid inline-flex items-center px-[7px] py-[3px] rounded-[4px] font-mono text-[#00e599] text-[10px] leading-[10px] whitespace-nowrap">
-                    Tenant Admin
+                  <span
+                    data-testid="user-role-badge"
+                    className="bg-[#0A0E18]/10 border border-[rgba(0,229,153,0.3)] border-solid inline-flex items-center px-[7px] py-[3px] rounded-[4px] font-mono text-[#00e599] text-[10px] leading-[10px] whitespace-nowrap"
+                  >
+                    {roleLabel}
                   </span>
                 </span>
               </div>

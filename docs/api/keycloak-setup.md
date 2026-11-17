@@ -63,6 +63,20 @@ The test realm pre-seeds users across two distinct tenants to validate multi-ten
 | `beta_dev` | `dev123` | `DEVELOPER` | `22222222-2222-2222-2222-222222222222` | Tenant B developer |
 | `beta_exec` | `exec123` | `DELIVERY_DIRECTOR` | `22222222-2222-2222-2222-222222222222` | Tenant B delivery director |
 
+### 4. Short Token & SSO Session Lifetimes (`SCRUM-284` / `US-6`)
+To make silent token renewal and session expiration testable in seconds rather than minutes or hours, the test realm export (`infra/keycloak/realm-export.json`) defines short-lived token and SSO session parameters:
+
+| Configuration Parameter | Test Realm Value | Production Default | Purpose in Test Realm |
+|---|---|---|---|
+| `accessTokenLifespan` | **`60` seconds** (1 min) | `900` seconds (15 min) | Fast token expiration to verify silent renewal in seconds |
+| `accessTokenLifespanForImplicitFlow` | **`60` seconds** (1 min) | `900` seconds (15 min) | Consistent token lifetime across OIDC flows |
+| `ssoSessionIdleTimeout` | **`120` seconds** (2 min) | `1800` seconds (30 min) | Verifies idle session expiration after 2 minutes |
+| `ssoSessionMaxLifespan` | **`600` seconds** (10 min) | `36000` seconds (10 hours) | Verifies maximum session boundary in 10 minutes |
+| `clientSessionIdleTimeout` | **`120` seconds** (2 min) | `1800` seconds (30 min) | Client session idle timeout aligned with SSO idle |
+| `clientSessionMaxLifespan` | **`600` seconds** (10 min) | `36000` seconds (10 hours) | Client session max lifespan aligned with SSO max |
+
+> **Security Note:** Short lifetimes are applied **strictly to the test realm** (`infra/keycloak/realm-export.json`) for automated testing and local developer workflows. They must never be applied to staging or production environments. Full renewal test scenarios are documented in [`docs/session-renewal-test-scenarios.md`](../session-renewal-test-scenarios.md).
+
 ## Running Keycloak via Docker Compose
 To start the entire local stack including Keycloak:
 ```bash

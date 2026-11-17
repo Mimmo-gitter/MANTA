@@ -48,11 +48,28 @@ export function CallbackContent() {
         setStatusMessage("Synchronizing user claims...");
         await refresh();
 
-        // 4. Navigate to dashboard upon successful completion
+        // 4. Navigate to saved returnTo route or default to "/"
+        let returnTarget = "/";
         if (typeof window !== "undefined") {
-          window.location.replace("/");
+          try {
+            const savedReturnTo = window.sessionStorage.getItem("manta_auth_return_to");
+            if (
+              savedReturnTo &&
+              savedReturnTo.startsWith("/") &&
+              !savedReturnTo.startsWith("//")
+            ) {
+              returnTarget = savedReturnTo;
+              window.sessionStorage.removeItem("manta_auth_return_to");
+            }
+          } catch {
+            // fallback to default
+          }
+        }
+
+        if (typeof window !== "undefined") {
+          window.location.replace(returnTarget);
         } else {
-          router.replace("/");
+          router.replace(returnTarget);
         }
       } catch (err: unknown) {
         const rawMsg = err instanceof Error ? err.message : String(err);

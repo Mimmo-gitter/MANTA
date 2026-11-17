@@ -1,4 +1,6 @@
-from fastapi import APIRouter, Depends
+import uuid
+
+from fastapi import APIRouter, Depends, Response, status
 
 from app.auth.permissions import (
     Permission,
@@ -7,8 +9,202 @@ from app.auth.permissions import (
     stub_route_kwargs,
 )
 from app.auth.schemas import StubEndpointResponse, TokenClaims
+from app.projects.schemas import (
+    DeploymentSignalResponse,
+    DeploymentSignalUpdateRequest,
+    ProjectCreateRequest,
+    ProjectIncidentResponse,
+    ProjectResponse,
+    ProjectUpdateRequest,
+    RepositoryLinkRequest,
+    RepositoryResponse,
+)
+from app.projects.service import (
+    archive_project as archive_project_service,
+    create_project as create_project_service,
+    get_deployment_signal as get_deployment_signal_service,
+    get_project as get_project_service,
+    link_repository as link_repository_service,
+    list_project_incidents as list_project_incidents_service,
+    list_projects as list_projects_service,
+    unlink_repository as unlink_repository_service,
+    update_deployment_signal as update_deployment_signal_service,
+    update_project as update_project_service,
+)
 
-router = APIRouter(prefix="/api/v1/projects", tags=["Sprint & Risk Management", "Stubs"])
+router = APIRouter(
+    prefix="/api/v1/projects", tags=["Projects", "Sprint & Risk Management", "Stubs"]
+)
+
+# Permissions:
+# - Mutations (create project, link/unlink repos) require administrative tenant control:
+#   Permission.MANAGE_WEBHOOK_INTEGRATIONS strictly grants access ONLY to TENANT_ADMIN (HTTP 403 for DEVELOPER).
+# - Queries (list, get project) require project viewing authority:
+#   Permission.VIEW_PROJECT_DORA allows authorized tenant roles.
+require_tenant_admin = require_permission(Permission.MANAGE_WEBHOOK_INTEGRATIONS)
+require_project_view = require_permission(Permission.VIEW_PROJECT_DORA)
+
+
+# ==============================================================================
+# SCRUM-377: PROJECT CRUD & REPOSITORY LINKING ENDPOINTS
+# ==============================================================================
+
+
+@router.post(
+    "",
+    response_model=ProjectResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create a new project",
+    description="Creates a project record scoped to the authenticated tenant under PostgreSQL RLS.",
+)
+async def create_project(
+    payload: ProjectCreateRequest,
+    user: TokenClaims = Depends(require_tenant_admin),
+) -> ProjectResponse:
+    """Creates a new project under the caller's tenant context. Requires TENANT_ADMIN."""
+    return await create_project_service(user.tenant_uuid, user, payload)
+
+
+@router.get(
+    "",
+    response_model=list[ProjectResponse],
+    summary="List all tenant projects",
+    description="Retrieves all active projects and linked repositories for the caller's tenant.",
+)
+async def list_projects(
+    user: TokenClaims = Depends(require_project_view),
+) -> list[ProjectResponse]:
+    """Lists all active projects belonging to the caller's tenant under RLS isolation."""
+    return await list_projects_service(user.tenant_uuid)
+
+
+@router.get(
+    "/{project_id}",
+    response_model=ProjectResponse,
+    summary="Get project by ID",
+    description="Retrieves single project by ID with its linked repositories under tenant RLS isolation.",
+)
+async def get_project(
+    project_id: uuid.UUID,
+    user: TokenClaims = Depends(require_project_view),
+) -> ProjectResponse:
+    """Retrieves project details. Returns HTTP 404 if project is missing or cross-tenant."""
+    return await get_project_service(user.tenant_uuid, project_id)
+
+
+@router.patch(
+    "/{project_id}",
+    response_model=ProjectResponse,
+    summary="Update project metadata and thresholds",
+    description="Updates project name, slug, description, or DORA/WIP thresholds. Requires TENANT_ADMIN.",
+)
+async def update_project(
+    project_id: uuid.UUID,
+    payload: ProjectUpdateRequest,
+    user: TokenClaims = Depends(require_tenant_admin),
+) -> ProjectResponse:
+    """Updates an existing project under caller's tenant context."""
+    return await update_project_service(user.tenant_uuid, project_id, payload)
+
+
+@router.delete(
+    "/{project_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Archive a project",
+    description="Soft-archives a project and removes it from active listings. Requires TENANT_ADMIN.",
+)
+async def archive_project(
+    project_id: uuid.UUID,
+    user: TokenClaims = Depends(require_tenant_admin),
+) -> Response:
+    """Archives an active project under caller's tenant context."""
+    await archive_project_service(user.tenant_uuid, project_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get(
+    "/{project_id}/incidents",
+    response_model=list[ProjectIncidentResponse],
+    summary="List production failure incidents for a project",
+    description="Lists incidents recorded against the project for Change Failure Rate and MTTR tracking.",
+)
+async def list_project_incidents(
+    project_id: uuid.UUID,
+    user: TokenClaims = Depends(require_project_view),
+) -> list[ProjectIncidentResponse]:
+    """Lists incidents recorded for a project under tenant RLS."""
+    return await list_project_incidents_service(user.tenant_uuid, project_id)
+
+
+@router.post(
+    "/{project_id}/repositories",
+    response_model=RepositoryResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Link a repository to a project",
+    description="Links a GitHub repository to the project and creates project_link record. Requires TENANT_ADMIN.",
+)
+async def link_repository(
+    project_id: uuid.UUID,
+    payload: RepositoryLinkRequest,
+    user: TokenClaims = Depends(require_tenant_admin),
+) -> RepositoryResponse:
+    """Links repository to project under tenant context. Enforces unique repository linking."""
+    return await link_repository_service(user.tenant_uuid, project_id, payload)
+
+
+@router.delete(
+    "/{project_id}/repositories/{repo_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Unlink repository from project",
+    description="Unlinks a repository and removes its project_link entry. Requires TENANT_ADMIN.",
+)
+async def unlink_repository(
+    project_id: uuid.UUID,
+    repo_id: uuid.UUID,
+    user: TokenClaims = Depends(require_tenant_admin),
+) -> Response:
+    """Unlinks a repository from a project. Returns HTTP 204 No Content on success."""
+    await unlink_repository_service(user.tenant_uuid, project_id, repo_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ==============================================================================
+# SCRUM-383: DEPLOYMENT SIGNAL CONFIGURATION ENDPOINTS (US-18)
+# ==============================================================================
+
+
+@router.get(
+    "/{project_id}/deployment-signal",
+    response_model=DeploymentSignalResponse,
+    summary="Get project authoritative deployment signal",
+    description="Retrieves the active deployment signal configuration for the project under tenant RLS.",
+)
+async def get_deployment_signal(
+    project_id: uuid.UUID,
+    user: TokenClaims = Depends(require_project_view),
+) -> DeploymentSignalResponse:
+    """Retrieves authoritative production deployment signal. Requires project view permission."""
+    return await get_deployment_signal_service(user.tenant_uuid, project_id)
+
+
+@router.patch(
+    "/{project_id}/deployment-signal",
+    response_model=DeploymentSignalResponse,
+    summary="Update project authoritative deployment signal",
+    description="Updates the authoritative production deployment signal. Requires TENANT_ADMIN.",
+)
+async def update_deployment_signal(
+    project_id: uuid.UUID,
+    payload: DeploymentSignalUpdateRequest,
+    user: TokenClaims = Depends(require_tenant_admin),
+) -> DeploymentSignalResponse:
+    """Updates authoritative production deployment signal. Requires TENANT_ADMIN."""
+    return await update_deployment_signal_service(user.tenant_uuid, project_id, payload)
+
+
+# ==============================================================================
+# EXISTING STUB ENDPOINTS (PRESERVED)
+# ==============================================================================
 
 
 @router.get(

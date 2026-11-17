@@ -4,62 +4,52 @@
 import { useEffect, Suspense } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { useAuth } from "@/providers/auth-provider";
+import { usePermissions } from "@/hooks/use-permissions";
 import { getIsLoggingOut } from "@/lib/auth";
+import { canAccessPortalRoute } from "@/config/navigation";
 import { PortalLayout } from "@/components/layout/portal-layout";
 
 function PortalAuthGuard({ children }: { children: React.ReactNode }) {
-  const {
-    isAuthenticated,
-    isLoading,
-    backendUser,
-  } = useAuth();
+  const { isAuthenticated, isLoading } = useAuth();
+  const { can } = usePermissions();
 
   const router = useRouter();
   const pathname = usePathname();
 
-  const isDemo =
-    typeof window !== "undefined" &&
-    (window.location.search.includes("state=") ||
-      window.location.search.includes("demo=true") ||
-      window.sessionStorage.getItem("manta_demo") === "true");
-
-  const adminRoutes = [
-    "/workspace-settings",
-    "/integrations",
-    "/access-roles",
-    "/privacy-erasure",
-    "/adr-governance",
-  ];
-
-  const isAdminRoute = adminRoutes.some(
-    (route) => pathname === route || pathname.startsWith(`${route}/`)
-  );
-
-  const isTenantAdmin =
-    backendUser?.roles.includes("TENANT_ADMIN") ?? false;
+  const isUnauthorizedAdminAccess = !canAccessPortalRoute(pathname, can);
 
   useEffect(() => {
     if (isLoading) return;
 
-    if (!isAuthenticated && !isDemo) {
+    if (!isAuthenticated) {
       if (getIsLoggingOut()) {
         router.replace("/signed-out");
         return;
       }
 
-      router.replace("/login");
+      const isExpired =
+        typeof window !== "undefined" &&
+        window.sessionStorage.getItem("manta_session_expired") === "true";
+      const reasonParam = isExpired ? "reason=session_expired" : "";
+      const redirectParam =
+        pathname && pathname !== "/"
+          ? `redirect=${encodeURIComponent(pathname)}`
+          : "";
+      const query = [reasonParam, redirectParam].filter(Boolean).join("&");
+      const target = query ? `/login?${query}` : "/login";
+
+      router.replace(target);
       return;
     }
 
-    if (isAdminRoute && !isTenantAdmin) {
+    if (isUnauthorizedAdminAccess) {
       router.replace("/");
     }
   }, [
     isLoading,
     isAuthenticated,
-    isDemo,
-    isAdminRoute,
-    isTenantAdmin,
+    isUnauthorizedAdminAccess,
+    pathname,
     router,
   ]);
 
@@ -67,11 +57,11 @@ function PortalAuthGuard({ children }: { children: React.ReactNode }) {
     return null;
   }
 
-  if ((!isAuthenticated && !isDemo) || getIsLoggingOut()) {
+  if (!isAuthenticated || getIsLoggingOut()) {
     return null;
   }
 
-  if (isAdminRoute && !isTenantAdmin) {
+  if (isUnauthorizedAdminAccess) {
     return null;
   }
 

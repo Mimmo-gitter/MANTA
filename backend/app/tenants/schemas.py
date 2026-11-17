@@ -23,6 +23,22 @@ class TenantRegisterRequest(BaseModel):
     admin_name: str = Field(
         ..., min_length=2, max_length=255, description="Administrator full name"
     )
+    password: Optional[str] = Field(
+        None,
+        min_length=8,
+        max_length=128,
+        description="Initial password for provisioning the administrator in Keycloak OIDC",
+    )
+    industry: Optional[str] = Field(
+        None,
+        max_length=255,
+        description="Organization industry vertical selected during onboarding",
+    )
+    invites: list[str] = Field(
+        default_factory=list,
+        max_length=50,
+        description="Optional team member emails to invite during registration",
+    )
     allowed_domain: Optional[str] = Field(
         None,
         max_length=255,
@@ -43,6 +59,28 @@ class TenantRegisterRequest(BaseModel):
         if not v or not v.strip():
             raise ValueError("Field cannot be blank or whitespace-only")
         return v.strip()
+
+    @field_validator("industry")
+    @classmethod
+    def normalize_industry(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        cleaned = v.strip()
+        return cleaned or None
+
+    @field_validator("invites")
+    @classmethod
+    def validate_invites(cls, v: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        for raw in v:
+            addr = raw.strip().lower()
+            if not addr:
+                continue
+            if not EMAIL_REGEX.match(addr):
+                raise ValueError(f"Invalid invited email address format: {addr}")
+            if addr not in cleaned:
+                cleaned.append(addr)
+        return cleaned
 
     @field_validator("slug")
     @classmethod
@@ -74,4 +112,6 @@ class TenantRegisterResponse(BaseModel):
     slug: str
     name: str
     admin_email: str
+    industry: Optional[str] = None
+    invites_sent: int = 0
     message: str = "Tenant and administrator successfully registered"

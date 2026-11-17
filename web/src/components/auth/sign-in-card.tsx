@@ -2,18 +2,32 @@
 
 import React, { useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
-import { initiateLogin } from "@/lib/auth";
+import { initiateLogin, loginWithCredentials } from "@/lib/auth";
 import { SsoShieldIcon, AlertErrorIcon } from "@/components/icons/auth-icons";
 
 interface SignInCardProps {
   initialError?: string | null;
+  defaultEmail?: string;
+  workspace?: string | null;
+  isRegistered?: boolean;
+  sessionExpired?: boolean;
 }
 
-export function SignInCard({ initialError = null }: SignInCardProps) {
-  const [email, setEmail] = useState("");
+export function SignInCard({
+  initialError = null,
+  defaultEmail = "",
+  workspace = null,
+  isRegistered = false,
+  sessionExpired = false,
+}: SignInCardProps) {
+  const router = useRouter();
+  const [email, setEmail] = useState(defaultEmail);
   const [password, setPassword] = useState("");
   const [isLoadingSso, setIsLoadingSso] = useState(false);
+  const [isLoadingCredentials, setIsLoadingCredentials] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(initialError);
   const [emailError, setEmailError] = useState<string | null>(null);
   const [passwordError, setPasswordError] = useState<string | null>(null);
@@ -51,7 +65,7 @@ export function SignInCard({ initialError = null }: SignInCardProps) {
     }
   };
 
-  const handleCredentialsSubmit = (e: React.FormEvent) => {
+  const handleCredentialsSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const emailErr = validateEmail(email);
     const passErr = validatePassword(password);
@@ -63,8 +77,35 @@ export function SignInCard({ initialError = null }: SignInCardProps) {
       setErrorMessage(
         "Authentication failed\nInvalid credentials or SSO sign-in was cancelled. Verify your email and password."
       );
-    } else {
+      return;
+    }
+
+    try {
+      setIsLoadingCredentials(true);
       setErrorMessage(null);
+      await loginWithCredentials(email, password);
+
+      let destination = "/";
+      if (typeof window !== "undefined") {
+        const storedReturnTo = window.sessionStorage.getItem("manta_auth_return_to");
+        window.sessionStorage.removeItem("manta_auth_return_to");
+        if (
+          storedReturnTo &&
+          storedReturnTo.startsWith("/") &&
+          !storedReturnTo.startsWith("//") &&
+          storedReturnTo !== "/login"
+        ) {
+          destination = storedReturnTo;
+        }
+      }
+      router.replace(destination);
+    } catch (err: unknown) {
+      setIsLoadingCredentials(false);
+      const msg =
+        err instanceof Error && err.message
+          ? err.message
+          : "Invalid credentials or SSO sign-in was cancelled. Verify your email and password.";
+      setErrorMessage(`Authentication failed\n${msg}`);
     }
   };
 
@@ -101,6 +142,48 @@ export function SignInCard({ initialError = null }: SignInCardProps) {
           Engineering Intelligence Platform
         </p>
       </header>
+
+      {/* Session Expired Alert */}
+      {sessionExpired && (
+        <div
+          role="alert"
+          data-testid="session-expired-alert"
+          className="mb-3.5 sm:mb-4 flex w-full flex-row items-center gap-[8px] sm:gap-[10px] rounded-[6px] border border-[rgba(245,158,11,0.45)] bg-[rgba(245,158,11,0.1)] p-[10px_12px]"
+          style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
+        >
+          <div className="shrink-0 size-[8px] rounded-full bg-[#F59E0B]" aria-hidden="true" />
+          <div className="flex flex-col gap-[2px] text-left">
+            <span className="text-[12px] font-semibold text-[#FCD34D] leading-[16px]">
+              Session Expired
+            </span>
+            <span className="text-[11px] text-[#B9CBBD] leading-[14px]">
+              Your session could not be renewed. Please sign in again.
+            </span>
+          </div>
+        </div>
+      )}
+
+      {/* Registration Success Confirmation */}
+      {isRegistered && (
+        <div
+          role="status"
+          aria-live="polite"
+          data-testid="registered-success-banner"
+          className="mb-3.5 sm:mb-4 flex w-full flex-row items-center gap-[8px] sm:gap-[10px] rounded-[4px] border border-[rgba(0,229,153,0.45)] bg-[rgba(0,229,153,0.09)] p-[10px_10px] sm:p-[11px_12px]"
+          style={{ fontFamily: "'Plus Jakarta Sans', sans-serif" }}
+        >
+          <div className="shrink-0 size-[8px] rounded-full bg-[#00E599]" aria-hidden="true" />
+          <div className="flex flex-col gap-[2px] text-left">
+            <span className="text-[12px] font-semibold text-[#00E599] leading-[16px]">
+              Workspace provisioned successfully
+            </span>
+            <span className="text-[11px] font-normal text-[#B9CBBD] leading-[15px]">
+              Sign in with your administrator credentials to access{" "}
+              {workspace ? `${workspace}` : "your workspace"}.
+            </span>
+          </div>
+        </div>
+      )}
 
       {/* Inline Error Alert (Figma Node 475:420 / 475:437) */}
       {errorMessage && (
@@ -278,35 +361,46 @@ export function SignInCard({ initialError = null }: SignInCardProps) {
         {/* Credentials Submit Button */}
         <button
           type="submit"
-          className="flex h-[44px] min-h-[44px] w-full items-center justify-center gap-1.5 rounded-[12px] bg-[#00E599] font-semibold text-[14px] leading-5 text-black transition-all hover:bg-[#00f5a0] active:scale-[0.99] mt-0 shadow-[0px_2px_10px_rgba(0,245,160,0.15)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00E599] focus-visible:ring-offset-2 focus-visible:ring-offset-[#171B26]"
+          disabled={isLoadingCredentials || isLoadingSso}
+          className="flex h-[44px] min-h-[44px] w-full items-center justify-center gap-1.5 rounded-[12px] bg-[#00E599] font-semibold text-[14px] leading-5 text-black transition-all hover:bg-[#00f5a0] active:scale-[0.99] mt-0 shadow-[0px_2px_10px_rgba(0,245,160,0.15)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00E599] focus-visible:ring-offset-2 focus-visible:ring-offset-[#171B26] disabled:opacity-70 disabled:cursor-not-allowed"
         >
-          <span>Sign In</span>
-          <svg
-            className="w-3.5 h-3.5"
-            viewBox="0 0 14 14"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-            aria-hidden="true"
-          >
-            <path
-              d="M2.5 7H11.5M11.5 7L7.5 3M11.5 7L7.5 11"
-              stroke="#006B43"
-              strokeWidth="1.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
+          {isLoadingCredentials ? (
+            <>
+              <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+              <span>Signing in...</span>
+            </>
+          ) : (
+            <>
+              <span>Sign In</span>
+              <svg
+                className="w-3.5 h-3.5"
+                viewBox="0 0 14 14"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+                aria-hidden="true"
+              >
+                <path
+                  d="M2.5 7H11.5M11.5 7L7.5 3M11.5 7L7.5 11"
+                  stroke="#006B43"
+                  strokeWidth="1.5"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            </>
+          )}
         </button>
 
-        {/* Sign-Up Link Row */}
-        <div className="flex items-center justify-center gap-[5px] h-[21px] pt-[4px] pb-[2px] text-[12px]">
-          <span className="text-[#94A3B8]">Don&apos;t have an account?</span>
-          <a
-            href="#signup"
-            className="font-semibold text-[#00C2CB] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00C2CB] focus-visible:rounded-[2px] py-1 px-1 -my-1 -mx-1"
+        {/* Sign-Up / Organization Registration Link Row */}
+        <div className="flex flex-col items-center justify-center gap-1 pt-3 pb-1 text-center text-[12px] leading-tight">
+          <span className="text-[#94A3B8]">Need a workspace for your team?</span>
+          <Link
+            href="/register"
+            data-testid="register-organization-link"
+            className="font-semibold text-[#00C2CB] hover:text-[#00E599] hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#00C2CB] focus-visible:rounded-[4px] py-0.5 px-1 transition-colors"
           >
-            Sign up
-          </a>
+            Register your organization →
+          </Link>
         </div>
       </form>
     </section>
