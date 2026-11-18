@@ -205,6 +205,7 @@ async def test_all_12_stub_endpoints_in_openapi_schema():
         Permission.MANAGE_WEBHOOK_INTEGRATIONS,
         Permission.INGEST_PROJECT_DEPLOYMENTS,
         Permission.MANAGE_TENANT_USERS_AND_ROLES,
+        Permission.VIEW_PROJECT_DORA,
     }
     stub_permissions = {p for p in Permission if p not in real_permissions}
     found_stubs: set[str] = set()
@@ -234,7 +235,7 @@ async def test_all_12_stub_endpoints_in_openapi_schema():
 
         found_stubs.add(perm.value)
 
-    assert len(found_stubs) == 11, f"Expected 11 stub endpoints, found {len(found_stubs)}"
+    assert len(found_stubs) == 10, f"Expected 10 stub endpoints, found {len(found_stubs)}"
 
 
 @pytest.mark.asyncio
@@ -246,6 +247,7 @@ async def test_stub_endpoints_unauthenticated_returns_401():
                 Permission.MANAGE_WEBHOOK_INTEGRATIONS,
                 Permission.INGEST_PROJECT_DEPLOYMENTS,
                 Permission.MANAGE_TENANT_USERS_AND_ROLES,
+                Permission.VIEW_PROJECT_DORA,
             }:
                 continue
             resp = await ac.request(method, url)
@@ -284,6 +286,7 @@ async def test_all_91_matrix_decisions_enforced(auth_fixture):
         DeploymentSignalSource,
         DirectDeploymentResponse,
     )
+    from app.dora.schemas import DoraAggregates, DoraMetricsResponse
 
     mock_deploy_resp = DirectDeploymentResponse(
         id=uuid.UUID("22222222-2222-2222-2222-222222222222"),
@@ -302,6 +305,19 @@ async def test_all_91_matrix_decisions_enforced(auth_fixture):
         deployed_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
         created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
         deduplicated=False,
+    )
+    mock_dora_resp = DoraMetricsResponse(
+        project_id=uuid.UUID("11111111-1111-1111-1111-111111111111"),
+        window="30d",
+        authoritative_deployment_signal=DeploymentSignalSource.GITHUB_DEPLOYMENTS_API,
+        aggregates=DoraAggregates(
+            lead_time_hours=None,
+            deployment_frequency_per_day=None,
+            change_failure_rate_pct=None,
+            mttr_hours=None,
+        ),
+        notes=["No authoritative production deployments recorded in the 30d window."],
+        trend=[],
     )
 
     async def _noop_tenant_db():
@@ -328,6 +344,10 @@ async def test_all_91_matrix_decisions_enforced(auth_fixture):
             mock.patch(
                 "app.deployments.router.ingest_direct_deployment",
                 mock.AsyncMock(return_value=mock_deploy_resp),
+            ),
+            mock.patch(
+                "app.dora.router.get_project_dora_metrics",
+                mock.AsyncMock(return_value=mock_dora_resp),
             ),
             mock.patch(
                 "app.auth.members_router.get_tenant_db_context",
@@ -359,6 +379,7 @@ async def test_all_91_matrix_decisions_enforced(auth_fixture):
                             if perm_action in (
                                 Permission.MANAGE_WEBHOOK_INTEGRATIONS,
                                 Permission.MANAGE_TENANT_USERS_AND_ROLES,
+                                Permission.VIEW_PROJECT_DORA,
                             ):
                                 assert resp.status_code == 200, (
                                     f"Expected 200 for [{role_id}][{action_id}], got {resp.status_code}: {resp.text}"

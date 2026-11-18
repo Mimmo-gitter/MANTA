@@ -6,6 +6,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Literal, Optional, Sequence
 import uuid
 
+from fastapi import HTTPException, status as http_status
 from sqlalchemy import Numeric, Select, and_, case, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -18,7 +19,8 @@ from app.db.models.models import (
     Project,
     PullRequest,
 )
-from app.deployments.schemas import DeploymentOutcome
+from app.db.session import get_tenant_db_context
+from app.deployments.schemas import DeploymentOutcome, DeploymentSignalSource
 from app.deployments.service import build_authoritative_production_deployments_query
 from app.dora.schemas import (
     ChangeFailureRateResult,
@@ -27,6 +29,11 @@ from app.dora.schemas import (
     DailyLeadTimeMetric,
     DailyMTTRMetric,
     DeploymentFrequencyResult,
+    DoraAggregates,
+    DoraDailyPoint,
+    DoraMetricsResponse,
+    DoraTimeframeDays,
+    DoraWindow,
     LeadTimeResult,
     MTTROutageItem,
     MTTRResult,
@@ -1284,3 +1291,280 @@ async def calculate_rolling_mttr(
         window_days=window_days,
         window_end=end_utc,
     )
+
+
+# ---------------------------------------------------------------------------
+# US-30 / Task 30.2: Combined Project DORA Metrics Endpoint Assembly & Service
+# ---------------------------------------------------------------------------
+
+
+def resolve_dora_timeframe_days(
+    timeframe_days: int = 30,
+    window: Optional[DoraWindow] = None,
+    *,
+    has_explicit_timeframe: bool = False,
+) -> DoraTimeframeDays:
+    """Resolve rolling timeframe in days from `timeframe_days` and optional `window` alias."""
+    unprocessable_status = getattr(http_status, "HTTP_422_UNPROCESSABLE_CONTENT", 422)
+    if timeframe_days not in (14, 30):
+        raise HTTPException(
+            status_code=unprocessable_status,
+            detail=f"Unsupported timeframe_days={timeframe_days}. Expected 14 or 30.",
+        )
+
+    validated_days: DoraTimeframeDays = 14 if timeframe_days == 14 else 30
+    window_map: dict[DoraWindow, DoraTimeframeDays] = {"14d": 14, "30d": 30}
+    if window is not None:
+        mapped = window_map[window]
+        if has_explicit_timeframe and validated_days != mapped:
+            raise HTTPException(
+                status_code=unprocessable_status,
+                detail=(
+                    f"Conflicting timeframe_days={validated_days} and window='{window}' "
+                    "query parameters."
+                ),
+            )
+        return mapped
+    return validated_days
+
+
+def build_dora_metrics_notes(
+    *,
+    window: DoraWindow,
+    authoritative_deployment_signal: DeploymentSignalSource,
+    lead_time_result: LeadTimeResult,
+    deployment_frequency_result: DeploymentFrequencyResult,
+    change_failure_rate_result: ChangeFailureRateResult,
+    mttr_result: MTTRResult,
+    has_deployment_telemetry: bool,
+) -> list[str]:
+    """Build deterministic diagnostic notes explaining null vs 0.0 metrics and signal filtering."""
+    notes: list[str] = []
+    signal_name = authoritative_deployment_signal.value
+
+    if not has_deployment_telemetry:
+        notes.append(
+            f"No authoritative production deployments recorded under signal '{signal_name}' "
+            f"in the {window} window."
+        )
+    else:
+        notes.append(
+            f"Aggregated rolling {window} metrics from authoritative deployment signal "
+            f"'{signal_name}'."
+        )
+        if deployment_frequency_result.successful_deployment_count == 0:
+            notes.append(
+                "deployment_frequency_per_day is 0.0: "
+                f"{change_failure_rate_result.total_deployment_count} authoritative production "
+                f"deployment(s) recorded with 0 SUCCESS outcomes in the {window} window."
+            )
+
+    if lead_time_result.median_lead_time_hours is None and has_deployment_telemetry:
+        notes.append(
+            "lead_time_hours is null: 0 shipped pull requests linked to successful production "
+            f"deployments in the {window} window."
+        )
+
+    if change_failure_rate_result.change_failure_rate_percentage == 0.0:
+        notes.append(
+            "change_failure_rate_pct is 0.0%: "
+            f"{change_failure_rate_result.total_deployment_count} production deployments "
+            "succeeded with 0 failures or linked incidents."
+        )
+
+    if mttr_result.mttr_hours is None:
+        notes.append(
+            f"mttr_hours is null: 0 resolved production health failure sessions in the {window} window."
+        )
+    elif mttr_result.mttr_hours == 0.0:
+        notes.append(
+            f"mttr_hours is 0.0: {mttr_result.resolved_outage_count} resolved production health "
+            "failure session(s) restored instantaneously."
+        )
+
+    return notes
+
+
+def assemble_dora_metrics_response(
+    *,
+    project_id: uuid.UUID,
+    timeframe_days: DoraTimeframeDays,
+    authoritative_deployment_signal: DeploymentSignalSource | str,
+    lead_time_result: LeadTimeResult,
+    deployment_frequency_result: DeploymentFrequencyResult,
+    change_failure_rate_result: ChangeFailureRateResult,
+    mttr_result: MTTRResult,
+    has_deployment_telemetry: Optional[bool] = None,
+) -> DoraMetricsResponse:
+    """
+    Assemble the OpenAPI 3.1 DoraMetricsResponse from the four domain DORA calculators
+    (US-26, US-27, US-28, US-29) preserving strict null vs 0.0 semantics (Task 30.2).
+    """
+    signal_enum = (
+        authoritative_deployment_signal
+        if isinstance(authoritative_deployment_signal, DeploymentSignalSource)
+        else DeploymentSignalSource(str(authoritative_deployment_signal))
+    )
+    window: DoraWindow = "14d" if timeframe_days == 14 else "30d"
+
+    telemetry_present = (
+        has_deployment_telemetry
+        if has_deployment_telemetry is not None
+        else (
+            change_failure_rate_result.total_deployment_count > 0
+            or deployment_frequency_result.successful_deployment_count > 0
+        )
+    )
+
+    df_aggregate: Optional[float] = (
+        deployment_frequency_result.deployments_per_day if telemetry_present else None
+    )
+
+    aggregates = DoraAggregates(
+        lead_time_hours=lead_time_result.median_lead_time_hours,
+        deployment_frequency_per_day=df_aggregate,
+        change_failure_rate_pct=change_failure_rate_result.change_failure_rate_percentage,
+        mttr_hours=mttr_result.mttr_hours,
+    )
+
+    lt_by_date = {p.date: p for p in lead_time_result.daily_series}
+    df_by_date = {p.date: p for p in deployment_frequency_result.daily_series}
+    cfr_by_date = {p.date: p for p in change_failure_rate_result.daily_series}
+    mttr_by_date = {p.date: p for p in mttr_result.daily_series}
+
+    ordered_dates = [p.date for p in deployment_frequency_result.daily_series]
+    if not ordered_dates:
+        ordered_dates = sorted(
+            set(lt_by_date) | set(df_by_date) | set(cfr_by_date) | set(mttr_by_date)
+        )
+
+    trend: list[DoraDailyPoint] = []
+    for bucket_date in ordered_dates:
+        lt_pt = lt_by_date.get(bucket_date)
+        df_pt = df_by_date.get(bucket_date)
+        cfr_pt = cfr_by_date.get(bucket_date)
+        mttr_pt = mttr_by_date.get(bucket_date)
+
+        df_daily: Optional[float]
+        if not telemetry_present:
+            df_daily = None
+        else:
+            df_daily = float(df_pt.count) if df_pt is not None else 0.0
+
+        trend.append(
+            DoraDailyPoint(
+                date=bucket_date,
+                lead_time_hours=lt_pt.median_lead_time_hours if lt_pt is not None else None,
+                deployment_frequency_per_day=df_daily,
+                change_failure_rate_pct=(
+                    cfr_pt.change_failure_rate_percentage if cfr_pt is not None else None
+                ),
+                mttr_hours=mttr_pt.mttr_hours if mttr_pt is not None else None,
+            )
+        )
+
+    notes = build_dora_metrics_notes(
+        window=window,
+        authoritative_deployment_signal=signal_enum,
+        lead_time_result=lead_time_result,
+        deployment_frequency_result=deployment_frequency_result,
+        change_failure_rate_result=change_failure_rate_result,
+        mttr_result=mttr_result,
+        has_deployment_telemetry=telemetry_present,
+    )
+
+    return DoraMetricsResponse(
+        project_id=project_id,
+        window=window,
+        authoritative_deployment_signal=signal_enum,
+        aggregates=aggregates,
+        notes=notes,
+        trend=trend,
+    )
+
+
+async def calculate_project_dora_metrics(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    project_id: uuid.UUID,
+    timeframe_days: DoraTimeframeDays = 30,
+    window_end: Optional[datetime] = None,
+) -> DoraMetricsResponse:
+    """
+    Query authoritative project metadata and compute rolling 14d/30d DORA aggregates
+    and daily trend series across US-26, US-27, US-28, and US-29 (Task 30.2).
+    """
+    if timeframe_days not in (14, 30):
+        raise ValueError(f"Unsupported timeframe_days={timeframe_days}. Expected 14 or 30.")
+
+    proj_stmt = select(Project).where(
+        Project.id == project_id,
+        Project.tenant_id == tenant_id,
+        Project.deleted_at.is_(None),
+    )
+    project = (await db.execute(proj_stmt)).scalars().first()
+    if project is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND,
+            detail=f"Project '{project_id}' not found.",
+        )
+
+    end_utc = _ensure_utc(window_end or datetime.now(timezone.utc))
+
+    lead_time_result = await calculate_rolling_lead_time(
+        db,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        window_days=timeframe_days,
+        window_end=end_utc,
+    )
+    deployment_frequency_result = await calculate_rolling_deployment_frequency(
+        db,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        window_days=timeframe_days,
+        window_end=end_utc,
+    )
+    change_failure_rate_result = await calculate_rolling_change_failure_rate(
+        db,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        window_days=timeframe_days,
+        window_end=end_utc,
+    )
+    mttr_result = await calculate_rolling_mttr(
+        db,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        window_days=timeframe_days,
+        window_end=end_utc,
+    )
+
+    return assemble_dora_metrics_response(
+        project_id=project.id,
+        timeframe_days=timeframe_days,
+        authoritative_deployment_signal=project.authoritative_cd_signal,
+        lead_time_result=lead_time_result,
+        deployment_frequency_result=deployment_frequency_result,
+        change_failure_rate_result=change_failure_rate_result,
+        mttr_result=mttr_result,
+    )
+
+
+async def get_project_dora_metrics(
+    tenant_id: uuid.UUID,
+    project_id: uuid.UUID,
+    *,
+    timeframe_days: DoraTimeframeDays = 30,
+    window_end: Optional[datetime] = None,
+) -> DoraMetricsResponse:
+    """Retrieve verified project DORA metrics under tenant-scoped PostgreSQL RLS (Task 30.2)."""
+    async with get_tenant_db_context(tenant_id) as session:
+        return await calculate_project_dora_metrics(
+            session,
+            tenant_id=tenant_id,
+            project_id=project_id,
+            timeframe_days=timeframe_days,
+            window_end=window_end,
+        )
