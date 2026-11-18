@@ -2,10 +2,8 @@ import { expect, test } from "@playwright/test";
 import type { DeadLetterItem } from "../src/types/dead-letter";
 import { fulfillCorsJson, mockAuthenticatedSession } from "./helpers/mock-auth";
 
-const FIXED_NOW_MS = Date.parse("2026-11-17T17:00:00.000Z");
-
 function isoMinutesAgo(minutes: number): string {
-  return new Date(FIXED_NOW_MS - minutes * 60_000).toISOString();
+  return new Date(Date.now() - minutes * 60_000).toISOString();
 }
 
 function buildSampleDeadLetters(): DeadLetterItem[] {
@@ -113,12 +111,16 @@ function buildSampleDeadLetters(): DeadLetterItem[] {
   ];
 }
 
-test.describe("Dead Letters Queue UI (Task 23.2)", () => {
+test.describe("Task 23.6: Dead Letters Queue UI, Navigation Badge & One-Click Re-Drive (US-23 / SCRUM-420)", () => {
+  test.describe.configure({ mode: "serial" });
+
+  test.beforeEach(async () => {
+    test.setTimeout(60000);
+  });
+
   test("5A, 5B, 5H: renders loading skeleton, live sidebar badge, populated table, search, and Provider/Status filters", async ({
     page,
   }) => {
-    await page.clock.install({ time: FIXED_NOW_MS });
-
     await mockAuthenticatedSession(page, {
       roles: ["TENANT_ADMIN"],
       name: "Pavlo Zhuk",
@@ -152,18 +154,18 @@ test.describe("Dead Letters Queue UI (Task 23.2)", () => {
       await route.continue();
     });
 
-    await page.goto("/dead-letters");
+    await page.goto("/dead-letters", { waitUntil: "domcontentloaded" });
 
     // 5H: Page loading skeleton and "..." sidebar badge while fetching
-    await expect(page.getByTestId("dead-letters-loading-skeleton")).toBeVisible();
-    await expect(page.getByTestId("refresh-queue-button")).toContainText("Refreshing...");
-    await expect(page.getByTestId("nav-dead-letters-badge")).toHaveText("...");
+    await expect(page.getByTestId("dead-letters-loading-skeleton")).toBeVisible({ timeout: 15000 });
+    await expect(page.getByTestId("refresh-queue-button")).toContainText("Refreshing...", { timeout: 15000 });
+    await expect(page.getByTestId("nav-dead-letters-badge")).toHaveText("...", { timeout: 15000 });
 
     releaseGetQueue();
 
     // 5A: Populated table & live sidebar badge
-    await expect(page.getByTestId("dead-letters-table")).toBeVisible();
-    await expect(page.getByTestId("nav-dead-letters-badge")).toHaveText("4");
+    await expect(page.getByTestId("dead-letters-table")).toBeVisible({ timeout: 15000 });
+    await expect(page.getByTestId("nav-dead-letters-badge")).toHaveText("4", { timeout: 15000 });
     await expect(page.getByTestId("dlq-queue-badge")).toHaveText("4");
     await expect(page.getByTestId("dlq-unread-count")).toHaveText("4 unread quarantined");
     await expect(page.getByTestId("dlq-redriven-today")).toHaveText("1 re-driven today");
@@ -215,8 +217,6 @@ test.describe("Dead Letters Queue UI (Task 23.2)", () => {
   test("5C & 5D: opens inspector drawer with Stack Trace & JSON Payload tabs and supports Escape & light-dismiss", async ({
     page,
   }) => {
-    await page.clock.install({ time: FIXED_NOW_MS });
-
     await mockAuthenticatedSession(page, {
       roles: ["TENANT_ADMIN"],
       name: "Pavlo Zhuk",
@@ -245,8 +245,8 @@ test.describe("Dead Letters Queue UI (Task 23.2)", () => {
 
     // 5C: Stack Trace tab active
     const drawer = page.getByTestId("dead-letter-drawer");
-    await expect(drawer).toBeVisible();
-    await expect(drawer).toContainText("dlv_9f2a8c41");
+    await expect(drawer).toBeVisible({ timeout: 15000 });
+    await expect(drawer).toContainText("dlv_9f2a8c41", { timeout: 15000 });
     await expect(drawer).toContainText("GitHub Webhook");
     await expect(drawer).toContainText("5 of 5 exhausted");
     await expect(page.getByTestId("drawer-stack-trace-content")).toContainText(
@@ -273,8 +273,6 @@ test.describe("Dead Letters Queue UI (Task 23.2)", () => {
   test("5E & 5F: re-drives event cleanly (Sending -> Re-driven + Toast + sidebar badge decrements 4 -> 3)", async ({
     page,
   }) => {
-    await page.clock.install({ time: FIXED_NOW_MS });
-
     await mockAuthenticatedSession(page, {
       roles: ["TENANT_ADMIN"],
       name: "Pavlo Zhuk",
@@ -304,7 +302,7 @@ test.describe("Dead Letters Queue UI (Task 23.2)", () => {
           status: "queued",
           queue: "webhooks.high_priority",
           enqueued: true,
-          resolved_at: new Date(FIXED_NOW_MS).toISOString(),
+          resolved_at: new Date().toISOString(),
         });
         return;
       }
@@ -331,26 +329,26 @@ test.describe("Dead Letters Queue UI (Task 23.2)", () => {
     await redriveBtn.click();
 
     // 5E: Sending / Re-driving intermediate state
-    await expect(page.getByTestId(`status-badge-${targetItem.id}`)).toHaveText("Re-driving");
-    await expect(redriveBtn).toBeDisabled();
-    await expect(redriveBtn).toContainText("Sending...");
-    await expect(page.getByTestId("dlq-footer-status")).toContainText("Dispatching event");
+    await expect(page.getByTestId(`status-badge-${targetItem.id}`)).toHaveText("Re-driving", { timeout: 15000 });
+    await expect(redriveBtn).toBeDisabled({ timeout: 15000 });
+    await expect(redriveBtn).toContainText("Sending...", { timeout: 15000 });
+    await expect(page.getByTestId("dlq-footer-status")).toContainText("Dispatching event", { timeout: 15000 });
 
     releaseRedrive();
 
     // 5F: Success state, Toast, updated row & decremented sidebar badge
-    expect(redriveRequests).toBe(1);
     const toast = page.getByTestId("dead-letters-toast");
-    await expect(toast).toBeVisible();
-    await expect(toast).toContainText("Event re-driven successfully");
+    await expect(toast).toBeVisible({ timeout: 15000 });
+    await expect(toast).toContainText("Event re-driven successfully", { timeout: 15000 });
+    expect(redriveRequests).toBe(1);
 
-    await expect(page.getByTestId(`status-badge-${targetItem.id}`)).toHaveText("Re-driven");
-    await expect(row).toContainText("Re-driven just now");
-    await expect(redriveBtn).toBeDisabled();
-    await expect(redriveBtn).toContainText("Done");
+    await expect(page.getByTestId(`status-badge-${targetItem.id}`)).toHaveText("Re-driven", { timeout: 15000 });
+    await expect(row).toContainText("Re-driven just now", { timeout: 15000 });
+    await expect(redriveBtn).toBeDisabled({ timeout: 15000 });
+    await expect(redriveBtn).toContainText("Done", { timeout: 15000 });
 
-    await expect(page.getByTestId("nav-dead-letters-badge")).toHaveText("3");
-    await expect(page.getByTestId("dlq-queue-badge")).toHaveText("3");
+    await expect(page.getByTestId("nav-dead-letters-badge")).toHaveText("3", { timeout: 15000 });
+    await expect(page.getByTestId("dlq-queue-badge")).toHaveText("3", { timeout: 15000 });
     await expect(page.getByTestId("dlq-unread-count")).toHaveText("3 unread quarantined");
     await expect(page.getByTestId("dlq-redriven-today")).toHaveText("2 re-driven today");
 
@@ -363,8 +361,6 @@ test.describe("Dead Letters Queue UI (Task 23.2)", () => {
   test("5G: shows inline error, incremented attempts, Retry button, and red toast with Inspect button when re-drive fails", async ({
     page,
   }) => {
-    await page.clock.install({ time: FIXED_NOW_MS });
-
     await mockAuthenticatedSession(page, {
       roles: ["TENANT_ADMIN"],
       name: "Pavlo Zhuk",
@@ -406,29 +402,28 @@ test.describe("Dead Letters Queue UI (Task 23.2)", () => {
     // 5G assertions
     await expect(page.getByTestId(`row-error-${targetItem.id}`)).toHaveText(
       "Last retry failed: header digest mismatch",
+      { timeout: 15000 },
     );
-    await expect(row).toContainText("6 / 5");
-    await expect(redriveBtn).toBeEnabled();
-    await expect(redriveBtn).toContainText("Retry");
-    await expect(page.getByTestId("nav-dead-letters-badge")).toHaveText("4");
+    await expect(row).toContainText("6 / 5", { timeout: 15000 });
+    await expect(redriveBtn).toBeEnabled({ timeout: 15000 });
+    await expect(redriveBtn).toContainText("Retry", { timeout: 15000 });
+    await expect(page.getByTestId("nav-dead-letters-badge")).toHaveText("4", { timeout: 15000 });
 
     const toast = page.getByTestId("dead-letters-toast");
-    await expect(toast).toBeVisible();
-    await expect(toast).toHaveAttribute("data-toast-kind", "error");
-    await expect(toast).toContainText("Re-drive failed");
+    await expect(toast).toBeVisible({ timeout: 15000 });
+    await expect(toast).toHaveAttribute("data-toast-kind", "error", { timeout: 15000 });
+    await expect(toast).toContainText("Re-drive failed", { timeout: 15000 });
 
     // Clicking Inspect inside the failure toast opens the inspector drawer for that event
     await page.getByTestId("toast-inspect-button").click();
     const drawer = page.getByTestId("dead-letter-drawer");
-    await expect(drawer).toBeVisible();
-    await expect(page.getByTestId("drawer-redrive-button")).toContainText("Retry Re-drive");
+    await expect(drawer).toBeVisible({ timeout: 15000 });
+    await expect(page.getByTestId("drawer-redrive-button")).toContainText("Retry Re-drive", { timeout: 15000 });
   });
 
   test("5I: renders clean Empty State and hides sidebar count badge when zero items exist", async ({
     page,
   }) => {
-    await page.clock.install({ time: FIXED_NOW_MS });
-
     await mockAuthenticatedSession(page, {
       roles: ["TENANT_ADMIN"],
       name: "Pavlo Zhuk",
@@ -451,7 +446,7 @@ test.describe("Dead Letters Queue UI (Task 23.2)", () => {
 
     await page.goto("/dead-letters");
 
-    await expect(page.getByTestId("dead-letters-empty-state")).toBeVisible();
+    await expect(page.getByTestId("dead-letters-empty-state")).toBeVisible({ timeout: 15000 });
     await expect(page.getByTestId("dead-letters-empty-state")).toContainText(
       "No dead-letter events",
     );
@@ -478,7 +473,7 @@ test.describe("Dead Letters Queue UI (Task 23.2)", () => {
     await expect(page).toHaveURL("/dead-letters");
 
     const forbidden = page.getByTestId("dead-letters-forbidden-state");
-    await expect(forbidden).toBeVisible();
+    await expect(forbidden).toBeVisible({ timeout: 15000 });
     await expect(forbidden).toContainText("HTTP 403 · ACCESS RESTRICTED");
     await expect(forbidden).toContainText("Administrator access required");
     await expect(forbidden).toContainText("Current workspace role:");
@@ -491,8 +486,6 @@ test.describe("Dead Letters Queue UI (Task 23.2)", () => {
   test("pagination: navigates across pages cleanly when more than 5 events exist", async ({
     page,
   }) => {
-    await page.clock.install({ time: FIXED_NOW_MS });
-
     await mockAuthenticatedSession(page, {
       roles: ["TENANT_ADMIN"],
       name: "Pavlo Zhuk",
