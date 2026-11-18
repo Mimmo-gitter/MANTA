@@ -1,6 +1,7 @@
+from typing import Optional
 import uuid
 
-from fastapi import APIRouter, Depends, Header, Request, Response, status
+from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
 
 from app.auth.permissions import (
     Permission,
@@ -9,6 +10,11 @@ from app.auth.permissions import (
     stub_route_kwargs,
 )
 from app.auth.schemas import StubEndpointResponse, TokenClaims
+from app.dora.schemas import DoraMetricsResponse, DoraWindow
+from app.dora.service import (
+    get_project_dora_metrics as get_project_dora_metrics_service,
+    resolve_dora_timeframe_days,
+)
 from app.projects.health_service import (
     get_project_health_config as get_project_health_config_service,
     handle_project_health_signal_http,
@@ -43,9 +49,7 @@ from app.projects.service import (
     update_project as update_project_service,
 )
 
-router = APIRouter(
-    prefix="/api/v1/projects", tags=["Projects", "Sprint & Risk Management", "Stubs"]
-)
+router = APIRouter(prefix="/api/v1/projects", tags=["Projects", "Sprint & Risk Management"])
 
 # Permissions:
 # - Mutations (create project, link/unlink repos) require administrative tenant control:
@@ -145,6 +149,44 @@ async def list_project_incidents(
 ) -> list[ProjectIncidentResponse]:
     """Lists incidents recorded for a project under tenant RLS."""
     return await list_project_incidents_service(user.tenant_uuid, project_id)
+
+
+@router.get(
+    "/{project_id}/dora-metrics",
+    response_model=DoraMetricsResponse,
+    tags=["DORA & Delivery Analytics"],
+    summary="Get Project DORA Metrics",
+    description=(
+        "Retrieve verified rolling 14-day or 30-day DORA metrics (nullable aggregates, "
+        "authoritative_deployment_signal, diagnostic notes, and contiguous UTC daily trend series) "
+        "for an active project under tenant RLS."
+    ),
+)
+async def get_project_dora_metrics(
+    project_id: uuid.UUID,
+    request: Request,
+    timeframe_days: int = Query(
+        default=30,
+        description="Rolling evaluation window in days (14 or 30).",
+        json_schema_extra={"enum": [14, 30]},
+    ),
+    window: Optional[DoraWindow] = Query(
+        default=None,
+        include_in_schema=False,
+    ),
+    user: TokenClaims = Depends(require_project_view),
+) -> DoraMetricsResponse:
+    """Retrieve verified rolling DORA metrics for a project under tenant RLS."""
+    resolved_days = resolve_dora_timeframe_days(
+        timeframe_days=timeframe_days,
+        window=window,
+        has_explicit_timeframe="timeframe_days" in request.query_params,
+    )
+    return await get_project_dora_metrics_service(
+        user.tenant_uuid,
+        project_id,
+        timeframe_days=resolved_days,
+    )
 
 
 @router.post(
@@ -330,6 +372,7 @@ async def rotate_project_health_secret(
 
 @router.get(
     "/{project_id}/sprints/burndown",
+    tags=["Stubs"],
     **stub_route_kwargs(
         Permission.VIEW_SPRINT_BURNDOWN_WIP,
         summary="View Sprint Burndown and WIP",
@@ -346,6 +389,7 @@ async def get_sprint_burndown_and_wip(
 
 @router.get(
     "/{project_id}/scope-alerts",
+    tags=["Stubs"],
     **stub_route_kwargs(
         Permission.RECEIVE_SCOPE_CREEP_ALERT,
         summary="Receive Scope Creep Alerts",
@@ -362,6 +406,7 @@ async def get_scope_creep_alerts(
 
 @router.post(
     "/{project_id}/pull-requests/{pr_id}/reassign-reviewer",
+    tags=["Stubs"],
     **stub_route_kwargs(
         Permission.REASSIGN_PR_REVIEWER_MOBILE,
         summary="Reassign Pull Request Reviewer",

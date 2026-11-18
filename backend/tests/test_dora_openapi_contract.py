@@ -11,22 +11,44 @@ Verifies:
 - Guardrails against negative metrics, CFR > 100%, NaN/Infinity, and duplicate trend dates.
 """
 
-from datetime import date, timedelta
+from contextlib import asynccontextmanager
+from datetime import date, datetime, timedelta, timezone
 import json
+import time
+from typing import Any
+import unittest.mock as mock
 import uuid
 
-from fastapi import APIRouter, FastAPI, Query
+from cryptography.hazmat.primitives.asymmetric import rsa
+from fastapi import APIRouter, FastAPI, HTTPException, Query
 from fastapi.openapi.utils import get_openapi
+import httpx
+from httpx import ASGITransport, AsyncClient
+import jwt
+from jwt.algorithms import RSAAlgorithm
 from pydantic import ValidationError
 import pytest
 
-from app.deployments.schemas import DeploymentSignalSource
+from app.auth.jwks import JWKSClient
+from app.auth.permissions import FORBIDDEN_RESPONSE
+from app.config import settings
+from app.db.models.models import Deployment, ProductionFailure, Project, PullRequest
+from app.deployments.schemas import DeploymentOutcome, DeploymentSignalSource
 from app.dora.schemas import (
     DoraAggregates,
     DoraDailyPoint,
     DoraMetricsResponse,
     DoraTimeframeDays,
 )
+from app.dora.service import (
+    assemble_dora_metrics_response,
+    calculate_project_dora_metrics,
+    compute_change_failure_rate,
+    compute_deployment_frequency,
+    compute_lead_time_metrics,
+    compute_mttr,
+)
+from app.main import app
 
 
 def _assert_nullable_number_schema(
@@ -351,3 +373,497 @@ def test_response_rejects_invalid_window_signal_and_duplicate_dates() -> None:
                 ),
             ],
         )
+
+
+# ---------------------------------------------------------------------------
+# US-30 / Task 30.2: Combined DORA Endpoint Assembly, RBAC, RLS & HTTP Tests
+# ---------------------------------------------------------------------------
+
+
+def _make_dora_auth_context() -> tuple[rsa.RSAPrivateKey, str, JWKSClient]:
+    private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    kid = "dora-30-2-kid"
+    jwk = json.loads(RSAAlgorithm.to_jwk(private_key.public_key()))
+    jwk.update({"kid": kid, "kty": "RSA", "alg": "RS256", "use": "sig"})
+    client = JWKSClient(
+        jwks_url="http://mock-idp/certs",
+        ttl_seconds=300.0,
+        transport=httpx.MockTransport(
+            lambda req: httpx.Response(200, json={"keys": [jwk]}, request=req)
+        ),
+    )
+    return private_key, kid, client
+
+
+def _mint_dora_jwt(
+    private_key: rsa.RSAPrivateKey,
+    *,
+    kid: str,
+    tenant_id: uuid.UUID,
+    roles: list[str],
+    sub: str = "dora-user",
+) -> str:
+    now = int(time.time())
+    claims = {
+        "sub": sub,
+        "email": f"{sub}@manta.local",
+        "tenant_id": str(tenant_id),
+        "aud": settings.OIDC_AUDIENCE,
+        "iss": f"{settings.KEYCLOAK_URL}/realms/{settings.KEYCLOAK_REALM}",
+        "iat": now,
+        "exp": now + 3600,
+        "realm_access": {"roles": roles},
+    }
+    return jwt.encode(claims, private_key, algorithm="RS256", headers={"kid": kid})
+
+
+@pytest.mark.asyncio
+async def test_task_30_2_live_app_openapi_schema_exposes_both_dora_routes() -> None:
+    """Verify the real FastAPI app exposes OpenAPI 3.1 contracts for both DORA endpoints."""
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        resp = await ac.get("/openapi.json")
+
+    assert resp.status_code == 200
+    openapi_doc = resp.json()
+    paths = openapi_doc["paths"]
+
+    for route_path in (
+        "/api/v1/projects/{project_id}/dora-metrics",
+        "/api/v1/dora/projects/{project_id}",
+    ):
+        assert route_path in paths
+        op = paths[route_path]["get"]
+        assert op.get("x-stub") is None
+        assert "Stubs" not in op.get("tags", [])
+
+        params = {p["name"]: p for p in op["parameters"]}
+        assert params["project_id"]["in"] == "path"
+        assert params["project_id"]["schema"]["format"] == "uuid"
+        assert params["timeframe_days"]["in"] == "query"
+        assert params["timeframe_days"]["schema"]["enum"] == [14, 30]
+        assert params["timeframe_days"]["schema"]["default"] == 30
+
+        resp_200 = op["responses"]["200"]["content"]["application/json"]["schema"]
+        assert resp_200 == {"$ref": "#/components/schemas/DoraMetricsResponse"}
+
+
+def test_task_30_2_assemble_dora_metrics_combines_all_four_calculators() -> None:
+    """
+    Task 30.2: Combine US-26 (LT), US-27 (DF), US-28 (CFR), and US-29 (MTTR) results
+    into DoraMetricsResponse with nullable aggregates, signal source, notes, and daily trend.
+    """
+    tid = uuid.uuid4()
+    pid = uuid.uuid4()
+    window_end = datetime(2026, 11, 14, 18, 0, 0, tzinfo=timezone.utc)
+
+    dep_success = Deployment(
+        id=uuid.uuid4(),
+        tenant_id=tid,
+        project_id=pid,
+        environment="production",
+        commit_sha="a" * 40,
+        status=DeploymentOutcome.SUCCESS.value,
+        authoritative_signal_source=DeploymentSignalSource.ARGOCD_POSTSYNC_WEBHOOK.value,
+        deployed_at=datetime(2026, 11, 12, 12, 0, 0, tzinfo=timezone.utc),
+    )
+    pr_item = PullRequest(
+        id=uuid.uuid4(),
+        tenant_id=tid,
+        project_id=pid,
+        repository_id=uuid.uuid4(),
+        external_pr_number=101,
+        title="feat: ship DORA metrics",
+        state="merged",
+        author_pseudonym_id="0" * 64,
+        first_commit_at=datetime(2026, 11, 11, 12, 0, 0, tzinfo=timezone.utc),
+        merged_at=datetime(2026, 11, 12, 10, 0, 0, tzinfo=timezone.utc),
+    )
+    pf_resolved = ProductionFailure(
+        id=uuid.uuid4(),
+        tenant_id=tid,
+        project_id=pid,
+        started_at=datetime(2026, 11, 12, 10, 0, 0, tzinfo=timezone.utc),
+        resolved_at=datetime(2026, 11, 12, 11, 48, 0, tzinfo=timezone.utc),
+        status="RESOLVED",
+        probe_source="webhook",
+        severity="SEV-1",
+    )
+
+    lt_res = compute_lead_time_metrics(
+        [(pr_item, dep_success)], window_days=14, window_end=window_end
+    )
+    df_res = compute_deployment_frequency([dep_success], window_days=14, window_end=window_end)
+    cfr_res = compute_change_failure_rate([dep_success], window_days=14, window_end=window_end)
+    mttr_res = compute_mttr([pf_resolved], window_days=14, window_end=window_end)
+
+    assembled = assemble_dora_metrics_response(
+        project_id=pid,
+        timeframe_days=14,
+        authoritative_deployment_signal=DeploymentSignalSource.ARGOCD_POSTSYNC_WEBHOOK,
+        lead_time_result=lt_res,
+        deployment_frequency_result=df_res,
+        change_failure_rate_result=cfr_res,
+        mttr_result=mttr_res,
+    )
+
+    assert assembled.project_id == pid
+    assert assembled.window == "14d"
+    assert (
+        assembled.authoritative_deployment_signal == DeploymentSignalSource.ARGOCD_POSTSYNC_WEBHOOK
+    )
+    assert assembled.aggregates.lead_time_hours == 24.0
+    assert assembled.aggregates.deployment_frequency_per_day == 0.07
+    assert assembled.aggregates.change_failure_rate_pct == 0.0
+    assert assembled.aggregates.mttr_hours == 1.8
+    assert any("argocd_postsync_webhook" in note for note in assembled.notes)
+    assert any("change_failure_rate_pct is 0.0%" in note for note in assembled.notes)
+    assert len(assembled.trend) == 14
+
+    nov_12 = next(pt for pt in assembled.trend if pt.date == date(2026, 11, 12))
+    assert nov_12.lead_time_hours == 24.0
+    assert nov_12.deployment_frequency_per_day == 1.0
+    assert nov_12.change_failure_rate_pct == 0.0
+    assert nov_12.mttr_hours == 1.8
+
+    nov_11 = next(pt for pt in assembled.trend if pt.date == date(2026, 11, 11))
+    assert nov_11.lead_time_hours is None
+    assert nov_11.deployment_frequency_per_day == 0.0
+    assert nov_11.change_failure_rate_pct is None
+    assert nov_11.mttr_hours is None
+
+
+def test_task_30_2_assemble_zero_telemetry_vs_failed_only_deployments() -> None:
+    """
+    Verify strict null vs 0.0 distinction:
+    - 0 deployment events in 30d window -> all 4 aggregates and daily DF are None (null).
+    - Failed-only deployments -> deployment_frequency_per_day is 0.0 and CFR is 100.0%.
+    """
+    tid = uuid.uuid4()
+    pid = uuid.uuid4()
+    window_end = datetime(2026, 11, 14, 18, 0, 0, tzinfo=timezone.utc)
+
+    empty_resp = assemble_dora_metrics_response(
+        project_id=pid,
+        timeframe_days=30,
+        authoritative_deployment_signal=DeploymentSignalSource.GITHUB_DEPLOYMENTS_API,
+        lead_time_result=compute_lead_time_metrics([], window_days=30, window_end=window_end),
+        deployment_frequency_result=compute_deployment_frequency(
+            [], window_days=30, window_end=window_end
+        ),
+        change_failure_rate_result=compute_change_failure_rate(
+            [], window_days=30, window_end=window_end
+        ),
+        mttr_result=compute_mttr([], window_days=30, window_end=window_end),
+    )
+
+    assert empty_resp.window == "30d"
+    assert empty_resp.aggregates.lead_time_hours is None
+    assert empty_resp.aggregates.deployment_frequency_per_day is None
+    assert empty_resp.aggregates.change_failure_rate_pct is None
+    assert empty_resp.aggregates.mttr_hours is None
+    assert len(empty_resp.trend) == 30
+    assert all(pt.deployment_frequency_per_day is None for pt in empty_resp.trend)
+    assert any("No authoritative production deployments" in note for note in empty_resp.notes)
+
+    failed_dep = Deployment(
+        id=uuid.uuid4(),
+        tenant_id=tid,
+        project_id=pid,
+        environment="production",
+        commit_sha="b" * 40,
+        status=DeploymentOutcome.FAILED.value,
+        authoritative_signal_source=DeploymentSignalSource.DIRECT_DEPLOYMENT_API.value,
+        deployed_at=datetime(2026, 11, 13, 15, 0, 0, tzinfo=timezone.utc),
+    )
+    failed_only = assemble_dora_metrics_response(
+        project_id=pid,
+        timeframe_days=14,
+        authoritative_deployment_signal=DeploymentSignalSource.DIRECT_DEPLOYMENT_API,
+        lead_time_result=compute_lead_time_metrics([], window_days=14, window_end=window_end),
+        deployment_frequency_result=compute_deployment_frequency(
+            [failed_dep], window_days=14, window_end=window_end
+        ),
+        change_failure_rate_result=compute_change_failure_rate(
+            [failed_dep], window_days=14, window_end=window_end
+        ),
+        mttr_result=compute_mttr([], window_days=14, window_end=window_end),
+    )
+    assert failed_only.aggregates.deployment_frequency_per_day == 0.0
+    assert failed_only.aggregates.change_failure_rate_pct == 100.0
+    assert failed_only.aggregates.lead_time_hours is None
+    assert failed_only.aggregates.mttr_hours is None
+    assert all(pt.deployment_frequency_per_day == 0.0 for pt in failed_only.trend)
+
+
+@pytest.mark.asyncio
+async def test_task_30_2_calculate_project_dora_metrics_service_and_404() -> None:
+    """
+    Verify calculate_project_dora_metrics queries project + all 4 domain calculators and
+    raises HTTP 404 when the project is missing, soft-deleted, or belongs to another tenant.
+    """
+    tid = uuid.uuid4()
+    pid = uuid.uuid4()
+    window_end = datetime(2026, 11, 14, 18, 0, 0, tzinfo=timezone.utc)
+
+    proj = Project(
+        id=pid,
+        tenant_id=tid,
+        name="DORA Core API",
+        slug="dora-core-api",
+        authoritative_cd_signal=DeploymentSignalSource.GITHUB_DEPLOYMENTS_API.value,
+    )
+    dep = Deployment(
+        id=uuid.uuid4(),
+        tenant_id=tid,
+        project_id=pid,
+        environment="production",
+        commit_sha="c" * 40,
+        status=DeploymentOutcome.SUCCESS.value,
+        authoritative_signal_source=DeploymentSignalSource.GITHUB_DEPLOYMENTS_API.value,
+        deployed_at=datetime(2026, 11, 12, 16, 0, 0, tzinfo=timezone.utc),
+    )
+    pr = PullRequest(
+        id=uuid.uuid4(),
+        tenant_id=tid,
+        project_id=pid,
+        repository_id=uuid.uuid4(),
+        external_pr_number=42,
+        title="feat: core telemetry",
+        state="merged",
+        author_pseudonym_id="1" * 64,
+        first_commit_at=datetime(2026, 11, 12, 10, 0, 0, tzinfo=timezone.utc),
+        merged_at=datetime(2026, 11, 12, 15, 0, 0, tzinfo=timezone.utc),
+    )
+    pf = ProductionFailure(
+        id=uuid.uuid4(),
+        tenant_id=tid,
+        project_id=pid,
+        started_at=datetime(2026, 11, 12, 10, 0, 0, tzinfo=timezone.utc),
+        resolved_at=datetime(2026, 11, 12, 11, 48, 0, tzinfo=timezone.utc),
+        status="RESOLVED",
+        probe_source="webhook",
+        severity="SEV-1",
+    )
+
+    class _MockResult:
+        def __init__(self, items: list[Any]) -> None:
+            self._items = items
+
+        def all(self) -> list[Any]:
+            return self._items
+
+        def scalars(self) -> "_MockResult":
+            return self
+
+        def first(self) -> Any:
+            return self._items[0] if self._items else None
+
+    class _MockSession:
+        def __init__(self, *, found_project: Project | None) -> None:
+            self._project = found_project
+
+        async def execute(self, stmt: Any) -> _MockResult:
+            entities = [desc.get("entity") for desc in stmt.column_descriptions]
+            if entities == [Project]:
+                return _MockResult([self._project] if self._project is not None else [])
+            if entities == [PullRequest, Deployment]:
+                return _MockResult([(pr, dep)] if self._project is not None else [])
+            if entities == [Deployment]:
+                return _MockResult([dep] if self._project is not None else [])
+            if entities == [Deployment, Deployment.incident_links.property.mapper.class_]:
+                return _MockResult([(dep, None)] if self._project is not None else [])
+            if entities == [ProductionFailure]:
+                return _MockResult([pf] if self._project is not None else [])
+            return _MockResult([])
+
+    res = await calculate_project_dora_metrics(
+        _MockSession(found_project=proj),  # type: ignore[arg-type]
+        tenant_id=tid,
+        project_id=pid,
+        timeframe_days=14,
+        window_end=window_end,
+    )
+    assert res.project_id == pid
+    assert res.window == "14d"
+    assert res.authoritative_deployment_signal == DeploymentSignalSource.GITHUB_DEPLOYMENTS_API
+    assert res.aggregates.lead_time_hours == 6.0
+    assert res.aggregates.deployment_frequency_per_day == 0.07
+    assert res.aggregates.change_failure_rate_pct == 0.0
+    assert res.aggregates.mttr_hours == 1.8
+    assert len(res.trend) == 14
+
+    with pytest.raises(HTTPException) as exc_info:
+        await calculate_project_dora_metrics(
+            _MockSession(found_project=None),  # type: ignore[arg-type]
+            tenant_id=tid,
+            project_id=pid,
+            timeframe_days=30,
+            window_end=window_end,
+        )
+    assert exc_info.value.status_code == 404
+
+    with pytest.raises(ValueError, match="Unsupported timeframe_days=7"):
+        await calculate_project_dora_metrics(
+            _MockSession(found_project=proj),  # type: ignore[arg-type]
+            tenant_id=tid,
+            project_id=pid,
+            timeframe_days=7,  # type: ignore[arg-type]
+            window_end=window_end,
+        )
+
+
+@pytest.mark.asyncio
+async def test_task_30_2_http_endpoints_rbac_validation_404_and_200_contract() -> None:
+    """
+    Task 30.2 HTTP contract tests for both:
+    - GET /api/v1/projects/{project_id}/dora-metrics
+    - GET /api/v1/dora/projects/{project_id}
+    """
+    priv_key, kid, jwks_client = _make_dora_auth_context()
+    orig_client = getattr(app.state, "jwks_client", None)
+    app.state.jwks_client = jwks_client
+
+    tenant_a = uuid.uuid4()
+    tenant_b = uuid.uuid4()
+    proj_id = uuid.uuid4()
+
+    proj = Project(
+        id=proj_id,
+        tenant_id=tenant_a,
+        name="HTTP DORA Project",
+        slug="http-dora-project",
+        authoritative_cd_signal=DeploymentSignalSource.ARGOCD_POSTSYNC_WEBHOOK.value,
+    )
+
+    class _EmptyOrProjectSession:
+        def __init__(self, current_tenant: uuid.UUID) -> None:
+            self._current_tenant = current_tenant
+
+        async def execute(self, stmt: Any) -> Any:
+            entities = [desc.get("entity") for desc in stmt.column_descriptions]
+
+            class _Res:
+                def __init__(self, items: list[Any]) -> None:
+                    self._items = items
+
+                def all(self) -> list[Any]:
+                    return self._items
+
+                def scalars(self) -> "_Res":
+                    return self
+
+                def first(self) -> Any:
+                    return self._items[0] if self._items else None
+
+            if entities == [Project] and self._current_tenant == tenant_a:
+                return _Res([proj])
+            return _Res([])
+
+    @asynccontextmanager
+    async def _fake_tenant_ctx(tid: uuid.UUID):
+        yield _EmptyOrProjectSession(tid)
+
+    async def _fake_resolve_roles(user: Any) -> set[str]:
+        return {r.strip().upper() for r in user.roles}
+
+    dev_token_a = _mint_dora_jwt(priv_key, kid=kid, tenant_id=tenant_a, roles=["DEVELOPER"])
+    empty_role_token = _mint_dora_jwt(priv_key, kid=kid, tenant_id=tenant_a, roles=[])
+    admin_token_b = _mint_dora_jwt(priv_key, kid=kid, tenant_id=tenant_b, roles=["TENANT_ADMIN"])
+
+    try:
+        with (
+            mock.patch("app.dora.service.get_tenant_db_context", side_effect=_fake_tenant_ctx),
+            mock.patch(
+                "app.auth.permissions.resolve_caller_roles", side_effect=_fake_resolve_roles
+            ),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                for base_path in (
+                    f"/api/v1/projects/{proj_id}/dora-metrics",
+                    f"/api/v1/dora/projects/{proj_id}",
+                ):
+                    # 1. Unauthenticated -> 401
+                    r_401 = await ac.get(base_path)
+                    assert r_401.status_code == 401
+
+                    # 2. Missing recognized roles -> 403
+                    r_403 = await ac.get(
+                        base_path,
+                        headers={"Authorization": f"Bearer {empty_role_token}"},
+                    )
+                    assert r_403.status_code == 403
+                    assert r_403.json() == FORBIDDEN_RESPONSE
+
+                    # 3. Invalid timeframe_days / conflicting window -> 422
+                    r_422 = await ac.get(
+                        f"{base_path}?timeframe_days=7",
+                        headers={"Authorization": f"Bearer {dev_token_a}"},
+                    )
+                    assert r_422.status_code == 422
+
+                    r_conflict = await ac.get(
+                        f"{base_path}?timeframe_days=14&window=30d",
+                        headers={"Authorization": f"Bearer {dev_token_a}"},
+                    )
+                    assert r_conflict.status_code == 422
+
+                    # 4. Cross-tenant -> 404 anti-enumeration
+                    r_404 = await ac.get(
+                        base_path,
+                        headers={"Authorization": f"Bearer {admin_token_b}"},
+                    )
+                    assert r_404.status_code == 404
+                    assert r_404.json() == {"detail": f"Project '{proj_id}' not found."}
+
+                    # 5. Authorized DEVELOPER (default 30d & explicit 14d) -> 200 OK
+                    r_30 = await ac.get(
+                        base_path,
+                        headers={"Authorization": f"Bearer {dev_token_a}"},
+                    )
+                    assert r_30.status_code == 200
+                    body_30 = r_30.json()
+                    assert body_30["project_id"] == str(proj_id)
+                    assert body_30["window"] == "30d"
+                    assert body_30["authoritative_deployment_signal"] == "argocd_postsync_webhook"
+                    assert body_30["aggregates"] == {
+                        "lead_time_hours": None,
+                        "deployment_frequency_per_day": None,
+                        "change_failure_rate_pct": None,
+                        "mttr_hours": None,
+                    }
+                    assert len(body_30["notes"]) >= 1
+                    assert len(body_30["trend"]) == 30
+
+                    r_14 = await ac.get(
+                        f"{base_path}?timeframe_days=14",
+                        headers={"Authorization": f"Bearer {dev_token_a}"},
+                    )
+                    assert r_14.status_code == 200
+                    body_14 = r_14.json()
+                    assert body_14["window"] == "14d"
+                    assert len(body_14["trend"]) == 14
+
+                    r_win_14 = await ac.get(
+                        f"{base_path}?window=14d",
+                        headers={"Authorization": f"Bearer {dev_token_a}"},
+                    )
+                    assert r_win_14.status_code == 200
+                    assert r_win_14.json()["window"] == "14d"
+                    assert len(r_win_14.json()["trend"]) == 14
+    finally:
+        app.state.jwks_client = orig_client
+
+
+def test_task_30_2_dora_package_exports_endpoint_services() -> None:
+    """Verify app.dora exposes combined DORA metrics assembly and service helpers."""
+    import app.dora as dora_pkg
+
+    for symbol in (
+        "assemble_dora_metrics_response",
+        "build_dora_metrics_notes",
+        "calculate_project_dora_metrics",
+        "get_project_dora_metrics",
+        "resolve_dora_timeframe_days",
+    ):
+        assert hasattr(dora_pkg, symbol)
+        assert symbol in dora_pkg.__all__
