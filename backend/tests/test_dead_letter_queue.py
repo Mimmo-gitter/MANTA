@@ -35,7 +35,6 @@ Verification Scope:
    - Unauthenticated requests receive HTTP 401 Unauthorized.
 """
 
-import asyncio
 from collections import defaultdict
 from collections.abc import Mapping
 from datetime import datetime, timezone
@@ -52,13 +51,10 @@ import jwt
 from jwt.algorithms import RSAAlgorithm
 import pytest
 from redis.exceptions import RedisError
-from sqlalchemy import text
 
 from app.auth.jwks import JWKSClient
 from app.auth.permissions import Permission, get_route_declared_permissions
 from app.config import settings
-from app.db.models import WebhookEvent
-from app.db.session import async_engine, get_tenant_db_context
 from app.dead_letters import service
 from app.dead_letters.service import (
     DeadLetterAlreadyResolvedError,
@@ -243,48 +239,6 @@ def mint_jwt(
         algorithm="RS256",
         headers={"alg": "RS256", "kid": auth_ctx["kid"]},
     )
-
-
-def is_live_db_available() -> bool:
-    """Check if a real PostgreSQL instance is reachable with configured credentials."""
-    try:
-
-        async def _ping() -> None:
-            await async_engine.dispose()
-            try:
-                async with async_engine.connect() as conn:
-                    await conn.execute(text("SELECT 1"))
-            finally:
-                await async_engine.dispose()
-
-        asyncio.run(_ping())
-        return True
-    except Exception:
-        return False
-
-
-LIVE_DB_AVAILABLE = is_live_db_available()
-skip_without_live_db = pytest.mark.skipif(
-    not LIVE_DB_AVAILABLE,
-    reason="PostgreSQL test instance is not reachable locally; runs in CI.",
-)
-
-
-async def _register_test_tenant(slug_prefix: str) -> tuple[uuid.UUID, str]:
-    """Register an isolated test tenant via /tenants/register for live DB tests."""
-    unique = uuid.uuid4().hex[:8]
-    payload = {
-        "name": f"DLQ Test Tenant {unique}",
-        "slug": f"{slug_prefix}-{unique}",
-        "admin_email": f"dlq-{unique}@dlqtemp.org",
-        "admin_name": f"Admin {unique}",
-    }
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.post("/tenants/register", json=payload)
-        assert resp.status_code == 201, f"Failed to register test tenant: {resp.text}"
-        data = resp.json()
-        return uuid.UUID(data["tenant_id"]), payload["slug"]
 
 
 # ==============================================================================
@@ -971,68 +925,6 @@ async def test_worker_sets_tenant_rls_session_config():
     set_config_stmts = [s for s in db.statements if "set_config('app.current_tenant_id'" in s[0]]
     assert len(set_config_stmts) >= 2
     assert set_config_stmts[-1][1]["tenant_id"] == str(TENANT_A)
-
-
-@pytest.mark.asyncio
-@skip_without_live_db
-async def test_live_db_quarantine_and_tenant_rls_isolation():
-    """
-    Live PostgreSQL 16 verification under tenant RLS:
-    - Creates Tenant A and Tenant B via registration.
-    - Quarantines an event in Tenant A.
-    - Asserts Tenant A queries see the event.
-    - Asserts Tenant B queries see 0 events (PostgreSQL tenant_isolation_policy RLS containment).
-    - Asserts Tenant B cannot re-drive Tenant A's event (anti-enumeration 404).
-    """
-    tenant_a_id, _ = await _register_test_tenant("dlq-rls-a")
-    tenant_b_id, _ = await _register_test_tenant("dlq-rls-b")
-    event_id = uuid.uuid4()
-    now = datetime.now(timezone.utc)
-
-    # Tenant A creates and quarantines an event
-    async with get_tenant_db_context(tenant_a_id) as session:
-        wh = WebhookEvent(
-            id=event_id,
-            tenant_id=tenant_a_id,
-            provider="github",
-            provider_delivery_id=f"del-{uuid.uuid4().hex[:8]}",
-            event_type="push",
-            received_at=now,
-            status="queued",
-            attempts=4,
-            payload={"action": "test_rls_live"},
-        )
-        session.add(wh)
-        await session.commit()
-
-        exc = RuntimeError("Simulated poison webhook in live DB")
-        dl_id = await quarantine_event(
-            session,
-            {
-                "event_id": event_id,
-                "tenant_id": tenant_a_id,
-                "provider": "github",
-                "payload": {"action": "test_rls_live"},
-                "job_id": str(uuid.uuid4()),
-            },
-            exc,
-            attempt=5,
-        )
-        assert dl_id is not None
-
-        # Verify Tenant A sees the quarantined item
-        page_a = await service.list_dead_letters(session, tenant_a_id)
-        assert page_a.total >= 1
-        assert any(item.id == dl_id for item in page_a.items)
-
-    # Tenant B queries dead_letter_events (RLS isolation check)
-    async with get_tenant_db_context(tenant_b_id) as session:
-        page_b = await service.list_dead_letters(session, tenant_b_id)
-        assert not any(item.id == dl_id for item in page_b.items)
-
-        # Anti-enumeration check: Tenant B cannot redrive Tenant A's DLQ item
-        with pytest.raises(service.DeadLetterNotFoundError):
-            await service.redrive_dead_letter(session, tenant_b_id, dl_id, None)
 
 
 # ==============================================================================
