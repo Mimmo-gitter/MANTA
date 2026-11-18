@@ -864,6 +864,136 @@ async def calculate_rolling_change_failure_rate(
 # ---------------------------------------------------------------------------
 
 
+def _exact_elapsed_seconds(started_at: datetime, resolved_at: datetime) -> Decimal:
+    """Return exact non-negative elapsed seconds as a Decimal, raising ValueError on clock skew."""
+    started_utc = _ensure_utc(started_at)
+    resolved_utc = _ensure_utc(resolved_at)
+    if resolved_utc < started_utc:
+        raise ValueError(
+            f"resolved_at ({resolved_utc.isoformat()}) cannot be earlier than "
+            f"started_at ({started_utc.isoformat()})."
+        )
+    delta = resolved_utc - started_utc
+    return Decimal(delta.days * 86400 + delta.seconds) + (
+        Decimal(delta.microseconds) / Decimal("1000000")
+    )
+
+
+def compute_session_recovery_duration_hours(
+    started_at: datetime,
+    resolved_at: datetime,
+) -> float:
+    """
+    Calculate failure session recovery duration in hours:
+    (resolved_at - started_at) / 3600.0 rounded to 2 decimal places (US-29 / Task 29.2).
+
+    Raises ValueError if resolved_at is earlier than started_at.
+    """
+    raw_seconds = _exact_elapsed_seconds(started_at, resolved_at)
+    return _round_two_decimals(raw_seconds / Decimal("3600"))
+
+
+def _summarize_mttr_durations(
+    durations: Sequence[Decimal],
+) -> tuple[Optional[float], Optional[float], Optional[float]]:
+    """Return (mttr_seconds, mttr_hours, mttr_minutes) or (None, None, None) on 0 durations."""
+    if not durations:
+        return None, None, None
+    avg_seconds = sum(durations) / Decimal(len(durations))
+    return (
+        _round_two_decimals(avg_seconds),
+        _round_two_decimals(avg_seconds / Decimal("3600")),
+        _round_two_decimals(avg_seconds / Decimal("60")),
+    )
+
+
+def _is_production_failure_session(session_obj: Any) -> bool:
+    """Return True if the object represents a US-68 ProductionFailure health session."""
+    return (
+        isinstance(session_obj, ProductionFailure)
+        or hasattr(session_obj, "incident_id")
+        or hasattr(session_obj, "probe_source")
+    )
+
+
+def _filter_and_deduplicate_mttr_sessions(
+    sessions: Sequence[Incident | ProductionFailure],
+    *,
+    start_utc: datetime,
+    end_utc: datetime,
+) -> list[tuple[Incident | ProductionFailure, datetime, datetime, Decimal]]:
+    """
+    Filter resolved health failure sessions in [start_utc, end_utc], deduplicate synced
+    (ProductionFailure, Incident) pairs with ProductionFailure priority, and sort chronologically.
+    """
+    qualifying_failures: list[tuple[Incident | ProductionFailure, datetime, datetime, Decimal]] = []
+    qualifying_incidents: list[
+        tuple[Incident | ProductionFailure, datetime, datetime, Decimal]
+    ] = []
+
+    for session_obj in sessions:
+        if session_obj is None:
+            continue
+
+        raw_status = getattr(session_obj, "status", None)
+        if raw_status is not None and str(raw_status).strip().upper() != "RESOLVED":
+            continue
+
+        started_at = getattr(session_obj, "started_at", None)
+        resolved_at = getattr(session_obj, "resolved_at", None)
+        if started_at is None or resolved_at is None:
+            continue
+
+        started_utc = _ensure_utc(started_at)
+        resolved_utc = _ensure_utc(resolved_at)
+        if resolved_utc < started_utc:
+            continue
+        if resolved_utc < start_utc or resolved_utc > end_utc:
+            continue
+
+        raw_seconds = _exact_elapsed_seconds(started_utc, resolved_utc)
+        entry = (session_obj, started_utc, resolved_utc, raw_seconds)
+        if _is_production_failure_session(session_obj):
+            qualifying_failures.append(entry)
+        else:
+            qualifying_incidents.append(entry)
+
+    seen_ids: set[uuid.UUID] = set()
+    covered_incident_ids: set[uuid.UUID] = set()
+    selected: list[tuple[Incident | ProductionFailure, datetime, datetime, Decimal]] = []
+
+    for pf_entry in qualifying_failures:
+        pf_obj = pf_entry[0]
+        pf_id = getattr(pf_obj, "id", None)
+        if pf_id is not None:
+            if pf_id in seen_ids:
+                continue
+            seen_ids.add(pf_id)
+            covered_incident_ids.add(pf_id)
+        linked_inc_id = getattr(pf_obj, "incident_id", None)
+        if linked_inc_id is not None:
+            covered_incident_ids.add(linked_inc_id)
+        selected.append(pf_entry)
+
+    for inc_entry in qualifying_incidents:
+        inc_obj = inc_entry[0]
+        inc_id = getattr(inc_obj, "id", None)
+        if inc_id is not None:
+            if inc_id in seen_ids or inc_id in covered_incident_ids:
+                continue
+            seen_ids.add(inc_id)
+        selected.append(inc_entry)
+
+    selected.sort(
+        key=lambda item: (
+            item[2],
+            item[1],
+            str(getattr(item[0], "id", "")),
+        )
+    )
+    return selected
+
+
 def compute_mttr(
     incidents: Sequence[Incident | ProductionFailure],
     *,
@@ -875,12 +1005,13 @@ def compute_mttr(
     strictly based on resolved production health failure sessions (US-29 / Task 29.2 & Task 29.3).
 
     Invariants Enforced:
-    1. Canonical Math: Mean duration of resolved failure sessions: mean(resolved_at - started_at).
+    1. Canonical Math: Mean duration of resolved failure sessions: mean((resolved_at - started_at) / 3600.0).
     2. Strict Independence: Completely independent of PR merges, commits, or deployments.
     3. Self-Contained Pairing: Each outage pairs its own started_at and resolved_at.
-    4. Ongoing Outage Exclusion: Incidents with resolved_at IS NULL are strictly excluded.
-    5. Null Semantics: When zero resolved failure sessions exist in window, MTTR returns None (null).
-    6. Non-Negative Guard: Records with resolved_at < started_at are excluded.
+    4. Ongoing Outage Exclusion: Sessions with resolved_at IS NULL or non-RESOLVED status are excluded.
+    5. Deduplication: Synced (ProductionFailure, Incident) pairs are counted exactly once.
+    6. Null Semantics: When zero resolved failure sessions exist in window, MTTR returns None (null).
+    7. Non-Negative Guard: Records with resolved_at < started_at are excluded.
     """
     if window_days not in SUPPORTED_MTTR_WINDOWS:
         raise ValueError(
@@ -890,49 +1021,33 @@ def compute_mttr(
     end_utc = _ensure_utc(window_end or datetime.now(timezone.utc))
     start_utc = end_utc - timedelta(days=window_days)
 
-    daily_durations: dict[date, list[float]] = defaultdict(list)
+    selected = _filter_and_deduplicate_mttr_sessions(
+        incidents,
+        start_utc=start_utc,
+        end_utc=end_utc,
+    )
+
+    daily_durations: dict[date, list[Decimal]] = defaultdict(list)
     outages: list[MTTROutageItem] = []
-    durations: list[float] = []
+    durations: list[Decimal] = []
 
-    for inc in incidents:
-        if inc.resolved_at is None:
-            continue
-
-        started_utc = _ensure_utc(inc.started_at)
-        resolved_utc = _ensure_utc(inc.resolved_at)
-
-        if resolved_utc < started_utc:
-            continue
-
-        if resolved_utc < start_utc or resolved_utc > end_utc:
-            continue
-
-        delta_seconds = (resolved_utc - started_utc).total_seconds()
-        durations.append(delta_seconds)
-        daily_durations[resolved_utc.date()].append(delta_seconds)
+    for session_obj, started_utc, resolved_utc, raw_seconds in selected:
+        durations.append(raw_seconds)
+        daily_durations[resolved_utc.date()].append(raw_seconds)
 
         outages.append(
             MTTROutageItem(
-                incident_id=inc.id,
-                project_id=inc.project_id,
+                incident_id=session_obj.id,
+                project_id=session_obj.project_id,
                 started_at=started_utc,
                 resolved_at=resolved_utc,
-                duration_seconds=_round_two_decimals(delta_seconds),
-                duration_hours=_round_two_decimals(delta_seconds / 3600.0),
-                severity=getattr(inc, "severity", "SEV-2") or "SEV-2",
+                duration_seconds=_round_two_decimals(raw_seconds),
+                duration_hours=_round_two_decimals(raw_seconds / Decimal("3600")),
+                severity=getattr(session_obj, "severity", "SEV-2") or "SEV-2",
             )
         )
 
-    resolved_count = len(durations)
-    if resolved_count == 0:
-        mttr_seconds = None
-        mttr_hours = None
-        mttr_minutes = None
-    else:
-        avg_seconds = sum(durations) / resolved_count
-        mttr_seconds = _round_two_decimals(avg_seconds)
-        mttr_hours = _round_two_decimals(avg_seconds / 3600.0)
-        mttr_minutes = _round_two_decimals(avg_seconds / 60.0)
+    mttr_seconds, mttr_hours, mttr_minutes = _summarize_mttr_durations(durations)
 
     end_date = end_utc.date()
     start_date = end_date - timedelta(days=window_days - 1)
@@ -941,31 +1056,20 @@ def compute_mttr(
     for offset in range(window_days):
         current_date = start_date + timedelta(days=offset)
         day_vals = daily_durations.get(current_date, [])
-        if not day_vals:
-            daily_series.append(
-                DailyMTTRMetric(
-                    date=current_date,
-                    resolved_outage_count=0,
-                    mttr_seconds=None,
-                    mttr_hours=None,
-                    mttr_minutes=None,
-                )
+        day_sec, day_hr, day_min = _summarize_mttr_durations(day_vals)
+        daily_series.append(
+            DailyMTTRMetric(
+                date=current_date,
+                resolved_outage_count=len(day_vals),
+                mttr_seconds=day_sec,
+                mttr_hours=day_hr,
+                mttr_minutes=day_min,
             )
-        else:
-            day_avg = sum(day_vals) / len(day_vals)
-            daily_series.append(
-                DailyMTTRMetric(
-                    date=current_date,
-                    resolved_outage_count=len(day_vals),
-                    mttr_seconds=_round_two_decimals(day_avg),
-                    mttr_hours=_round_two_decimals(day_avg / 3600.0),
-                    mttr_minutes=_round_two_decimals(day_avg / 60.0),
-                )
-            )
+        )
 
     return MTTRResult(
         window_days=window_days,
-        resolved_outage_count=resolved_count,
+        resolved_outage_count=len(durations),
         mttr_seconds=mttr_seconds,
         mttr_hours=mttr_hours,
         mttr_minutes=mttr_minutes,
@@ -976,19 +1080,17 @@ def compute_mttr(
     )
 
 
-def build_mttr_sql_query(
+def _build_mttr_aggregate_sql_query(
+    model: type[Incident] | type[ProductionFailure],
     *,
     tenant_id: uuid.UUID,
     project_id: uuid.UUID,
     start_at: Optional[datetime] = None,
     end_at: Optional[datetime] = None,
 ) -> Select[tuple[int, Optional[float], Optional[float], Optional[float]]]:
-    """
-    Build native PostgreSQL 16 aggregate query computing MTTR in seconds, hours, and minutes
-    for resolved health failure sessions per Task 29.1 §4 & Task 29.2.
-    """
-    epoch_diff = func.extract(text("epoch"), Incident.resolved_at - Incident.started_at)
-    count_resolved = func.count(Incident.id)
+    """Build native PostgreSQL 16 aggregate MTTR query for Incident or ProductionFailure."""
+    epoch_diff = func.extract(text("epoch"), model.resolved_at - model.started_at)
+    count_resolved = func.count(model.id)
 
     stmt = (
         select(
@@ -1006,26 +1108,104 @@ def build_mttr_sql_query(
                 else_=func.round(func.cast(func.avg(epoch_diff) / Decimal("60.0"), Numeric), 2),
             ).label("mttr_minutes"),
         )
-        .select_from(Incident)
+        .select_from(model)
         .join(
             Project,
             and_(
-                Project.id == Incident.project_id,
-                Project.tenant_id == Incident.tenant_id,
+                Project.id == model.project_id,
+                Project.tenant_id == model.tenant_id,
             ),
         )
         .where(
-            Incident.tenant_id == tenant_id,
-            Incident.project_id == project_id,
+            model.tenant_id == tenant_id,
+            model.project_id == project_id,
             Project.deleted_at.is_(None),
-            Incident.resolved_at.is_not(None),
-            Incident.resolved_at >= Incident.started_at,
+            model.resolved_at.is_not(None),
+            model.resolved_at >= model.started_at,
         )
     )
+    if hasattr(model, "status"):
+        stmt = stmt.where(model.status == "RESOLVED")
     if start_at is not None:
-        stmt = stmt.where(Incident.resolved_at >= start_at)
+        stmt = stmt.where(model.resolved_at >= start_at)
     if end_at is not None:
-        stmt = stmt.where(Incident.resolved_at <= end_at)
+        stmt = stmt.where(model.resolved_at <= end_at)
+    return stmt
+
+
+def build_mttr_sql_query(
+    *,
+    tenant_id: uuid.UUID,
+    project_id: uuid.UUID,
+    start_at: Optional[datetime] = None,
+    end_at: Optional[datetime] = None,
+) -> Select[tuple[int, Optional[float], Optional[float], Optional[float]]]:
+    """
+    Build native PostgreSQL 16 aggregate query computing MTTR in seconds, hours, and minutes
+    for resolved incidents per Task 29.1 §4 & Task 29.2.
+    """
+    return _build_mttr_aggregate_sql_query(
+        Incident,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        start_at=start_at,
+        end_at=end_at,
+    )
+
+
+def build_mttr_production_failures_sql_query(
+    *,
+    tenant_id: uuid.UUID,
+    project_id: uuid.UUID,
+    start_at: Optional[datetime] = None,
+    end_at: Optional[datetime] = None,
+) -> Select[tuple[int, Optional[float], Optional[float], Optional[float]]]:
+    """
+    Build native PostgreSQL 16 aggregate query computing MTTR in seconds, hours, and minutes
+    for resolved US-68 production_failures sessions (Task 29.2).
+    """
+    return _build_mttr_aggregate_sql_query(
+        ProductionFailure,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        start_at=start_at,
+        end_at=end_at,
+    )
+
+
+def _build_mttr_sessions_query(
+    model: type[Any],
+    *,
+    tenant_id: uuid.UUID,
+    project_id: uuid.UUID,
+    start_at: Optional[datetime] = None,
+    end_at: Optional[datetime] = None,
+) -> Select[tuple[Any]]:
+    """Build query fetching resolved sessions in window for Incident or ProductionFailure."""
+    stmt = (
+        select(model)
+        .join(
+            Project,
+            and_(
+                Project.id == model.project_id,
+                Project.tenant_id == model.tenant_id,
+            ),
+        )
+        .where(
+            model.tenant_id == tenant_id,
+            model.project_id == project_id,
+            Project.deleted_at.is_(None),
+            model.resolved_at.is_not(None),
+            model.resolved_at >= model.started_at,
+        )
+        .order_by(model.resolved_at.asc(), model.id.asc())
+    )
+    if hasattr(model, "status"):
+        stmt = stmt.where(model.status == "RESOLVED")
+    if start_at is not None:
+        stmt = stmt.where(model.resolved_at >= start_at)
+    if end_at is not None:
+        stmt = stmt.where(model.resolved_at <= end_at)
     return stmt
 
 
@@ -1037,29 +1217,13 @@ def build_mttr_incidents_query(
     end_at: Optional[datetime] = None,
 ) -> Select[tuple[Incident]]:
     """Build query fetching resolved incidents in window for project under tenant context."""
-    stmt = (
-        select(Incident)
-        .join(
-            Project,
-            and_(
-                Project.id == Incident.project_id,
-                Project.tenant_id == Incident.tenant_id,
-            ),
-        )
-        .where(
-            Incident.tenant_id == tenant_id,
-            Incident.project_id == project_id,
-            Project.deleted_at.is_(None),
-            Incident.resolved_at.is_not(None),
-            Incident.resolved_at >= Incident.started_at,
-        )
-        .order_by(Incident.resolved_at.asc(), Incident.id.asc())
+    return _build_mttr_sessions_query(
+        Incident,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        start_at=start_at,
+        end_at=end_at,
     )
-    if start_at is not None:
-        stmt = stmt.where(Incident.resolved_at >= start_at)
-    if end_at is not None:
-        stmt = stmt.where(Incident.resolved_at <= end_at)
-    return stmt
 
 
 def build_mttr_production_failures_query(
@@ -1070,30 +1234,13 @@ def build_mttr_production_failures_query(
     end_at: Optional[datetime] = None,
 ) -> Select[tuple[ProductionFailure]]:
     """Build query fetching resolved production_failures sessions in window under tenant context."""
-    stmt = (
-        select(ProductionFailure)
-        .join(
-            Project,
-            and_(
-                Project.id == ProductionFailure.project_id,
-                Project.tenant_id == ProductionFailure.tenant_id,
-            ),
-        )
-        .where(
-            ProductionFailure.tenant_id == tenant_id,
-            ProductionFailure.project_id == project_id,
-            Project.deleted_at.is_(None),
-            ProductionFailure.status == "RESOLVED",
-            ProductionFailure.resolved_at.is_not(None),
-            ProductionFailure.resolved_at >= ProductionFailure.started_at,
-        )
-        .order_by(ProductionFailure.resolved_at.asc(), ProductionFailure.id.asc())
+    return _build_mttr_sessions_query(
+        ProductionFailure,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        start_at=start_at,
+        end_at=end_at,
     )
-    if start_at is not None:
-        stmt = stmt.where(ProductionFailure.resolved_at >= start_at)
-    if end_at is not None:
-        stmt = stmt.where(ProductionFailure.resolved_at <= end_at)
-    return stmt
 
 
 async def calculate_rolling_mttr(
@@ -1132,19 +1279,8 @@ async def calculate_rolling_mttr(
     pf_rows = list((await db.execute(pf_stmt)).scalars().all())
     inc_rows = list((await db.execute(inc_stmt)).scalars().all())
 
-    covered_incident_ids: set[uuid.UUID] = set()
-    for pf in pf_rows:
-        covered_incident_ids.add(pf.id)
-        if getattr(pf, "incident_id", None) is not None:
-            covered_incident_ids.add(pf.incident_id)
-
-    combined: list[Incident | ProductionFailure] = list(pf_rows)
-    for inc in inc_rows:
-        if inc.id not in covered_incident_ids:
-            combined.append(inc)
-
     return compute_mttr(
-        combined,
+        [*pf_rows, *inc_rows],
         window_days=window_days,
         window_end=end_utc,
     )
