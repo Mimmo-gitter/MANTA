@@ -267,7 +267,9 @@ class ProductionFailure(Base):
         ),
         Index("idx_production_failures_tenant_id", "tenant_id"),
         Index("idx_production_failures_project_status", "tenant_id", "project_id", "status"),
-        Index("idx_production_failures_project_resolved_at", "tenant_id", "project_id", "resolved_at"),
+        Index(
+            "idx_production_failures_project_resolved_at", "tenant_id", "project_id", "resolved_at"
+        ),
         Index(
             "uq_production_failures_one_open_per_project",
             "tenant_id",
@@ -313,13 +315,16 @@ class HealthSignalStatus(str, Enum):
     FAIL = "FAIL"
     PASS = "PASS"
 
+
 class FailureSessionStatus(str, Enum):
     OPEN = "OPEN"
     RESOLVED = "RESOLVED"
 
+
 class ProjectHealthStatus(str, Enum):
     HEALTHY = "HEALTHY"
     FAILING = "FAILING"
+
 
 class HealthSignalIngestRequest(BaseModel):
     status: HealthSignalStatus
@@ -328,6 +333,7 @@ class HealthSignalIngestRequest(BaseModel):
     severity: Optional[str] = Field(default="SEV-1", max_length=16)
     tenant_id: Optional[uuid.UUID] = None
     deployment_id: Optional[uuid.UUID] = None
+
 
 class HealthSignalIngestResponse(BaseModel):
     status: Literal["accepted"] = "accepted"
