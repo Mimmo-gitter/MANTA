@@ -585,18 +585,18 @@ test.describe("Authentication Journey E2E against Keycloak Test Realm (SCRUM-240
     await expect(page.getByTestId("user-tenant-badge")).not.toBeVisible();
   });
 
-  test("Scenario 5: Access to a protected page (/dashboard) when signed out redirects to /login", async ({
+  test("Scenario 5: Access to a protected page (/projects) when signed out redirects to /login and legacy /dashboard redirects home", async ({
     page,
   }) => {
     await attachKeycloakTestRealm(page, keyCtx, realm, useLiveKeycloak);
 
-    // 1. Attempt to access protected /dashboard while signed out (prior to login)
-    await page.goto("/dashboard");
+    // 1. Attempt to access protected /projects while signed out (prior to login)
+    await page.goto("/projects");
 
     // 2. Verify automatic redirect to /login and protected content is not accessible
-    await expect(page).toHaveURL(/\/login\?redirect=%2Fdashboard/, { timeout: 10000 });
+    await expect(page).toHaveURL(/\/login\?redirect=%2Fprojects/, { timeout: 10000 });
     await expect(page.getByTestId("company-sso-button")).toBeVisible();
-    await expect(page.getByTestId("protected-dashboard-content")).not.toBeVisible();
+    await expect(page.getByTestId("portal-header")).not.toBeVisible();
     await expect(page.getByTestId("user-profile-name")).not.toBeVisible();
     await expect(page.getByTestId("user-tenant-badge")).not.toBeVisible();
 
@@ -609,20 +609,25 @@ test.describe("Authentication Journey E2E against Keycloak Test Realm (SCRUM-240
 
     await expect(page).toHaveURL("/", { timeout: 15000 });
 
-    // 4. Navigate to protected /dashboard while authenticated -> access granted, asserts user name & tenant
+    // 3b. Legacy /dashboard route redirects to / (Overview)
     await page.goto("/dashboard");
-    await expect(page).toHaveURL("/dashboard", { timeout: 10000 });
-    await expect(page.getByTestId("protected-dashboard-content")).toBeVisible();
+    await expect(page).toHaveURL("/", { timeout: 10000 });
+
+    // 4. Navigate to protected /projects while authenticated -> access granted, asserts user name & tenant
+    await page.goto("/projects");
+    await expect(page).toHaveURL("/projects", { timeout: 10000 });
+    await expect(page.getByTestId("portal-header")).toBeVisible();
     await expect(page.getByTestId("user-profile-name")).toContainText("Alpha Developer");
     await expect(page.getByTestId("user-tenant-badge")).toContainText("Tenant Alpha");
 
-    // 5. Sign out from /dashboard and attempt to access /dashboard again while signed out
-    await page.getByTestId("header-signout-button").click();
+    // 5. Sign out via profile menu and attempt to access /projects again while signed out
+    await page.getByTestId("user-profile-menu-trigger").click();
+    await page.getByTestId("dropdown-signout-button").click();
     await expect(page).toHaveURL(/\/signed-out/, { timeout: 15000 });
 
-    await page.goto("/dashboard");
-    await expect(page).toHaveURL(/\/login\?redirect=%2Fdashboard/, { timeout: 10000 });
-    await expect(page.getByTestId("protected-dashboard-content")).not.toBeVisible();
+    await page.goto("/projects");
+    await expect(page).toHaveURL(/\/login\?redirect=%2Fprojects/, { timeout: 10000 });
+    await expect(page.getByTestId("portal-header")).not.toBeVisible();
     await expect(page.getByTestId("company-sso-button")).toBeVisible();
   });
 });

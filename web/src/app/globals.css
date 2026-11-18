@@ -56,6 +56,12 @@
     @apply border-border;
     font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   }
+  .font-mono {
+    font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, monospace !important;
+  }
+  .font-sans {
+    font-family: 'Plus Jakarta Sans', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif !important;
+  }
   html {
     color-scheme: dark;
   }
@@ -75,5 +81,31 @@
   }
   input {
     color-scheme: dark;
+    border-style: none;
+    outline: none;
   }
+}
+
+/* Hide Edge's native password reveal button */
+input[type="password"]::-ms-reveal {
+  display: none;
+}
+
+
+.wip-progress > div {
+  display: block !important;
+  width: 100% !important;
+  height: 7px !important;
+  min-height: 7px !important;
+  overflow: hidden !important;
+  border-radius: 9999px !important;
+  background: #343844 !important;
+}
+
+.wip-progress > div > div {
+  display: block !important;
+  height: 7px !important;
+  min-height: 7px !important;
+  border-radius: 9999px !important;
+  background: var(--wip-progress-color) !important;
 }

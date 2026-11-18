@@ -45,7 +45,7 @@ android {
             dimension = "environment"
             applicationIdSuffix = ".dev"
             versionNameSuffix = "-dev"
-            buildConfigField("String", "API_URL", "\"http://localhost:8000/api\"")
+            buildConfigField("String", "API_URL", "\"http://localhost:8000/api/v1/\"")
             buildConfigField("String", "KEYCLOAK_URL", "\"http://localhost:8080\"")
         }
         create("stage") {

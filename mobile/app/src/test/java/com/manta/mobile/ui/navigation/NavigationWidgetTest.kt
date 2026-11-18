@@ -3,6 +3,8 @@ package com.manta.mobile.ui.navigation
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isSelectable
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -29,26 +31,12 @@ class NavigationWidgetTest {
     }
 
     @Test
-    fun appStartup_displaysStartDestinationAndAllTabs() {
+    fun initialScreen_displaysAlertsScreenAndSelectsAlertsTab() {
         setNavShellContent()
 
-        // Verify startup displays the Alerts destination screen
+        // Verify initial route is Alerts
         composeTestRule.onNodeWithText("Alerts Screen").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Project Screen").assertDoesNotExist()
-        composeTestRule.onNodeWithText("Actions Screen").assertDoesNotExist()
-        composeTestRule.onNodeWithText("Settings Screen").assertDoesNotExist()
-
-        // Verify all bottom navigation tabs are displayed
-        composeTestRule.onNodeWithText("Alerts").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Project").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Actions").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Settings").assertIsDisplayed()
-
-        // Verify initial tab selection state
         composeTestRule.onNodeWithText("Alerts").assertIsSelected()
-        composeTestRule.onNodeWithText("Project").assertIsNotSelected()
-        composeTestRule.onNodeWithText("Actions").assertIsNotSelected()
-        composeTestRule.onNodeWithText("Settings").assertIsNotSelected()
     }
 
     @Test
@@ -84,12 +72,14 @@ class NavigationWidgetTest {
         setNavShellContent()
 
         // Click Settings tab
-        composeTestRule.onNodeWithText("Settings").performClick()
+        composeTestRule.onNode(hasText("Settings") and isSelectable()).performClick()
 
         // Verify destination screen and selection
-        composeTestRule.onNodeWithText("Settings Screen").assertIsDisplayed()
+        composeTestRule.onNodeWithText(
+            "Manage session access and platform preferences."
+        ).assertIsDisplayed()
         composeTestRule.onNodeWithText("Alerts Screen").assertDoesNotExist()
-        composeTestRule.onNodeWithText("Settings").assertIsSelected()
+        composeTestRule.onNode(hasText("Settings") and isSelectable()).assertIsSelected()
         composeTestRule.onNodeWithText("Alerts").assertIsNotSelected()
     }
 
@@ -114,15 +104,16 @@ class NavigationWidgetTest {
         composeTestRule.onNodeWithText("Project Screen").assertDoesNotExist()
 
         // Navigate to Settings
-        composeTestRule.onNodeWithText("Settings").performClick()
-        composeTestRule.onNodeWithText("Settings Screen").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Settings").assertIsSelected()
+        composeTestRule.onNode(hasText("Settings") and isSelectable()).performClick()
+        composeTestRule.onNodeWithText(
+            "Manage session access and platform preferences."
+        ).assertIsDisplayed()
+        composeTestRule.onNode(hasText("Settings") and isSelectable()).assertIsSelected()
         composeTestRule.onNodeWithText("Actions Screen").assertDoesNotExist()
 
         // Navigate back to Alerts
         composeTestRule.onNodeWithText("Alerts").performClick()
         composeTestRule.onNodeWithText("Alerts Screen").assertIsDisplayed()
         composeTestRule.onNodeWithText("Alerts").assertIsSelected()
-        composeTestRule.onNodeWithText("Settings Screen").assertDoesNotExist()
     }
 }

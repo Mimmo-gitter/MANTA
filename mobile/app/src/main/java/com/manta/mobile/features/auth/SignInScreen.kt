@@ -63,8 +63,8 @@ import com.manta.mobile.core.theme.ui.TextLight
 import com.manta.mobile.data.auth.PkceAuthManager
 import com.manta.mobile.data.auth.PkceFlowState
 import com.manta.mobile.ui.Logo
-import com.manta.mobile.ui.PrimaryButton
 import com.manta.mobile.ui.ProtectedBadge
+import com.manta.mobile.ui.buttons.PrimaryButton
 
 @Preview
 @Composable

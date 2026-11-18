@@ -111,6 +111,10 @@ ACTION_ROUTE_MAP: dict[Permission, tuple[str, str]] = {
         "/api/v1/dora/projects/11111111-1111-1111-1111-111111111111",
     ),
     Permission.VIEW_PORTFOLIO_OVERVIEW: ("GET", "/api/v1/dora/portfolio"),
+    Permission.INGEST_PROJECT_DEPLOYMENTS: (
+        "POST",
+        "/api/v1/projects/11111111-1111-1111-1111-111111111111/deployments",
+    ),
     Permission.VIEW_SPRINT_BURNDOWN_WIP: (
         "GET",
         "/api/v1/projects/11111111-1111-1111-1111-111111111111/sprints/burndown",
@@ -136,7 +140,7 @@ ACTION_ROUTE_MAP: dict[Permission, tuple[str, str]] = {
     Permission.APPROVE_ADR_TENANT_PRIVATE: ("POST", "/api/v1/adrs/adr-1/approve"),
     Permission.PUBLISH_GLOBAL_ADR: ("POST", "/api/v1/adrs/adr-1/publish-global"),
     Permission.MANAGE_WEBHOOK_INTEGRATIONS: ("GET", "/api/v1/integrations"),
-    Permission.MANAGE_TENANT_USERS_AND_ROLES: ("GET", "/api/v1/tenants/users"),
+    Permission.MANAGE_TENANT_USERS_AND_ROLES: ("GET", "/api/v1/members"),
 }
 
 
@@ -197,7 +201,12 @@ async def test_all_12_stub_endpoints_in_openapi_schema():
     schema = resp.json()
     paths = schema.get("paths", {})
 
-    stub_permissions = {p for p in Permission if p != Permission.MANAGE_WEBHOOK_INTEGRATIONS}
+    real_permissions = {
+        Permission.MANAGE_WEBHOOK_INTEGRATIONS,
+        Permission.INGEST_PROJECT_DEPLOYMENTS,
+        Permission.MANAGE_TENANT_USERS_AND_ROLES,
+    }
+    stub_permissions = {p for p in Permission if p not in real_permissions}
     found_stubs: set[str] = set()
 
     for perm in stub_permissions:
@@ -225,7 +234,7 @@ async def test_all_12_stub_endpoints_in_openapi_schema():
 
         found_stubs.add(perm.value)
 
-    assert len(found_stubs) == 12, f"Expected 12 stub endpoints, found {len(found_stubs)}"
+    assert len(found_stubs) == 11, f"Expected 11 stub endpoints, found {len(found_stubs)}"
 
 
 @pytest.mark.asyncio
@@ -233,7 +242,11 @@ async def test_stub_endpoints_unauthenticated_returns_401():
     """Unauthenticated calls to all stub endpoints return HTTP 401 Unauthorized."""
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
         for perm, (method, url) in ACTION_ROUTE_MAP.items():
-            if perm == Permission.MANAGE_WEBHOOK_INTEGRATIONS:
+            if perm in {
+                Permission.MANAGE_WEBHOOK_INTEGRATIONS,
+                Permission.INGEST_PROJECT_DEPLOYMENTS,
+                Permission.MANAGE_TENANT_USERS_AND_ROLES,
+            }:
                 continue
             resp = await ac.request(method, url)
             assert resp.status_code == 401, (
@@ -255,51 +268,122 @@ async def test_all_91_matrix_decisions_enforced(auth_fixture):
     - Stubs exist for each matrix action not yet implemented.
     - Permission checks apply to stubs the same way as to real endpoints.
 
-    Exhaustively evaluate all 91 (role, action) pairs in docs/roles-permissions.json
+    Exhaustively evaluate all 98 (role, action) pairs in docs/roles-permissions.json
     against the actual registered application endpoints.
     - DENY: HTTP 403 with consistent FORBIDDEN_RESPONSE.
     - ALLOW on stubs: HTTP 501 with StubEndpointResponse.
-    - ALLOW on real endpoint (MANAGE_WEBHOOK_INTEGRATIONS): HTTP 200.
+    - ALLOW on real endpoints (MANAGE_WEBHOOK_INTEGRATIONS / INGEST_PROJECT_DEPLOYMENTS): HTTP 200 / 201.
     """
     matrix = get_permission_matrix()
     pk = auth_fixture["private_key"]
 
-    with mock.patch(
-        "app.integrations.router.list_tenant_integrations",
-        mock.AsyncMock(return_value=[]),
-    ):
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            for role_id, role_actions in matrix.matrix.items():
-                token = make_token(pk, roles=[role_id], sub=f"user_{role_id.lower()}")
-                headers = {"Authorization": f"Bearer {token}"}
+    from datetime import datetime, timezone
+    import uuid
+    from app.deployments.schemas import (
+        DeploymentOutcome,
+        DeploymentSignalSource,
+        DirectDeploymentResponse,
+    )
 
-                for action_id, cell in role_actions.items():
-                    perm_action = Permission(action_id)
-                    method, url = ACTION_ROUTE_MAP[perm_action]
-                    expected_decision = cell["decision"]
+    mock_deploy_resp = DirectDeploymentResponse(
+        id=uuid.UUID("22222222-2222-2222-2222-222222222222"),
+        tenant_id=uuid.UUID("11111111-1111-1111-1111-111111111111"),
+        project_id=uuid.UUID("11111111-1111-1111-1111-111111111111"),
+        repository_id=None,
+        commit_sha="a" * 40,
+        environment="production",
+        is_production=True,
+        status=DeploymentOutcome.SUCCESS,
+        is_change_failure=False,
+        authoritative_signal_source=DeploymentSignalSource.DIRECT_DEPLOYMENT_API,
+        is_authoritative_for_project=True,
+        actor_pseudonym_id="0" * 64,
+        external_deployment_id=None,
+        deployed_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        deduplicated=False,
+    )
 
-                    resp = await ac.request(method, url, headers=headers)
+    async def _noop_tenant_db():
+        yield object()
 
-                    if expected_decision == "ALLOW":
-                        if perm_action == Permission.MANAGE_WEBHOOK_INTEGRATIONS:
-                            assert resp.status_code == 200, (
-                                f"Expected 200 for [{role_id}][{action_id}], got {resp.status_code}: {resp.text}"
-                            )
+    from contextlib import asynccontextmanager
+    from app.db.session import get_tenant_db
+
+    @asynccontextmanager
+    async def _empty_members_db(_tenant_id):
+        sess = mock.AsyncMock()
+        res = mock.MagicMock()
+        res.all.return_value = []
+        sess.execute = mock.AsyncMock(return_value=res)
+        yield sess
+
+    app.dependency_overrides[get_tenant_db] = _noop_tenant_db
+    try:
+        with (
+            mock.patch(
+                "app.integrations.router.list_tenant_integrations",
+                mock.AsyncMock(return_value=[]),
+            ),
+            mock.patch(
+                "app.deployments.router.ingest_direct_deployment",
+                mock.AsyncMock(return_value=mock_deploy_resp),
+            ),
+            mock.patch(
+                "app.auth.members_router.get_tenant_db_context",
+                side_effect=_empty_members_db,
+            ),
+        ):
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+                for role_id, role_actions in matrix.matrix.items():
+                    token = make_token(pk, roles=[role_id], sub=f"user_{role_id.lower()}")
+                    headers = {"Authorization": f"Bearer {token}"}
+
+                    for action_id, cell in role_actions.items():
+                        perm_action = Permission(action_id)
+                        method, url = ACTION_ROUTE_MAP[perm_action]
+                        expected_decision = cell["decision"]
+
+                        req_kwargs: dict[str, Any] = {"headers": headers}
+                        if perm_action == Permission.INGEST_PROJECT_DEPLOYMENTS:
+                            req_kwargs["json"] = {
+                                "commit_sha": "a" * 40,
+                                "environment": "production",
+                                "outcome": "SUCCESS",
+                                "deployed_at": "2026-01-01T00:00:00Z",
+                            }
+
+                        resp = await ac.request(method, url, **req_kwargs)
+
+                        if expected_decision == "ALLOW":
+                            if perm_action in (
+                                Permission.MANAGE_WEBHOOK_INTEGRATIONS,
+                                Permission.MANAGE_TENANT_USERS_AND_ROLES,
+                            ):
+                                assert resp.status_code == 200, (
+                                    f"Expected 200 for [{role_id}][{action_id}], got {resp.status_code}: {resp.text}"
+                                )
+                            elif perm_action == Permission.INGEST_PROJECT_DEPLOYMENTS:
+                                assert resp.status_code == 201, (
+                                    f"Expected 201 for [{role_id}][{action_id}], got {resp.status_code}: {resp.text}"
+                                )
+                            else:
+                                assert resp.status_code == 501, (
+                                    f"Expected 501 for [{role_id}][{action_id}], got {resp.status_code}: {resp.text}"
+                                )
+                                body = resp.json()
+                                assert body["status"] == "not_implemented"
+                                assert body["action"] == action_id
+                                assert "placeholder stub" in body["detail"]
                         else:
-                            assert resp.status_code == 501, (
-                                f"Expected 501 for [{role_id}][{action_id}], got {resp.status_code}: {resp.text}"
+                            assert resp.status_code == 403, (
+                                f"Expected 403 for [{role_id}][{action_id}], got {resp.status_code}: {resp.text}"
                             )
-                            body = resp.json()
-                            assert body["status"] == "not_implemented"
-                            assert body["action"] == action_id
-                            assert "placeholder stub" in body["detail"]
-                    else:
-                        assert resp.status_code == 403, (
-                            f"Expected 403 for [{role_id}][{action_id}], got {resp.status_code}: {resp.text}"
-                        )
-                        assert resp.json() == FORBIDDEN_RESPONSE, (
-                            f"Expected consistent 403 body for [{role_id}][{action_id}], got: {resp.json()}"
-                        )
+                            assert resp.json() == FORBIDDEN_RESPONSE, (
+                                f"Expected consistent 403 body for [{role_id}][{action_id}], got: {resp.json()}"
+                            )
+    finally:
+        app.dependency_overrides.pop(get_tenant_db, None)
 
 
 @pytest.mark.asyncio
@@ -430,7 +514,7 @@ async def test_database_role_fallback_when_token_lacks_roles():
 
     # 1. Mock DB session returning User.role = "DEVELOPER"
     mock_result = mock.MagicMock()
-    mock_result.all.return_value = [("DEVELOPER", None)]
+    mock_result.all.return_value = [("DEVELOPER", True, None)]
 
     mock_session = mock.AsyncMock()
     mock_session.execute = mock.AsyncMock(return_value=mock_result)

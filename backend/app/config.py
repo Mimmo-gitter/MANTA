@@ -34,6 +34,27 @@ class Settings(BaseSettings):
     ACTIVE_ENCRYPTION_KEY_ID: str = "primary"
     WEBHOOK_BASE_URL: str | None = None
 
+    # Email / Invitations (SCRUM-314)
+    SMTP_HOST: str = "mailpit"
+    SMTP_PORT: int = 1025
+    SMTP_USER: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM: str = "noreply@manta.local"
+    SMTP_START_TLS: bool = False
+    WEB_BASE_URL: str = "http://localhost:3000"
+
+    KC_SERVICE_CLIENT_ID: str = "manta-backend"
+    KC_SERVICE_CLIENT_SECRET: str = ""
+    KEYCLOAK_ADMIN: str = "admin"
+    KEYCLOAK_ADMIN_PASSWORD: str = "admin"
+    KEYCLOAK_ADMIN_REALM: str = "master"
+
+    # Recovery Sweeper Settings (SCRUM-388)
+    SWEEP_INTERVAL_SECONDS: float = 5.0
+    SWEEP_THRESHOLD_SECONDS: float = 10.0
+    SWEEP_BATCH_SIZE: int = 100
+    SWEEPER_HEARTBEAT_FILE: str = "/tmp/sweeper.heartbeat"
+
     @property
     def cors_origins(self) -> list[str]:
         return [orig.strip() for orig in self.CORS_ORIGINS.split(",") if orig.strip()]

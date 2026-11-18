@@ -53,9 +53,9 @@ import com.manta.mobile.core.theme.ui.SecondaryLight
 import com.manta.mobile.core.theme.ui.TextLight
 import com.manta.mobile.data.auth.BiometricUnlockSubState
 import com.manta.mobile.ui.Logo
-import com.manta.mobile.ui.PrimaryButton
 import com.manta.mobile.ui.ProtectedBadge
-import com.manta.mobile.ui.UserProfileCard
+import com.manta.mobile.ui.buttons.PrimaryButton
+import com.manta.mobile.ui.cards.UserProfileCard
 
 @Preview
 @Composable

@@ -1,3 +1,5 @@
+import type { ActionId } from "@/lib/permissions";
+
 export type NavSectionId = "WORKSPACE" | "ENGINEERING" | "ADMINISTRATION";
 
 export interface NavItemConfig {
@@ -19,6 +21,7 @@ export interface NavItemConfig {
   badge?: string;
   hasAlertDot?: boolean;
   description: string;
+  requiredAction?: ActionId;
   requiredRole?: string;
 }
 
@@ -68,7 +71,6 @@ export const NAVIGATION_SECTIONS: NavSectionConfig[] = [
         tabletExpandedActiveIcon: "/icons/shell/78357-active.svg",
         tabletExpandedWidth: 24,
         tabletExpandedHeight: 13.333,
-        badge: "12",
         description:
           "Directory of connected engineering repositories, delivery streams, and project workspaces.",
       },
@@ -107,7 +109,6 @@ export const NAVIGATION_SECTIONS: NavSectionConfig[] = [
         tabletExpandedActiveIcon: "/icons/shell/02f24-active.svg",
         tabletExpandedWidth: 24,
         tabletExpandedHeight: 15.833,
-        hasAlertDot: true,
         description:
           "Early-warning signals, delivery bottlenecks, and automated SLA risk notifications.",
       },
@@ -224,6 +225,7 @@ export const NAVIGATION_SECTIONS: NavSectionConfig[] = [
         tabletLabel: "Workspace Settings",
         href: "/workspace-settings",
         section: "ADMINISTRATION",
+        requiredAction: "MANAGE_TENANT_USERS_AND_ROLES",
         requiredRole: "TENANT_ADMIN",
         icon: "/icons/shell/e0670.svg",
         activeIcon: "/icons/shell/e0670-active.svg",
@@ -244,6 +246,7 @@ export const NAVIGATION_SECTIONS: NavSectionConfig[] = [
         tabletLabel: "Integrations",
         href: "/integrations",
         section: "ADMINISTRATION",
+        requiredAction: "MANAGE_WEBHOOK_INTEGRATIONS",
         requiredRole: "TENANT_ADMIN",
         icon: "/icons/shell/9a85f.svg",
         activeIcon: "/icons/shell/9a85f-active.svg",
@@ -264,6 +267,7 @@ export const NAVIGATION_SECTIONS: NavSectionConfig[] = [
         tabletLabel: "Access & Roles",
         href: "/access-roles",
         section: "ADMINISTRATION",
+        requiredAction: "MANAGE_TENANT_USERS_AND_ROLES",
         requiredRole: "TENANT_ADMIN",
         icon: "/icons/shell/39c1f.svg",
         activeIcon: "/icons/shell/39c1f-active.svg",
@@ -284,6 +288,7 @@ export const NAVIGATION_SECTIONS: NavSectionConfig[] = [
         tabletLabel: "Privacy & Erasure",
         href: "/privacy-erasure",
         section: "ADMINISTRATION",
+        requiredAction: "MANAGE_TENANT_USERS_AND_ROLES",
         requiredRole: "TENANT_ADMIN",
         icon: "/icons/shell/597b1.svg",
         activeIcon: "/icons/shell/597b1-active.svg",
@@ -304,7 +309,7 @@ export const NAVIGATION_SECTIONS: NavSectionConfig[] = [
         tabletLabel: "ADR Governance",
         href: "/adr-governance",
         section: "ADMINISTRATION",
-        requiredRole: "TENANT_ADMIN",
+        requiredAction: "PUBLISH_GLOBAL_ADR",
         icon: "/icons/shell/00a87.svg",
         activeIcon: "/icons/shell/00a87-active.svg",
         tabletCollapsedIcon: "/icons/shell/7167b.svg",
@@ -334,4 +339,20 @@ export function getNavItemByPathname(pathname: string): NavItemConfig | undefine
       ? pathname === "/"
       : pathname === item.href || pathname.startsWith(`${item.href}/`),
   );
+}
+
+/**
+ * Single source of truth for portal route authorization shared between
+ * PortalAuthGuard and navigation visibility.
+ */
+export function canAccessPortalRoute(
+  pathname: string,
+  can: (action: ActionId) => boolean,
+): boolean {
+  const matchedItem = getNavItemByPathname(pathname);
+  if (matchedItem?.requiredAction) {
+    return can(matchedItem.requiredAction);
+  }
+
+  return true;
 }

@@ -9,6 +9,17 @@ import kotlinx.serialization.json.jsonPrimitive
 object JwtUtils {
     private val json = Json { ignoreUnknownKeys = true }
 
+    fun getRawPayload(accessToken: String): String? {
+        return try {
+            val parts = accessToken.split(".")
+            if (parts.size < 2) return null
+            val payloadBytes = Base64.decode(parts[1], Base64.URL_SAFE)
+            String(payloadBytes, Charsets.UTF_8)
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     fun parseClaims(accessToken: String): UserClaims? {
         return try {
             val parts = accessToken.split(".")

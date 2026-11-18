@@ -4,9 +4,15 @@ __pycache__/
 *$py.class
 *.so
 .pytest_cache/
+.ruff_cache/
 .coverage
 htmlcov/
 .git/
 .gitignore
 .dockerignore
 .env
+tests/
+reports/
+docker-compose.yml
+pytest.ini
+*.md

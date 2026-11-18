@@ -3,6 +3,7 @@ package com.manta.mobile.data.auth
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.util.Log
 import androidx.core.net.toUri
 import com.manta.mobile.BuildConfig
 import com.manta.mobile.core.auth.PkceUtils
@@ -27,8 +28,11 @@ sealed interface PkceFlowState {
     data class Error(val message: String) : PkceFlowState
 }
 
+data class RefreshedTokens(val accessToken: String, val refreshToken: String?, val idToken: String?)
+
 object PkceAuthManager {
 
+    private const val TAG = "PkceAuthManager"
     private const val CLIENT_ID = "manta-mobile"
     private const val REDIRECT_URI = "manta://auth/callback"
     private const val SCOPE = "openid profile email offline_access"
@@ -89,8 +93,6 @@ object PkceAuthManager {
             _flowState.value = PkceFlowState.ExchangingCode
 
             try {
-                val baseUrl = BuildConfig.KEYCLOAK_URL
-                val tokenUrl = "$baseUrl/realms/manta/protocol/openid-connect/token"
                 val formBody = FormBody.Builder()
                     .add("grant_type", "authorization_code")
                     .add("client_id", CLIENT_ID)
@@ -99,46 +101,70 @@ object PkceAuthManager {
                     .add("code_verifier", verifier)
                     .build()
 
-                val request = Request.Builder()
-                    .url(tokenUrl)
-                    .post(formBody)
-                    .build()
-
-                httpClient.newCall(request).execute().use { response ->
-                    val responseBody = response.body?.string()
-                    if (!response.isSuccessful || responseBody == null) {
-                        _flowState.value =
-                            PkceFlowState.Error("Token exchange failed (${response.code})")
-                        return@withContext false
-                    }
-
-                    val jsonObject = json.parseToJsonElement(responseBody).jsonObject
-                    val accessToken = jsonObject["access_token"]?.jsonPrimitive?.content
-                    val refreshToken = jsonObject["refresh_token"]?.jsonPrimitive?.content
-                    val idToken = jsonObject["id_token"]?.jsonPrimitive?.content
-
-                    if (accessToken.isNullOrBlank()) {
-                        _flowState.value =
-                            PkceFlowState.Error("Invalid token response: Missing access token")
-                        return@withContext false
-                    }
-
-                    authRepository.saveTokens(
-                        accessToken = accessToken,
-                        refreshToken = refreshToken,
-                        idToken = idToken
-                    )
-
-                    currentCodeVerifier = null
-                    _flowState.value = PkceFlowState.Success
-                    return@withContext true
+                val tokens = executeTokenEndpointRequest(formBody)
+                if (tokens == null) {
+                    _flowState.value = PkceFlowState.Error("Token exchange failed")
+                    return@withContext false
                 }
+
+                authRepository.saveTokens(
+                    accessToken = tokens.accessToken,
+                    refreshToken = tokens.refreshToken,
+                    idToken = tokens.idToken
+                )
+
+                currentCodeVerifier = null
+                _flowState.value = PkceFlowState.Success
+                return@withContext true
             } catch (e: Exception) {
+                Log.e(TAG, "Exception during token exchange: ${e.message}", e)
                 _flowState.value =
                     PkceFlowState.Error("Network error: ${e.localizedMessage ?: "Unknown error"}")
                 return@withContext false
             }
         }
+
+    fun refreshTokens(refreshToken: String): RefreshedTokens? {
+        val formBody = FormBody.Builder()
+            .add("grant_type", "refresh_token")
+            .add("client_id", CLIENT_ID)
+            .add("refresh_token", refreshToken)
+            .build()
+
+        return executeTokenEndpointRequest(formBody)
+    }
+
+    private fun executeTokenEndpointRequest(formBody: FormBody): RefreshedTokens? {
+        val tokenUrl = "${BuildConfig.KEYCLOAK_URL}/realms/manta/protocol/openid-connect/token"
+        val request = Request.Builder()
+            .url(tokenUrl)
+            .post(formBody)
+            .build()
+
+        return try {
+            httpClient.newCall(request).execute().use { response ->
+                val responseBody = response.body?.string()
+                if (!response.isSuccessful || responseBody.isNullOrBlank()) {
+                    Log.e(
+                        TAG,
+                        "Token endpoint error (${response.code}): $responseBody"
+                    )
+                    return null
+                }
+
+                val jsonObject = json.parseToJsonElement(responseBody).jsonObject
+                val newAccessToken = jsonObject["access_token"]?.jsonPrimitive?.content
+                    ?: return null
+                val newRefreshToken = jsonObject["refresh_token"]?.jsonPrimitive?.content
+                val newIdToken = jsonObject["id_token"]?.jsonPrimitive?.content
+
+                RefreshedTokens(newAccessToken, newRefreshToken, newIdToken)
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Exception executing token request: ${e.message}", e)
+            null
+        }
+    }
 
     fun resetState() {
         _flowState.value = PkceFlowState.Idle

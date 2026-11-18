@@ -35,6 +35,7 @@ class MainActivity : FragmentActivity() {
     private lateinit var biometricPromptManager: BiometricPromptManager
 
     private var failedAttemptCount = 0
+    private var currentFcmToken: String? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -55,6 +56,7 @@ class MainActivity : FragmentActivity() {
 
         FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
             if (task.isSuccessful) {
+                currentFcmToken = task.result
                 Log.d("MainActivity", "FCM Registration Token: ${task.result}")
             } else {
                 Log.w("MainActivity", "Fetching FCM registration token failed", task.exception)
@@ -141,20 +143,23 @@ class MainActivity : FragmentActivity() {
                             onSwitchClick = {
                                 failedAttemptCount = 0
                                 lifecycleScope.launch {
-                                    authRepository.logout()
+                                    authRepository.signOut(fcmToken = currentFcmToken)
                                 }
                             },
                             onSsoClick = {
                                 failedAttemptCount = 0
                                 lifecycleScope.launch {
-                                    authRepository.logout()
+                                    authRepository.signOut(fcmToken = currentFcmToken)
                                     PkceAuthManager.launchOidcFlow(this@MainActivity)
                                 }
                             }
                         )
                     }
                     is AuthState.Authenticated -> {
-                        NavShell()
+                        NavShell(
+                            authRepository = authRepository,
+                            fcmToken = currentFcmToken
+                        )
                     }
                 }
             }
@@ -163,6 +168,7 @@ class MainActivity : FragmentActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
         handleDeepLinkIntent(intent)
     }
 
@@ -170,45 +176,32 @@ class MainActivity : FragmentActivity() {
         val uri: Uri? = intent?.data
         if (uri != null && uri.scheme == "manta" && uri.host == "auth") {
             lifecycleScope.launch {
-                PkceAuthManager.handleAuthorizationResponse(uri, authRepository)
+                val success = PkceAuthManager.handleAuthorizationResponse(
+                    uri,
+                    authRepository
+                )
+                if (!success) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        "Sign-In failed. Please try again.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
             }
         }
     }
 
     private fun triggerBiometricUnlock() {
-        when (val status = biometricPromptManager.canAuthenticate()) {
-            is BiometricPromptManager.BiometricStatus.Ready -> {
-                authRepository.updateBiometricSubState(BiometricUnlockSubState.Verifying)
-                biometricPromptManager.showBiometricPrompt(
-                    title = "Unlock MANTA Workspace",
-                    description = "Scan your fingerprint or face to proceed"
-                )
-            }
-            is BiometricPromptManager.BiometricStatus.NotEnrolled -> {
-                authRepository.updateBiometricSubState(BiometricUnlockSubState.Unavailable)
-                Toast.makeText(
-                    this,
-                    "No biometric/PIN enrolled on this device. Please set up device lock in the settings.",
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
-            is BiometricPromptManager.BiometricStatus.FeatureUnavailable,
-            is BiometricPromptManager.BiometricStatus.HardwareUnavailable -> {
-                authRepository.updateBiometricSubState(BiometricUnlockSubState.Unavailable)
-                Toast.makeText(
-                    this,
-                    "Biometric hardware unavailable on this device.",
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
-            else -> {
-                authRepository.updateBiometricSubState(BiometricUnlockSubState.Unavailable)
-                Toast.makeText(
-                    this,
-                    "Biometric status: $status",
-                    Toast.LENGTH_SHORT
-                ).show()
-            }
+        val status = biometricPromptManager.canAuthenticate()
+        if (status is BiometricPromptManager.BiometricStatus.Ready) {
+            biometricPromptManager.showBiometricPrompt(
+                title = "M.A.N.T.A. Security Gate",
+                description = "Scan biometrics to unlock workspace."
+            )
+        } else {
+            authRepository.updateBiometricSubState(
+                BiometricUnlockSubState.Unavailable
+            )
         }
     }
 }
