@@ -1089,7 +1089,7 @@ def _build_mttr_aggregate_sql_query(
     end_at: Optional[datetime] = None,
 ) -> Select[tuple[int, Optional[float], Optional[float], Optional[float]]]:
     """Build native PostgreSQL 16 aggregate MTTR query for Incident or ProductionFailure."""
-    epoch_diff = func.extract(text("epoch"), model.resolved_at - model.started_at)
+    epoch_diff = func.extract("epoch", model.resolved_at - model.started_at)
     count_resolved = func.count(model.id)
 
     stmt = (

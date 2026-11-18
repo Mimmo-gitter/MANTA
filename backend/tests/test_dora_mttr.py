@@ -704,6 +704,7 @@ def test_task_29_3_postgresql_16_query_compilation_and_execution():
         start_at=start_at,
         end_at=end_at,
     )
+    assert stmt._generate_cache_key() is not None
     compiled = str(stmt.compile(dialect=postgresql.dialect()))
 
     assert "extract(epoch from" in compiled.lower()
@@ -861,6 +862,7 @@ def test_task_29_2_production_failures_sql_query_builders_compilation():
         start_at=start_at,
         end_at=end_at,
     )
+    assert rows_stmt._generate_cache_key() is not None
     compiled_rows = str(rows_stmt.compile(dialect=postgresql.dialect())).lower()
     assert "from production_failures" in compiled_rows
     assert "production_failures.status =" in compiled_rows
@@ -874,6 +876,7 @@ def test_task_29_2_production_failures_sql_query_builders_compilation():
         start_at=start_at,
         end_at=end_at,
     )
+    assert inc_rows_stmt._generate_cache_key() is not None
     compiled_inc_rows = str(inc_rows_stmt.compile(dialect=postgresql.dialect())).lower()
     assert "from incidents" in compiled_inc_rows
     assert "incidents.resolved_at is not null" in compiled_inc_rows
@@ -886,6 +889,7 @@ def test_task_29_2_production_failures_sql_query_builders_compilation():
         start_at=start_at,
         end_at=end_at,
     )
+    assert agg_stmt._generate_cache_key() is not None
     compiled_agg = str(agg_stmt.compile(dialect=postgresql.dialect())).lower()
     assert "extract(epoch from" in compiled_agg
     assert "case when (count(production_failures.id) =" in compiled_agg
@@ -1211,31 +1215,39 @@ async def test_task_29_3_live_database_canonical_benchmark_execution():
     pid = uuid.uuid4()
     window_end = datetime(2026, 11, 14, 18, 0, 0, tzinfo=timezone.utc)
 
-    async with get_tenant_db_context(tid) as session:
-        # Verify zero-outage null return on live database
-        res_null = await calculate_rolling_mttr(
-            session,
-            tenant_id=tid,
-            project_id=pid,
-            window_days=14,
-            window_end=window_end,
-        )
-        assert res_null.resolved_outage_count == 0
-        assert res_null.mttr_seconds is None
-        assert res_null.mttr_hours is None
+    try:
+        async with get_tenant_db_context(tid) as session:
+            # Verify zero-outage null return on live database
+            res_null = await calculate_rolling_mttr(
+                session,
+                tenant_id=tid,
+                project_id=pid,
+                window_days=14,
+                window_end=window_end,
+            )
+            assert res_null.resolved_outage_count == 0
+            assert res_null.mttr_seconds is None
+            assert res_null.mttr_hours is None
 
-        sql_null_row = (
-            await session.execute(
+            for sql_stmt in (
+                build_mttr_sql_query(
+                    tenant_id=tid,
+                    project_id=pid,
+                    start_at=window_end - timedelta(days=14),
+                    end_at=window_end,
+                ),
                 build_mttr_production_failures_sql_query(
                     tenant_id=tid,
                     project_id=pid,
                     start_at=window_end - timedelta(days=14),
                     end_at=window_end,
-                )
-            )
-        ).first()
-        assert sql_null_row is not None
-        assert int(sql_null_row[0]) == 0
-        assert sql_null_row[1] is None
-        assert sql_null_row[2] is None
-        assert sql_null_row[3] is None
+                ),
+            ):
+                sql_null_row = (await session.execute(sql_stmt)).first()
+                assert sql_null_row is not None
+                assert int(sql_null_row[0]) == 0
+                assert sql_null_row[1] is None
+                assert sql_null_row[2] is None
+                assert sql_null_row[3] is None
+    finally:
+        await async_engine.dispose()
