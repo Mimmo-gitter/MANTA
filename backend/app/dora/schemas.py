@@ -2,6 +2,7 @@
 
 import datetime as dt
 from datetime import date, datetime
+from decimal import Decimal, ROUND_HALF_UP
 from typing import Literal, Optional
 import uuid
 
@@ -124,6 +125,11 @@ class DailyMTTRMetric(BaseModel):
     mttr_hours: Optional[float] = None
     mttr_minutes: Optional[float] = None
 
+    @property
+    def mttr(self) -> Optional[float]:
+        """Convenience accessor returning daily MTTR in hours."""
+        return self.mttr_hours
+
 
 class MTTROutageItem(BaseModel):
     """Detailed item representation of an individual resolved outage session (US-29)."""
@@ -135,6 +141,20 @@ class MTTROutageItem(BaseModel):
     duration_seconds: float = Field(ge=0.0)
     duration_hours: float = Field(ge=0.0)
     severity: str = "SEV-2"
+
+    @property
+    def session_id(self) -> uuid.UUID:
+        """Alias returning the resolved failure session / incident UUID."""
+        return self.incident_id
+
+    @property
+    def duration_minutes(self) -> float:
+        """Return the resolved session duration in minutes rounded to 2 decimal places."""
+        return float(
+            (Decimal(str(self.duration_seconds)) / Decimal("60")).quantize(
+                Decimal("0.01"), rounding=ROUND_HALF_UP
+            )
+        )
 
 
 class MTTRResult(BaseModel):
@@ -154,6 +174,11 @@ class MTTRResult(BaseModel):
     def mttr(self) -> Optional[float]:
         """Convenience accessor returning MTTR in hours."""
         return self.mttr_hours
+
+    @property
+    def resolved_failure_session_count(self) -> int:
+        """Alias returning the count of resolved production health failure sessions."""
+        return self.resolved_outage_count
 
 
 # ---------------------------------------------------------------------------
