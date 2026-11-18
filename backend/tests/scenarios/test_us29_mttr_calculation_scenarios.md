@@ -780,22 +780,23 @@ The scenarios specified in this design document are verified by the automated py
 
 | Test Identifier | Test Function in Pytest Suite (`test_dora_mttr.py`) | Target Invariant & Scope | Status |
 | :--- | :--- | :--- | :--- |
-| **`TC-DORA-MTTR-001`** | `test_task_29_3_canonical_health_probe_recovery_10_00_to_11_48` | Benchmark 10:00 fail $\rightarrow$ 10:20 PR merge $\rightarrow$ 11:48 restore ($1.8\text{h}$) | **VERIFIED** |
-| **`TC-DORA-MTTR-002`** | `test_task_29_3_defect_differential_analysis_rejects_pr_merge_proxies` | Asserting $1.8\text{h}$ vs $0.33\text{h}$, $1.47\text{h}$, $0.58\text{h}$ | **VERIFIED** |
-| **`TC-DORA-MTTR-003`** | `test_task_29_3_multi_outage_arithmetic_mean_calculation` | Multi-outage mean calculation ($18,000\text{s} / 3 = 6,000\text{s} = 1.67\text{h}$) | **VERIFIED** |
-| **`TC-DORA-MTTR-004`** | `test_task_29_3_concurrent_overlapping_outages_strict_pairing` | Concurrent outages self-contained pairing ($4,500\text{s} = 1.25\text{h}$) | **VERIFIED** |
-| **`TC-DORA-MTTR-005`** | `test_task_29_3_open_unresolved_outage_exclusion` | Ongoing outage (`resolved_at = NULL`) excluded from historical MTTR | **VERIFIED** |
-| **`TC-DORA-MTTR-006`** | `test_task_29_3_zero_failure_window_null_semantics_14d` | Zero resolved outages in 14d returns `null` (not `0.00`) | **VERIFIED** |
-| **`TC-DORA-MTTR-007`** | `test_task_29_3_zero_failure_window_null_semantics_30d` | Zero resolved outages in 30d returns `null` across 30 buckets | **VERIFIED** |
-| **`TC-DORA-MTTR-008`** | `test_task_29_3_window_with_only_open_outages_evaluates_to_null` | Window with only ongoing outages returns `null` | **VERIFIED** |
-| **`TC-DORA-MTTR-009`** | `test_task_29_3_window_boundary_edge_cases` | `resolved_at IN [window_start, window_end]` inclusion rule | **VERIFIED** |
-| **`TC-DORA-MTTR-010`** | `test_task_29_3_clock_skew_and_negative_duration_guard` | `resolved_at >= started_at` non-negative guard excludes anomalies | **VERIFIED** |
-| **`TC-DORA-MTTR-011`** | `test_task_29_3_multitenant_rls_isolation` | Tenant A vs Tenant B isolation and anti-enumeration | **VERIFIED** |
-| **`TC-DORA-MTTR-012`** | `test_task_29_3_soft_deleted_project_exclusion` | Soft-deleted project excluded from MTTR | **VERIFIED** |
-| **`TC-DORA-MTTR-013`** | `test_task_29_3_daily_mttr_trend_time_series_generation` | 14 daily contiguous buckets with `null` on idle days | **VERIFIED** |
-| **`TC-DORA-MTTR-014`** | `test_task_29_3_unsupported_window_parameter_validation` | `ValueError` on `window_days` not in `(14, 30)` | **VERIFIED** |
-| **`TC-DORA-MTTR-015`** | `test_task_29_3_instantaneous_automated_recovery_zero_seconds` | 0-second recovery evaluates to numeric `0.00` | **VERIFIED** |
-| **`TC-DORA-MTTR-SQL`** | `test_task_29_3_postgresql_16_query_compilation_and_execution` | Authoritative PostgreSQL 16 SQL query compilation | **VERIFIED** |
+| **`TC-DORA-MTTR-001`** | `test_tc_dora_mttr_001_canonical_health_probe_recovery_benchmark_fixture` | Benchmark 10:00 fail $\rightarrow$ 10:20 PR merge $\rightarrow$ 11:48 restore ($1.8\text{h}$) | **VERIFIED** |
+| **`TC-DORA-MTTR-002`** | `test_tc_dora_mttr_002_defect_differential_analysis_rejects_pr_merge_proxies` | Asserting $1.8\text{h}$ vs $0.33\text{h}$, $1.47\text{h}$, $0.58\text{h}$ | **VERIFIED** |
+| **`TC-DORA-MTTR-003`** | `test_tc_dora_mttr_003_multi_outage_arithmetic_mean_calculation` | Multi-outage mean calculation ($18,000\text{s} / 3 = 6,000\text{s} = 1.67\text{h}$) | **VERIFIED** |
+| **`TC-DORA-MTTR-004`** | `test_tc_dora_mttr_004_concurrent_overlapping_outages_strict_pairing` | Concurrent outages self-contained pairing ($4,500\text{s} = 1.25\text{h}$) | **VERIFIED** |
+| **`TC-DORA-MTTR-005`** | `test_tc_dora_mttr_005_open_unresolved_outage_exclusion` | Ongoing outage (`resolved_at = NULL`) excluded from historical MTTR | **VERIFIED** |
+| **`TC-DORA-MTTR-006`** | `test_tc_dora_mttr_006_zero_failure_window_null_semantics_14d` | Zero resolved outages in 14d returns `null` (not `0.00`) | **VERIFIED** |
+| **`TC-DORA-MTTR-007`** | `test_tc_dora_mttr_007_zero_failure_window_null_semantics_30d` | Zero resolved outages in 30d returns `null` across 30 buckets | **VERIFIED** |
+| **`TC-DORA-MTTR-008`** | `test_tc_dora_mttr_008_window_with_only_open_outages_evaluates_to_null` | Window with only ongoing outages returns `null` | **VERIFIED** |
+| **`TC-DORA-MTTR-009`** | `test_tc_dora_mttr_009_window_boundary_edge_cases` | `resolved_at IN [window_start, window_end]` inclusion rule | **VERIFIED** |
+| **`TC-DORA-MTTR-010`** | `test_tc_dora_mttr_010_clock_skew_and_negative_duration_guard` | `resolved_at >= started_at` non-negative guard excludes anomalies | **VERIFIED** |
+| **`TC-DORA-MTTR-011`** | `test_tc_dora_mttr_011_multitenant_rls_isolation` | Tenant A vs Tenant B isolation and anti-enumeration | **VERIFIED** |
+| **`TC-DORA-MTTR-012`** | `test_tc_dora_mttr_012_soft_deleted_project_exclusion` | Soft-deleted project excluded from MTTR | **VERIFIED** |
+| **`TC-DORA-MTTR-013`** | `test_tc_dora_mttr_013_daily_mttr_trend_time_series_generation` | 14 daily contiguous buckets with `null` on idle days | **VERIFIED** |
+| **`TC-DORA-MTTR-014`** | `test_tc_dora_mttr_014_unsupported_window_parameter_validation` | `ValueError` on `window_days` not in `(14, 30)` | **VERIFIED** |
+| **`TC-DORA-MTTR-015`** | `test_tc_dora_mttr_015_instantaneous_automated_recovery_zero_seconds` | 0-second recovery evaluates to numeric `0.00` | **VERIFIED** |
+| **`TC-DORA-MTTR-SQL`** | `test_tc_dora_mttr_sql_query_compilation_and_execution` | Authoritative PostgreSQL 16 SQL query compilation | **VERIFIED** |
+| **`TC-DORA-MTTR-LIVE`** | `test_tc_dora_mttr_live_postgres_canonical_benchmark_and_zero_failure_e2e` | Live PostgreSQL 16 E2E multi-tenant RLS & zero-failure verification | **VERIFIED** |
 
 ---
 
