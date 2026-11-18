@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, Depends, Response, status
+from fastapi import APIRouter, Depends, Header, Request, Response, status
 
 from app.auth.permissions import (
     Permission,
@@ -9,9 +9,20 @@ from app.auth.permissions import (
     stub_route_kwargs,
 )
 from app.auth.schemas import StubEndpointResponse, TokenClaims
+from app.projects.health_service import (
+    get_project_health_config as get_project_health_config_service,
+    handle_project_health_signal_http,
+    list_project_health_signals as list_project_health_signals_service,
+    rotate_project_health_secret as rotate_project_health_secret_service,
+    update_project_health_config as update_project_health_config_service,
+)
 from app.projects.schemas import (
     DeploymentSignalResponse,
     DeploymentSignalUpdateRequest,
+    HealthProbeConfigResponse,
+    HealthProbeConfigUpdateRequest,
+    HealthSignalIngestResponse,
+    ProductionFailureResponse,
     ProjectCreateRequest,
     ProjectIncidentResponse,
     ProjectResponse,
@@ -200,6 +211,116 @@ async def update_deployment_signal(
 ) -> DeploymentSignalResponse:
     """Updates authoritative production deployment signal. Requires TENANT_ADMIN."""
     return await update_deployment_signal_service(user.tenant_uuid, project_id, payload)
+
+
+# ==============================================================================
+# SCRUM-452 / SCRUM-453: PRODUCTION HEALTH SIGNAL INGESTION & CONFIG (US-68)
+# ==============================================================================
+
+
+@router.post(
+    "/{project_id}/health-signals",
+    response_model=HealthSignalIngestResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Ingest authenticated production health probe signal",
+    description=(
+        "Ingests FAIL/PASS production health signals verified by HMAC-SHA256 signature, "
+        "webhook secret token, or authorized OIDC Bearer JWT, driving the idempotent "
+        "production_failures state machine (US-68 / Task 68.3 & Task 68.4)."
+    ),
+)
+async def ingest_project_health_signal(
+    project_id: uuid.UUID,
+    request: Request,
+    x_tenant_id: str | None = Header(None, alias="X-Tenant-ID"),
+) -> HealthSignalIngestResponse:
+    """Ingest production health probe FAIL/PASS signal with HMAC/token/JWT auth."""
+    return await handle_project_health_signal_http(
+        project_id=project_id,
+        request=request,
+        x_tenant_id=x_tenant_id,
+    )
+
+
+ingest_project_health_signal._required_permissions = frozenset(  # type: ignore[attr-defined]
+    {
+        Permission.INGEST_PROJECT_DEPLOYMENTS.value,
+        Permission.MANAGE_WEBHOOK_INTEGRATIONS.value,
+    }
+)
+
+
+@router.get(
+    "/{project_id}/health-signals",
+    response_model=list[ProductionFailureResponse],
+    summary="List project production failure sessions",
+    description="Retrieves recorded production health failure sessions for a project under tenant RLS.",
+)
+async def list_project_health_signals(
+    project_id: uuid.UUID,
+    user: TokenClaims = Depends(require_project_view),
+) -> list[ProductionFailureResponse]:
+    """Lists production_failures sessions recorded for the project."""
+    return await list_project_health_signals_service(user.tenant_uuid, project_id)
+
+
+@router.get(
+    "/{project_id}/health-config",
+    response_model=HealthProbeConfigResponse,
+    summary="Get project health probe configuration",
+    description="Retrieves health probe webhook configuration, URLs, masked secret, and live health status.",
+)
+async def get_project_health_config(
+    project_id: uuid.UUID,
+    request: Request,
+    user: TokenClaims = Depends(require_project_view),
+) -> HealthProbeConfigResponse:
+    """Retrieves health probe webhook configuration for the project."""
+    return await get_project_health_config_service(
+        user.tenant_uuid,
+        project_id,
+        str(request.base_url),
+    )
+
+
+@router.patch(
+    "/{project_id}/health-config",
+    response_model=HealthProbeConfigResponse,
+    summary="Update project health probe configuration",
+    description="Updates project health probe settings and optional custom webhook secret. Requires TENANT_ADMIN.",
+)
+async def update_project_health_config(
+    project_id: uuid.UUID,
+    payload: HealthProbeConfigUpdateRequest,
+    request: Request,
+    user: TokenClaims = Depends(require_tenant_admin),
+) -> HealthProbeConfigResponse:
+    """Updates health probe configuration for the project. Requires TENANT_ADMIN."""
+    return await update_project_health_config_service(
+        user.tenant_uuid,
+        project_id,
+        payload,
+        str(request.base_url),
+    )
+
+
+@router.post(
+    "/{project_id}/health-config/rotate-secret",
+    response_model=HealthProbeConfigResponse,
+    summary="Rotate project health webhook HMAC secret",
+    description="Generates a new AES-256-GCM encrypted HMAC secret for the project health probe webhook.",
+)
+async def rotate_project_health_secret(
+    project_id: uuid.UUID,
+    request: Request,
+    user: TokenClaims = Depends(require_tenant_admin),
+) -> HealthProbeConfigResponse:
+    """Rotates the HMAC webhook secret for the project's health probe."""
+    return await rotate_project_health_secret_service(
+        user.tenant_uuid,
+        project_id,
+        str(request.base_url),
+    )
 
 
 # ==============================================================================

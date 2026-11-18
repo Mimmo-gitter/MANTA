@@ -26,6 +26,8 @@ from sqlalchemy.exc import DBAPIError, ProgrammingError, SQLAlchemyError
 from app.db.models.models import Integration
 from app.db.session import AsyncSessionLocal, get_tenant_db_context
 from app.integrations.crypto import encryption_service
+from app.projects.health_service import handle_project_health_signal_http
+from app.projects.schemas import HealthSignalIngestResponse
 from app.webhooks.delivery import extract_delivery_id
 from app.webhooks.enqueue import enqueue_staged_event_best_effort
 from app.webhooks.schemas import WebhookIntakeResponse
@@ -72,6 +74,30 @@ async def _read_request_data(request: Request) -> tuple[dict[str, Any], bytes, s
         except Exception:
             payload = {"raw": raw_body.decode("utf-8", errors="replace")}
     return payload, raw_body, raw_payload_json
+
+
+@router.post(
+    "/projects/{project_id}/health",
+    response_model=HealthSignalIngestResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Ingest authenticated production health signal webhook for a project",
+)
+async def ingest_project_health_webhook(
+    project_id: uuid.UUID,
+    request: Request,
+    x_tenant_id: str | None = Header(None, alias="X-Tenant-ID"),
+) -> HealthSignalIngestResponse:
+    """
+    SCRUM-452 / SCRUM-453 (US-68):
+    Webhook alias for POST /api/v1/projects/{project_id}/health-signals.
+    Verifies HMAC-SHA256 signature or webhook secret token and executes the
+    idempotent production_failures session state machine under tenant RLS.
+    """
+    return await handle_project_health_signal_http(
+        project_id=project_id,
+        request=request,
+        x_tenant_id=x_tenant_id,
+    )
 
 
 @router.post(

@@ -14,6 +14,7 @@ from app.db.models.models import (
     DeploymentIncident,
     DeploymentPullRequest,
     Incident,
+    ProductionFailure,
     Project,
     PullRequest,
 )
@@ -864,7 +865,7 @@ async def calculate_rolling_change_failure_rate(
 
 
 def compute_mttr(
-    incidents: Sequence[Incident],
+    incidents: Sequence[Incident | ProductionFailure],
     *,
     window_days: Literal[14, 30] = 14,
     window_end: Optional[datetime] = None,
@@ -1061,6 +1062,40 @@ def build_mttr_incidents_query(
     return stmt
 
 
+def build_mttr_production_failures_query(
+    *,
+    tenant_id: uuid.UUID,
+    project_id: uuid.UUID,
+    start_at: Optional[datetime] = None,
+    end_at: Optional[datetime] = None,
+) -> Select[tuple[ProductionFailure]]:
+    """Build query fetching resolved production_failures sessions in window under tenant context."""
+    stmt = (
+        select(ProductionFailure)
+        .join(
+            Project,
+            and_(
+                Project.id == ProductionFailure.project_id,
+                Project.tenant_id == ProductionFailure.tenant_id,
+            ),
+        )
+        .where(
+            ProductionFailure.tenant_id == tenant_id,
+            ProductionFailure.project_id == project_id,
+            Project.deleted_at.is_(None),
+            ProductionFailure.status == "RESOLVED",
+            ProductionFailure.resolved_at.is_not(None),
+            ProductionFailure.resolved_at >= ProductionFailure.started_at,
+        )
+        .order_by(ProductionFailure.resolved_at.asc(), ProductionFailure.id.asc())
+    )
+    if start_at is not None:
+        stmt = stmt.where(ProductionFailure.resolved_at >= start_at)
+    if end_at is not None:
+        stmt = stmt.where(ProductionFailure.resolved_at <= end_at)
+    return stmt
+
+
 async def calculate_rolling_mttr(
     db: AsyncSession,
     *,
@@ -1070,7 +1105,8 @@ async def calculate_rolling_mttr(
     window_end: Optional[datetime] = None,
 ) -> MTTRResult:
     """
-    Query resolved production incidents in window and compute rolling 14d/30d MTTR (Task 29.2).
+    Query resolved production_failures sessions and incidents in window and compute
+    rolling 14d/30d MTTR without double-counting synced session/incident pairs (Task 29.2 / US-68).
     """
     if window_days not in SUPPORTED_MTTR_WINDOWS:
         raise ValueError(
@@ -1080,18 +1116,35 @@ async def calculate_rolling_mttr(
     end_utc = _ensure_utc(window_end or datetime.now(timezone.utc))
     start_utc = end_utc - timedelta(days=window_days)
 
-    stmt = build_mttr_incidents_query(
+    pf_stmt = build_mttr_production_failures_query(
+        tenant_id=tenant_id,
+        project_id=project_id,
+        start_at=start_utc,
+        end_at=end_utc,
+    )
+    inc_stmt = build_mttr_incidents_query(
         tenant_id=tenant_id,
         project_id=project_id,
         start_at=start_utc,
         end_at=end_utc,
     )
 
-    result = await db.execute(stmt)
-    incidents = list(result.scalars().all())
+    pf_rows = list((await db.execute(pf_stmt)).scalars().all())
+    inc_rows = list((await db.execute(inc_stmt)).scalars().all())
+
+    covered_incident_ids: set[uuid.UUID] = set()
+    for pf in pf_rows:
+        covered_incident_ids.add(pf.id)
+        if getattr(pf, "incident_id", None) is not None:
+            covered_incident_ids.add(pf.incident_id)
+
+    combined: list[Incident | ProductionFailure] = list(pf_rows)
+    for inc in inc_rows:
+        if inc.id not in covered_incident_ids:
+            combined.append(inc)
 
     return compute_mttr(
-        incidents,
+        combined,
         window_days=window_days,
         window_end=end_utc,
     )
