@@ -56,8 +56,8 @@ async def test_tenant_tables_have_rls_and_force_rls_active():
             assert not unprotected, (
                 f"Found tenant tables without FORCE RLS enabled: {', '.join(unprotected)}"
             )
-            # Exactly 44 tenant tables in schema (including processed_outbox_events)
-            assert len(rows) == 44, f"Expected 44 tenant tables, found {len(rows)}"
+            # Exactly 45 tenant tables in schema (including production_failures)
+            assert len(rows) == 45, f"Expected 45 tenant tables, found {len(rows)}"
     finally:
         await async_engine.dispose()
 
