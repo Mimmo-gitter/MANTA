@@ -16,6 +16,7 @@ from app.refactoring import refactoring_router
 from app.search import search_router
 from app.tenants import router as tenants_router
 from app.webhooks import webhooks_router
+from app.mobile import mobile_router
 
 app = FastAPI(
     title="Engineering Intelligence Platform",
@@ -74,6 +75,8 @@ app.include_router(refactoring_router)
 app.include_router(search_router)
 app.include_router(adr_router)
 
+# Mobile FCM token registration endpoints (SCRUM-494)
+app.include_router(mobile_router)
 
 @app.get("/health")
 async def health_check():
