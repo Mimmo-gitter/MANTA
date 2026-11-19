@@ -11,7 +11,9 @@ from app.db.models.models import Integration
 from app.jira.normalization import normalize_jira_event
 from app.jira.service import upsert_issue, upsert_sprint
 from app.jira.incident_correlation import (
-    CANCELLED_STATUSES, correlate_incident, unlink_cancelled_incident,
+    CANCELLED_STATUSES,
+    correlate_incident,
+    unlink_cancelled_incident,
 )
 
 logger = logging.getLogger("app.jira.webhook_handler")

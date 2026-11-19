@@ -208,7 +208,9 @@ def normalize_jira_event(
     assignee = None
     if isinstance(assignee_raw, dict):
         assignee = {
-            "id": assignee_raw.get("accountId") or assignee_raw.get("name") or assignee_raw.get("key"),
+            "id": assignee_raw.get("accountId")
+            or assignee_raw.get("name")
+            or assignee_raw.get("key"),
             "name": assignee_raw.get("displayName"),
             "email": assignee_raw.get("emailAddress"),
         }
@@ -220,11 +222,7 @@ def normalize_jira_event(
             status_change = (item.get("fromString"), item.get("toString"))
 
     cl_id = changelog.get("id")
-    event_at = (
-        _ms_to_dt(payload.get("timestamp"))
-        or parse_dt(fields.get("updated"))
-        or received_at
-    )
+    event_at = _ms_to_dt(payload.get("timestamp")) or parse_dt(fields.get("updated")) or received_at
     issue = NormalizedIssue(
         key=key,
         external_id=str(raw["id"]) if raw.get("id") is not None else None,

@@ -28,14 +28,18 @@ async def correlate_incident(db: AsyncSession, issue: Issue) -> Optional[Deploym
 
     # Idempotency: an active link for this issue already exists.
     active = (
-        await db.execute(
-            select(DeploymentIncident).where(
-                DeploymentIncident.tenant_id == issue.tenant_id,
-                DeploymentIncident.issue_id == issue.id,
-                DeploymentIncident.is_active.is_(True),
+        (
+            await db.execute(
+                select(DeploymentIncident).where(
+                    DeploymentIncident.tenant_id == issue.tenant_id,
+                    DeploymentIncident.issue_id == issue.id,
+                    DeploymentIncident.is_active.is_(True),
+                )
             )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
     if active is not None:
         return active
 
@@ -90,14 +94,18 @@ async def unlink_cancelled_incident(db: AsyncSession, issue: Issue) -> int:
         return 0
 
     links = (
-        await db.execute(
-            select(DeploymentIncident).where(
-                DeploymentIncident.tenant_id == issue.tenant_id,
-                DeploymentIncident.issue_id == issue.id,
-                DeploymentIncident.is_active.is_(True),
+        (
+            await db.execute(
+                select(DeploymentIncident).where(
+                    DeploymentIncident.tenant_id == issue.tenant_id,
+                    DeploymentIncident.issue_id == issue.id,
+                    DeploymentIncident.is_active.is_(True),
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     for link in links:
         link.status = "CANCELLED"

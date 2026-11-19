@@ -2,6 +2,7 @@
 Тест вебхуков MANTA: отправляет тестовые события GitHub и Jira и ничего не меняет в коде.
 Нужен только Python (стандартная библиотека). Запуск см. в инструкции в чате.
 """
+
 import argparse
 import hashlib
 import hmac
@@ -34,9 +35,9 @@ def send(path, payload, headers):
     body = json.dumps(payload).encode()
     h = {"Content-Type": "application/json", **headers}
     if args.jira_secret and "/integrations/" in path:
-        h["X-Hub-Signature-256"] = "sha256=" + hmac.new(
-            args.jira_secret.encode(), body, hashlib.sha256
-        ).hexdigest()
+        h["X-Hub-Signature-256"] = (
+            "sha256=" + hmac.new(args.jira_secret.encode(), body, hashlib.sha256).hexdigest()
+        )
     req = urllib.request.Request(args.url + path, data=body, headers=h, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
@@ -118,25 +119,43 @@ show(
     "GitHub pull_request opened",
     gh(
         "pull_request",
-        {"action": "opened", "number": pr_base["number"], "repository": repo,
-         "pull_request": {**pr_base, "state": "open", "merged": False}},
+        {
+            "action": "opened",
+            "number": pr_base["number"],
+            "repository": repo,
+            "pull_request": {**pr_base, "state": "open", "merged": False},
+        },
     ),
 )
 show(
     "GitHub pull_request closed+merged",
     gh(
         "pull_request",
-        {"action": "closed", "number": pr_base["number"], "repository": repo,
-         "pull_request": {**pr_base, "state": "closed", "merged": True,
-                          "merged_at": iso(now), "closed_at": iso(now),
-                          "merge_commit_sha": merge_sha}},
+        {
+            "action": "closed",
+            "number": pr_base["number"],
+            "repository": repo,
+            "pull_request": {
+                **pr_base,
+                "state": "closed",
+                "merged": True,
+                "merged_at": iso(now),
+                "closed_at": iso(now),
+                "merge_commit_sha": merge_sha,
+            },
+        },
     ),
 )
 
 # ---------- Jira ----------
 key = f"TEST-{int(RUN, 16) % 90000 + 1000}"
-sprint = {"id": 4000 + int(RUN, 16) % 1000, "name": f"Sprint {RUN}", "state": "active",
-          "startDate": iso(now - timedelta(days=3)), "endDate": iso(now + timedelta(days=7))}
+sprint = {
+    "id": 4000 + int(RUN, 16) % 1000,
+    "name": f"Sprint {RUN}",
+    "state": "active",
+    "startDate": iso(now - timedelta(days=3)),
+    "endDate": iso(now + timedelta(days=7)),
+}
 
 
 def issue_payload(event, issue_id, status, desc, issue_type="Story", changelog=None, created=None):
@@ -151,8 +170,11 @@ def issue_payload(event, issue_id, status, desc, issue_type="Story", changelog=N
                 "status": {"name": status},
                 "customfield_10016": 5,
                 "customfield_10020": [sprint],
-                "assignee": {"accountId": f"acc-{RUN}", "displayName": "Jira Tester",
-                             "emailAddress": f"jira-{RUN}@example.com"},
+                "assignee": {
+                    "accountId": f"acc-{RUN}",
+                    "displayName": "Jira Tester",
+                    "emailAddress": f"jira-{RUN}@example.com",
+                },
                 "description": desc,
                 "created": iso(created or now - timedelta(hours=2)),
                 "updated": iso(now),
@@ -169,27 +191,75 @@ desc1 = "Описание\n\nAcceptance Criteria:\n- Пользователь м
 desc2 = "Описание\n\nAcceptance Criteria:\n- Пользователь может войти\n- Есть сброс пароля\n"
 
 show("Jira sprint_started", jira({"webhookEvent": "sprint_started", "sprint": sprint}))
-show("Jira issue_created (Story)", jira(issue_payload("jira:issue_created", 90000 + int(RUN, 16) % 9999, "To Do", desc1)))
+show(
+    "Jira issue_created (Story)",
+    jira(issue_payload("jira:issue_created", 90000 + int(RUN, 16) % 9999, "To Do", desc1)),
+)
 base_id = 90000 + int(RUN, 16) % 9999
 cl = int(RUN, 16) % 50000 + 100
 show(
     "Jira issue_updated (To Do -> In Progress, AC изменён)",
-    jira(issue_payload("jira:issue_updated", base_id, "In Progress", desc2,
-                       changelog={"id": str(cl), "items": [{"field": "status", "fromString": "To Do", "toString": "In Progress"}]})),
+    jira(
+        issue_payload(
+            "jira:issue_updated",
+            base_id,
+            "In Progress",
+            desc2,
+            changelog={
+                "id": str(cl),
+                "items": [{"field": "status", "fromString": "To Do", "toString": "In Progress"}],
+            },
+        )
+    ),
 )
 show(
     "Jira issue_updated повтор того же changelog (должен игнорироваться)",
-    jira(issue_payload("jira:issue_updated", base_id, "In Progress", desc2,
-                       changelog={"id": str(cl), "items": [{"field": "status", "fromString": "To Do", "toString": "In Progress"}]})),
+    jira(
+        issue_payload(
+            "jira:issue_updated",
+            base_id,
+            "In Progress",
+            desc2,
+            changelog={
+                "id": str(cl),
+                "items": [{"field": "status", "fromString": "To Do", "toString": "In Progress"}],
+            },
+        )
+    ),
 )
 
 inc_id = base_id + 1
-show("Jira issue_created (Incident)", jira(issue_payload("jira:issue_created", inc_id, "Open", "Сбой в проде", issue_type="Incident", created=now - timedelta(minutes=10))))
+show(
+    "Jira issue_created (Incident)",
+    jira(
+        issue_payload(
+            "jira:issue_created",
+            inc_id,
+            "Open",
+            "Сбой в проде",
+            issue_type="Incident",
+            created=now - timedelta(minutes=10),
+        )
+    ),
+)
 show(
     "Jira Incident -> Cancelled",
-    jira(issue_payload("jira:issue_updated", inc_id, "Cancelled", "Сбой в проде", issue_type="Incident",
-                       changelog={"id": str(cl + 1), "items": [{"field": "status", "fromString": "Open", "toString": "Cancelled"}]})),
+    jira(
+        issue_payload(
+            "jira:issue_updated",
+            inc_id,
+            "Cancelled",
+            "Сбой в проде",
+            issue_type="Incident",
+            changelog={
+                "id": str(cl + 1),
+                "items": [{"field": "status", "fromString": "Open", "toString": "Cancelled"}],
+            },
+        )
+    ),
 )
 
-print(f"\nГотово. Подожди 10-20 секунд и проверь базу. Метки этого прогона: ветка {branch}, задача {key}, PR #{pr_base['number']}")
+print(
+    f"\nГотово. Подожди 10-20 секунд и проверь базу. Метки этого прогона: ветка {branch}, задача {key}, PR #{pr_base['number']}"
+)
 sys.exit(0)

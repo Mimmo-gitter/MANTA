@@ -44,13 +44,17 @@ async def _resolve_repository(
                 return repo
     if full_name:
         return (
-            await db.execute(
-                select(Repository).where(
-                    Repository.tenant_id == tenant_id,
-                    Repository.full_name == full_name,
+            (
+                await db.execute(
+                    select(Repository).where(
+                        Repository.tenant_id == tenant_id,
+                        Repository.full_name == full_name,
+                    )
                 )
             )
-        ).scalars().first()
+            .scalars()
+            .first()
+        )
     return None
 
 
@@ -153,9 +157,7 @@ async def _upsert_commit(
 
     # commits.sha is the primary key: look it up by sha and verify the repository.
     row = (
-        await db.execute(
-            select(Commit).where(Commit.tenant_id == tenant_id, Commit.sha == c.sha)
-        )
+        await db.execute(select(Commit).where(Commit.tenant_id == tenant_id, Commit.sha == c.sha))
     ).scalar_one_or_none()
     if row is not None and row.repository_id != repository_id:
         logger.warning("Commit %s already stored for another repository, skipping", c.sha)
@@ -202,15 +204,19 @@ async def process_push(db: AsyncSession, *, tenant_id: uuid.UUID, n: NormalizedP
 
     head_sha = n.commits[-1].sha
     open_prs = (
-        await db.execute(
-            select(PullRequest).where(
-                PullRequest.tenant_id == tenant_id,
-                PullRequest.repository_id == repo.id,
-                PullRequest.head_branch == n.branch,
-                PullRequest.state == "OPEN",
+        (
+            await db.execute(
+                select(PullRequest).where(
+                    PullRequest.tenant_id == tenant_id,
+                    PullRequest.repository_id == repo.id,
+                    PullRequest.head_branch == n.branch,
+                    PullRequest.state == "OPEN",
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     for pr in open_prs:
         await _attach_chain(
             db, tenant_id=tenant_id, repository_id=repo.id, pr_id=pr.id, head_sha=head_sha

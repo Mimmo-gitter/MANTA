@@ -206,7 +206,6 @@ async def upsert_issue(
             raw_name=n.assignee.get("name"),
         )
 
-
     sprint_id = None
     if n.sprint is not None:
         sprint_id = (

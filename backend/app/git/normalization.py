@@ -1,6 +1,5 @@
 """Normalization of GitHub push / pull_request payloads (Task 20.4)."""
 
-
 from __future__ import annotations
 
 import re
@@ -26,7 +25,10 @@ def parse_dt(value: Any) -> Optional[datetime]:
         return None
     return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
 
+
 ZERO_SHA = "0" * 40
+
+
 @dataclass
 class NormalizedCommit:
     sha: str
@@ -133,7 +135,7 @@ def normalize_push(payload: dict[str, Any]) -> NormalizedPush:
         kind="push",
         repo_external_id=repo_id,
         repo_full_name=full_name,
-        branch=ref[len("refs/heads/"):],
+        branch=ref[len("refs/heads/") :],
         commits=commits,
     )
 
