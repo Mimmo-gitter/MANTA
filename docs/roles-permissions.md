@@ -50,7 +50,7 @@ The seven canonical roles are derived directly from the M.A.N.T.A. Software Requ
 
 ---
 
-## 3. Authoritative Role-Permission Matrix (7 Roles × 13 Actions)
+## 3. Authoritative Role-Permission Matrix (7 Roles × 15 Actions)
 
 Every role-action pair contains an **explicit decision** (`ALLOW` or `DENY`).
 
@@ -58,9 +58,11 @@ Every role-action pair contains an **explicit decision** (`ALLOW` or `DENY`).
 |---|---|:---:|:---:|:---:|:---:|:---:|:---:|:---:|---|
 | **DORA & Delivery Analytics** | `VIEW_PROJECT_DORA` | **ALLOW** | **ALLOW** | **ALLOW** | **ALLOW** | **ALLOW** | **ALLOW** | **ALLOW** | Arch §6.2, SRS §3.2.3 |
 | | `VIEW_PORTFOLIO_OVERVIEW` | DENY | DENY | DENY | DENY | **ALLOW** | **ALLOW** | **ALLOW** | SRS §2.3, §3.2.1.4 |
+| | `INGEST_PROJECT_DEPLOYMENTS` | DENY | DENY | DENY | DENY | DENY | DENY | **ALLOW** | SRS §2.4.2, §3.2.1 |
 | **Sprint & Risk Management** | `VIEW_SPRINT_BURNDOWN_WIP` | DENY | **ALLOW** | **ALLOW** | DENY | **ALLOW** | DENY | **ALLOW** | SRS §2.3, §3.2.4, §3.2.6 |
 | | `RECEIVE_SCOPE_CREEP_ALERT` | DENY | DENY | **ALLOW** | DENY | **ALLOW** | DENY | **ALLOW** | SRS §3.2.5.4, Arch Fig 6 |
 | | `REASSIGN_PR_REVIEWER_MOBILE` | DENY | **ALLOW** | DENY | DENY | **ALLOW** | DENY | **ALLOW** | Arch §6.2, §11.2 |
+| **Mobile & Notifications** | `MANAGE_OWN_MOBILE_DEVICES` | **ALLOW** | **ALLOW** | **ALLOW** | **ALLOW** | **ALLOW** | **ALLOW** | **ALLOW** | SCRUM-494 |
 | **Code Intelligence & Refactoring** | `VIEW_OWN_CODE_QUALITY` | **ALLOW** | DENY | DENY | DENY | DENY | DENY | **ALLOW** | SRS §2.3, §2.4.1 |
 | | `VIEW_TECH_DEBT_AND_SCIP_GRAPH` | **ALLOW** | DENY | DENY | **ALLOW** | DENY | DENY | **ALLOW** | SRS §2.3, Arch §9.2, §11.1 |
 | | `TRIGGER_REFACTOR_ANALYSIS` | **ALLOW** | DENY | DENY | **ALLOW** | DENY | DENY | **ALLOW** | Arch §6.2, SRS §3.2.9 |
