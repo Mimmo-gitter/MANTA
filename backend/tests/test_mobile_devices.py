@@ -11,12 +11,9 @@ import jwt
 from jwt.algorithms import RSAAlgorithm
 import pytest
 from pydantic import ValidationError
-from sqlalchemy import func, select
 
 from app.auth.jwks import JWKSClient
 from app.config import settings
-from app.db.models.models import MobileDevice
-from app.db.session import get_tenant_db_context
 from app.main import app
 from app.mobile.schemas import RegisterMobileDeviceRequest
 from app.mobile.service import resolve_or_create_mobile_device
@@ -122,68 +119,68 @@ def test_register_mobile_device_request_accepts_field_limits() -> None:
     assert len(request.device_name or "") == 128
 
 
-# @pytest.mark.parametrize(
-#     "payload",
-#     [
-#         {"fcm_token": " "},
-#         {"fcm_token": " token "},
-#         {"fcm_token": "t" * 513},
-#         {"fcm_token": "token", "platform": " "},
-#         {"fcm_token": "token", "device_name": " "},
-#         {"fcm_token": "token", "app_version": "v" * 33},
-#         {"fcm_token": "token", "tenant_id": "client-supplied"},
-#     ],
-# )
-# def test_register_mobile_device_request_rejects_invalid_values(
-#     payload: dict[str, str],
-# ) -> None:
-#     with pytest.raises(ValidationError):
-#         RegisterMobileDeviceRequest(**payload)
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"fcm_token": " "},
+        {"fcm_token": " token "},
+        {"fcm_token": "t" * 513},
+        {"fcm_token": "token", "platform": " "},
+        {"fcm_token": "token", "device_name": " "},
+        {"fcm_token": "token", "app_version": "v" * 33},
+        {"fcm_token": "token", "tenant_id": "client-supplied"},
+    ],
+)
+def test_register_mobile_device_request_rejects_invalid_values(
+    payload: dict[str, str],
+) -> None:
+    with pytest.raises(ValidationError):
+        RegisterMobileDeviceRequest(**payload)
 
 
-# @pytest.mark.asyncio
-# async def test_register_mobile_device_returns_only_non_critical_device_data() -> None:
-#     now = datetime.now(timezone.utc)
-#     tenant_id = uuid.uuid4()
-#     user_id = uuid.uuid4()
-#     device = SimpleNamespace(
-#         id=uuid.uuid4(),
-#         tenant_id=tenant_id,
-#         user_id=user_id,
-#         fcm_token="sensitive-fcm-token",
-#         platform="ios",
-#         device_name="iPhone",
-#         app_version="1.2.3",
-#         is_active=True,
-#         last_seen_at=now,
-#         created_at=now,
-#         updated_at=now,
-#     )
+@pytest.mark.asyncio
+async def test_register_mobile_device_returns_only_non_critical_device_data() -> None:
+    now = datetime.now(timezone.utc)
+    tenant_id = uuid.uuid4()
+    user_id = uuid.uuid4()
+    device = SimpleNamespace(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        user_id=user_id,
+        fcm_token="sensitive-fcm-token",
+        platform="ios",
+        device_name="iPhone",
+        app_version="1.2.3",
+        is_active=True,
+        last_seen_at=now,
+        created_at=now,
+        updated_at=now,
+    )
 
-#     class FakeSession:
-#         async def execute(self, _statement: object) -> SimpleNamespace:
-#             assert _statement is not None
-#             return SimpleNamespace(scalar_one=lambda: device)
+    class FakeSession:
+        async def execute(self, _statement: object) -> SimpleNamespace:
+            assert _statement is not None
+            return SimpleNamespace(scalar_one=lambda: device)
 
-#     response = await resolve_or_create_mobile_device(
-#         FakeSession(),  # type: ignore[arg-type]
-#         tenant_id,
-#         user_id,
-#         RegisterMobileDeviceRequest(fcm_token="sensitive-fcm-token", platform="ios"),
-#     )
+    response = await resolve_or_create_mobile_device(
+        FakeSession(),  # type: ignore[arg-type]
+        tenant_id,
+        user_id,
+        RegisterMobileDeviceRequest(fcm_token="sensitive-fcm-token", platform="ios"),
+    )
 
-#     assert response.platform == "ios"
-#     assert response.device_name == "iPhone"
-#     assert response.model_dump() == {
-#         "id": device.id,
-#         "platform": "ios",
-#         "device_name": "iPhone",
-#         "app_version": "1.2.3",
-#         "is_active": True,
-#         "last_seen_at": now,
-#         "created_at": now,
-#         "updated_at": now,
-#     }
+    assert response.platform == "ios"
+    assert response.device_name == "iPhone"
+    assert response.model_dump() == {
+        "id": device.id,
+        "platform": "ios",
+        "device_name": "iPhone",
+        "app_version": "1.2.3",
+        "is_active": True,
+        "last_seen_at": now,
+        "created_at": now,
+        "updated_at": now,
+    }
 
 
 # @pytest.mark.asyncio
