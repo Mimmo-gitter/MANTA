@@ -1,14 +1,19 @@
 """Transactional webhook processor for staged GitHub and ArgoCD deployment events (Task 25.3)."""
 
 import logging
+
 from typing import Any, Optional
 import uuid
+
+from app.git.webhook_handler import handle_pull_request, handle_push
+from app.jira.webhook_handler import handle_jira_event
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.models import Integration, WebhookEvent
 from app.db.session import get_tenant_db_context
+
 from app.deployments.normalization import (
     NormalizationResult,
     normalize_argocd_postsync,
@@ -79,7 +84,20 @@ async def process_staged_deployment_event_in_session(
     provider = (event.provider or "").strip().lower()
     payload = event.payload if isinstance(event.payload, dict) else {}
 
+    handler_result: Optional[str] = None
+    if provider == "github" and event.event_type == "push":
+        handler_result = await handle_push(db, event, tenant_id)
+    elif provider == "github" and event.event_type == "pull_request":
+        handler_result = await handle_pull_request(db, event, tenant_id)
+    elif provider == "jira":
+        handler_result = await handle_jira_event(db, event, tenant_id)
+
+    if handler_result is not None:
+        await complete_webhook_event(db, event_id, tenant_id=tenant_id)
+        return handler_result
+
     normalized: Optional[NormalizationResult] = None
+
     if provider == "github":
         event_type_clean = (event.event_type or "").strip().lower()
         if event_type_clean == "push":
