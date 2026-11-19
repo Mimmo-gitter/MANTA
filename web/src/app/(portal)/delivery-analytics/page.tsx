@@ -7,11 +7,14 @@ import { AlertTriangle, FolderOpen, Lock, PlugZap } from "lucide-react";
 import { useAuth } from "@/providers/auth-provider";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useProjectsQuery } from "@/hooks/use-projects";
+import { useQueryClient } from "@tanstack/react-query";
+
 import {
-  useDoraDashboard,
-  useDoraSignal,
-  useNow,
-} from "@/hooks/use-dora-dashboard";
+  invalidateProjectDoraMetrics,
+  useProjectDoraMetrics,
+  type DoraMetricsWindow,
+} from "@/hooks/use-project-dora-metrics";
+import { useDoraSignal, useNow } from "@/hooks/use-dora-dashboard";
 import {
   buildEmptyDashboard,
   classifyTelemetry,
@@ -65,20 +68,28 @@ export default function DeliveryAnalyticsPage() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const nowMs = useNow();
-  const timeframe = parseTimeframe(searchParams.get("timeframe"));
+  const rawWindow = searchParams.get("window") ?? searchParams.get("timeframe");
+
+  const timeframe = parseTimeframe(rawWindow?.replace(/d$/, "") ?? null);
+
+  const window = `${timeframe}d` as DoraMetricsWindow;
 
   const projectsQuery = useProjectsQuery(isAuthenticated && canView);
   const projects = projectsQuery.data ?? [];
-  const requestedProjectId = searchParams.get("project");
+  const requestedProjectId =
+    searchParams.get("projectId") ?? searchParams.get("project");
   const selectedProject =
     projects.find((p) => p.id === requestedProjectId) ?? projects[0] ?? null;
   const projectId = selectedProject?.id ?? null;
 
-  const dashboardQuery = useDoraDashboard({
+  const queryClient = useQueryClient();
+
+  const dashboardQuery = useProjectDoraMetrics(
     projectId,
-    days: timeframe,
-    enabled: isAuthenticated && canView,
-  });
+    window,
+    isAuthenticated && canView,
+  );
+
   const dashboardResult = dashboardQuery.data ?? null;
   const apiViewModel: DoraDashboardViewModel | null =
     dashboardResult?.kind === "ok" ? dashboardResult.data : null;
@@ -101,6 +112,47 @@ export default function DeliveryAnalyticsPage() {
     },
     [pathname, router, searchParams],
   );
+
+  useEffect(() => {
+    if (!projectsQuery.isSuccess || !projectId) return;
+
+    const next = new URLSearchParams(searchParams.toString());
+    let changed = false;
+
+    if (next.get("projectId") !== projectId) {
+      next.set("projectId", projectId);
+      changed = true;
+    }
+
+    if (next.get("window") !== window) {
+      next.set("window", window);
+      changed = true;
+    }
+
+    // Remove legacy parameters after migrating their values.
+    if (next.has("project")) {
+      next.delete("project");
+      changed = true;
+    }
+
+    if (next.has("timeframe")) {
+      next.delete("timeframe");
+      changed = true;
+    }
+
+    if (changed) {
+      router.replace(`${pathname}?${next.toString()}`, {
+        scroll: false,
+      });
+    }
+  }, [
+    projectsQuery.isSuccess,
+    projectId,
+    window,
+    pathname,
+    router,
+    searchParams,
+  ]);
 
   // ---- Access and project-level states -------------------------------------
   if (!canView) {
@@ -252,7 +304,6 @@ export default function DeliveryAnalyticsPage() {
         aria-label="Delivery Analytics"
         className="mx-auto flex w-full max-w-[1600px] flex-col gap-6 p-6"
       >
-
         <DoraPageHeader verification={verification} />
 
         <DoraFilters
@@ -262,10 +313,12 @@ export default function DeliveryAnalyticsPage() {
             repoCount: p.repositories?.length ?? 0,
           }))}
           selectedProjectId={projectId}
-          onProjectChange={(id) => updateParams({ project: id })}
+          onProjectChange={(id) =>
+            updateParams({ projectId: id, project: null })
+          }
           timeframe={timeframe}
           onTimeframeChange={(days) =>
-            updateParams({ timeframe: String(days) })
+            updateParams({ window: `${days}d`, timeframe: null })
           }
           dataStatus={dataStatus}
         />
@@ -287,7 +340,12 @@ export default function DeliveryAnalyticsPage() {
             <button
               type="button"
               className={BUTTON_CLASS}
-              onClick={() => void dashboardQuery.refetch()}
+              onClick={() =>
+                void invalidateProjectDoraMetrics(
+                  queryClient,
+                  projectId ?? undefined,
+                )
+              }
             >
               Retry
             </button>
