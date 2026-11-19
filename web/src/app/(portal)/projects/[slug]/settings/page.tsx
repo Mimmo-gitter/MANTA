@@ -6,14 +6,11 @@ import { useParams, useRouter, useSearchParams } from "next/navigation";
 import {
   AlertCircle,
   ArrowLeft,
-  CheckCircle2,
-  Loader2,
   Plus,
   RefreshCw,
 } from "lucide-react";
 import { usePermissions } from "@/hooks/use-permissions";
 import {
-  useProjectIncidentsQuery,
   useProjectQuery,
   useProjectsQuery,
   useUpdateProjectMutation,
@@ -22,6 +19,7 @@ import { isUuid } from "@/lib/projects-api";
 import { ArchiveProjectModal } from "@/components/projects/archive-project-modal";
 import { LinkedRepositoriesTab } from "@/components/projects/linked-repositories-tab";
 import { DeploymentSignalTab } from "@/components/projects/deployment-signal-tab";
+import { HealthSourcesTab } from "@/components/projects/health-sources-tab";
 
 type SettingsTabId = "repositories" | "deployment-signal" | "health-sources" | "general";
 
@@ -38,7 +36,7 @@ const TAB_SUBTITLES: Record<SettingsTabId, string> = {
   "deployment-signal":
     "Configure which authoritative signal defines production deployments for DORA calculation.",
   "health-sources":
-    "Inspect production incident history and recovery times tracked for MTTR & Change Failure Rate.",
+    "Configure project health webhooks, HMAC verification & failure recovery tracking.",
   general:
     "Edit project metadata, SLA thresholds, and workspace lifecycle.",
 };
@@ -96,10 +94,6 @@ function ProjectSettingsContent() {
 
   const project = projectFromList || directQuery.data;
   const updateProjectMutation = useUpdateProjectMutation(project?.id ?? "");
-  const incidentsQuery = useProjectIncidentsQuery(
-    project?.id,
-    activeTab === "health-sources",
-  );
 
   const [formName, setFormName] = useState("");
   const [formSlug, setFormSlug] = useState("");
@@ -395,102 +389,7 @@ function ProjectSettingsContent() {
       )}
 
       {activeTab === "health-sources" && (
-        <div
-          data-testid="health-sources-panel"
-          className="space-y-[14px] rounded-[12px] border border-[#1e293b] bg-[#0d121f] p-[20px]"
-        >
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div>
-              <h2 className="text-[16px] font-semibold text-[#f8fafc]">
-                Project Health &amp; Production Incidents
-              </h2>
-              <p className="mt-[4px] text-[12px] text-[#94a3b8]">
-                Recent production incidents and recovery times tracked for MTTR &amp; Change Failure Rate.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => void incidentsQuery.refetch()}
-              disabled={incidentsQuery.isFetching}
-              className="inline-flex h-[32px] items-center gap-1.5 rounded-[8px] border border-[#1e293b] bg-[#0a0e18] px-[12px] text-[12px] font-medium text-[#cbd5e1] transition-colors hover:border-[#00e599]/50 hover:text-[#f8fafc] disabled:opacity-60"
-            >
-              <RefreshCw
-                className={`size-[13px] ${incidentsQuery.isFetching ? "animate-spin" : ""}`}
-                aria-hidden="true"
-              />
-              <span>Refresh</span>
-            </button>
-          </div>
-
-          {incidentsQuery.isLoading ? (
-            <div className="flex h-[160px] items-center justify-center rounded-[10px] border border-[#1e293b] bg-[#0a0e18] text-[12px] text-[#94a3b8]">
-              <Loader2 className="mr-2 size-4 animate-spin text-[#00e599]" aria-hidden="true" />
-              Loading production incidents...
-            </div>
-          ) : incidentsQuery.error ? (
-            <div
-              role="alert"
-              className="rounded-[10px] border border-[#ef4444]/35 bg-[#ef4444]/10 p-[14px] text-[12px] text-[#fca5a5]"
-            >
-              {incidentsQuery.error instanceof Error
-                ? incidentsQuery.error.message
-                : "Failed to load project incidents."}
-            </div>
-          ) : (incidentsQuery.data?.length ?? 0) === 0 ? (
-            <div className="flex flex-col items-center justify-center rounded-[10px] border border-[#1e293b] bg-[#0a0e18] px-[20px] py-[40px] text-center">
-              <CheckCircle2 className="size-[22px] text-[#00e599]" aria-hidden="true" />
-              <p className="mt-[8px] text-[13px] font-medium text-[#f8fafc]">
-                No production incidents recorded
-              </p>
-              <p className="mt-[4px] max-w-[420px] text-[12px] text-[#94a3b8]">
-                No production failures have been ingested for this project yet. Tier SLA target is {project.tier_sla_hours}h.
-              </p>
-            </div>
-          ) : (
-            <div className="overflow-x-auto rounded-[10px] border border-[#1e293b] bg-[#0a0e18]">
-              <table className="w-full border-collapse text-left text-[12px]">
-                <thead>
-                  <tr className="border-b border-[#1e293b] font-mono text-[10px] uppercase tracking-[0.6px] text-[#64748b]">
-                    <th className="px-[12px] py-[10px]">Severity</th>
-                    <th className="px-[12px] py-[10px]">Started</th>
-                    <th className="px-[12px] py-[10px]">Resolved</th>
-                    <th className="px-[12px] py-[10px]">Recovery Time</th>
-                    <th className="px-[12px] py-[10px]">Deployment ID</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {incidentsQuery.data!.map((incident) => {
-                    const recoveryMins =
-                      incident.recovery_time_seconds != null
-                        ? Math.round(incident.recovery_time_seconds / 60)
-                        : null;
-                    return (
-                      <tr key={incident.id} className="border-b border-[#1e293b]/70 last:border-b-0">
-                        <td className="px-[12px] py-[10px] font-mono text-[11px] uppercase text-[#f8fafc]">
-                          {incident.severity}
-                        </td>
-                        <td className="px-[12px] py-[10px] text-[#cbd5e1]">
-                          {new Date(incident.started_at).toLocaleString()}
-                        </td>
-                        <td className="px-[12px] py-[10px] text-[#cbd5e1]">
-                          {incident.resolved_at
-                            ? new Date(incident.resolved_at).toLocaleString()
-                            : "Open"}
-                        </td>
-                        <td className="px-[12px] py-[10px] font-mono text-[#e2e8f0]">
-                          {recoveryMins != null ? `${recoveryMins}m` : "—"}
-                        </td>
-                        <td className="px-[12px] py-[10px] font-mono text-[11px] text-[#64748b]">
-                          {incident.deployment_id ? incident.deployment_id.slice(0, 8) : "—"}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
+        <HealthSourcesTab project={project} />
       )}
 
       {activeTab === "general" && (
