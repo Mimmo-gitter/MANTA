@@ -2,6 +2,9 @@ import { apiRequest } from "@/lib/api-client";
 import type {
   DeploymentSignalConfig,
   DeploymentSignalUpdatePayload,
+  HealthProbeConfig,
+  HealthProbeConfigUpdatePayload,
+  ProductionFailureSession,
   ProjectCreatePayload,
   ProjectIncidentItem,
   ProjectItem,
@@ -94,6 +97,46 @@ export async function updateDeploymentSignal(
       method: "PATCH",
       body: JSON.stringify(payload),
     },
+  );
+}
+
+export async function getProjectHealthConfig(
+  projectId: string,
+): Promise<HealthProbeConfig> {
+  return apiRequest<HealthProbeConfig>(
+    `/api/v1/projects/${projectId}/health-config`,
+  );
+}
+
+export async function updateProjectHealthConfig(
+  projectId: string,
+  payload: HealthProbeConfigUpdatePayload,
+): Promise<HealthProbeConfig> {
+  return apiRequest<HealthProbeConfig>(
+    `/api/v1/projects/${projectId}/health-config`,
+    {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export async function rotateProjectHealthSecret(
+  projectId: string,
+): Promise<HealthProbeConfig> {
+  return apiRequest<HealthProbeConfig>(
+    `/api/v1/projects/${projectId}/health-config/rotate-secret`,
+    {
+      method: "POST",
+    },
+  );
+}
+
+export async function listProjectHealthSignals(
+  projectId: string,
+): Promise<ProductionFailureSession[]> {
+  return apiRequest<ProductionFailureSession[]>(
+    `/api/v1/projects/${projectId}/health-signals`,
   );
 }
 

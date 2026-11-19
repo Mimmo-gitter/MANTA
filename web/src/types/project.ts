@@ -3,6 +3,15 @@ export type DeploymentSignalType =
   | "argocd_postsync_webhook"
   | "direct_deployment_api";
 
+export type HealthProbeSourceId =
+  | "generic"
+  | "prometheus"
+  | "datadog"
+  | "pagerduty";
+
+export type ProjectHealthStatus = "HEALTHY" | "FAILING";
+export type FailureSessionStatus = "OPEN" | "RESOLVED";
+
 export interface RepositoryItem {
   id: string;
   tenant_id: string;
@@ -27,6 +36,11 @@ export interface ProjectItem {
   lead_time_first_commit_strategy: string;
   wip_limit_per_dev: number;
   pr_stale_threshold_hours: number;
+  health_probe_enabled?: boolean;
+  health_probe_source?: string;
+  health_probe_url?: string | null;
+  health_probe_interval_seconds?: number;
+  health_status?: ProjectHealthStatus | string;
   is_active: boolean;
   created_by: string | null;
   created_at: string;
@@ -85,4 +99,42 @@ export interface DeploymentSignalConfig {
 
 export interface DeploymentSignalUpdatePayload {
   authoritative_deployment_signal: DeploymentSignalType;
+}
+
+export interface HealthProbeConfig {
+  project_id: string;
+  tenant_id: string;
+  health_probe_enabled: boolean;
+  health_probe_source: string;
+  health_probe_url: string | null;
+  health_probe_interval_seconds: number;
+  health_status: ProjectHealthStatus | string;
+  webhook_url: string;
+  project_health_signals_url: string;
+  webhook_secret_masked: string;
+  webhook_secret: string | null;
+  updated_at: string;
+}
+
+export interface HealthProbeConfigUpdatePayload {
+  health_probe_enabled?: boolean;
+  health_probe_source?: string;
+  health_probe_url?: string | null;
+  health_probe_interval_seconds?: number;
+  health_webhook_secret?: string;
+}
+
+export interface ProductionFailureSession {
+  id: string;
+  tenant_id: string;
+  project_id: string;
+  incident_id: string | null;
+  status: FailureSessionStatus | string;
+  probe_source: string;
+  severity: string;
+  started_at: string;
+  resolved_at: string | null;
+  recovery_time_seconds: number | null;
+  created_at: string;
+  updated_at: string;
 }

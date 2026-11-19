@@ -6,15 +6,20 @@ import {
   deleteProject,
   getDeploymentSignal,
   getProject,
+  getProjectHealthConfig,
   linkRepository,
+  listProjectHealthSignals,
   listProjectIncidents,
   listProjects,
+  rotateProjectHealthSecret,
   unlinkRepository,
   updateDeploymentSignal,
   updateProject,
+  updateProjectHealthConfig,
 } from "@/lib/projects-api";
 import type {
   DeploymentSignalUpdatePayload,
+  HealthProbeConfigUpdatePayload,
   ProjectCreatePayload,
   ProjectUpdatePayload,
   RepositoryLinkPayload,
@@ -27,6 +32,10 @@ export const projectQueryKeys = {
     ["projects", projectId, "deployment-signal"] as const,
   incidents: (projectId: string) =>
     ["projects", projectId, "incidents"] as const,
+  healthConfig: (projectId: string) =>
+    ["projects", projectId, "health-config"] as const,
+  healthSignals: (projectId: string) =>
+    ["projects", projectId, "health-signals"] as const,
 };
 
 export function useProjectsQuery(enabled = true) {
@@ -162,5 +171,74 @@ export function useProjectIncidentsQuery(
     enabled: Boolean(projectId) && enabled,
     staleTime: 30_000,
     retry: 1,
+  });
+}
+
+export function useProjectHealthConfigQuery(
+  projectId: string | undefined,
+  enabled = true,
+  refetchInterval: number | false = false,
+) {
+  return useQuery({
+    queryKey: projectQueryKeys.healthConfig(projectId ?? ""),
+    queryFn: () => getProjectHealthConfig(projectId!),
+    enabled: Boolean(projectId) && enabled,
+    staleTime: 10_000,
+    retry: 1,
+    refetchInterval,
+    refetchIntervalInBackground: false,
+  });
+}
+
+export function useProjectHealthSignalsQuery(
+  projectId: string | undefined,
+  enabled = true,
+  refetchInterval: number | false = false,
+) {
+  return useQuery({
+    queryKey: projectQueryKeys.healthSignals(projectId ?? ""),
+    queryFn: () => listProjectHealthSignals(projectId!),
+    enabled: Boolean(projectId) && enabled,
+    staleTime: 10_000,
+    retry: 1,
+    refetchInterval,
+    refetchIntervalInBackground: false,
+  });
+}
+
+export function useUpdateProjectHealthConfigMutation(projectId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (payload: HealthProbeConfigUpdatePayload) =>
+      updateProjectHealthConfig(projectId, payload),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(
+        projectQueryKeys.healthConfig(projectId),
+        updated,
+      );
+      queryClient.invalidateQueries({ queryKey: projectQueryKeys.all });
+      queryClient.invalidateQueries({
+        queryKey: projectQueryKeys.detail(projectId),
+      });
+    },
+  });
+}
+
+export function useRotateProjectHealthSecretMutation(projectId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => rotateProjectHealthSecret(projectId),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(
+        projectQueryKeys.healthConfig(projectId),
+        updated,
+      );
+      queryClient.invalidateQueries({ queryKey: projectQueryKeys.all });
+      queryClient.invalidateQueries({
+        queryKey: projectQueryKeys.detail(projectId),
+      });
+    },
   });
 }
