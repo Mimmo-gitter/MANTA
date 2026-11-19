@@ -138,6 +138,16 @@ async def process_staged_deployment_event_in_session(
             event_id=event_id,
             integration_id=event.integration_id,
         )
+    elif provider == "slack":
+        from app.webhooks.slack_processor import ingest_slack_event_in_session
+
+        return await ingest_slack_event_in_session(
+            db,
+            tenant_id=tenant_id,
+            payload=payload,
+            event_id=event_id,
+            integration_id=event.integration_id,
+        )
     else:
         await complete_webhook_event(db, event_id, tenant_id=tenant_id)
         return f"noop_unsupported_provider:{provider}"

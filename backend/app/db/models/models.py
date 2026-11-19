@@ -425,6 +425,7 @@ class WebhookEvent(Base):
     attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     claimed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     error_message: Mapped[Optional[str]] = mapped_column(Text)
+    active_fencing_token: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow, nullable=False
     )
@@ -897,6 +898,7 @@ class CommunicationEvent(Base):
     first_response_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     response_delay_seconds: Mapped[Optional[int]] = mapped_column(Integer)
     is_resolved: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    entity_version: Mapped[int] = mapped_column(BigInteger, default=1, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow, nullable=False
     )
@@ -988,6 +990,14 @@ class Deployment(Base):
             postgresql_where=text("external_deployment_id IS NOT NULL"),
         ),
         Index("idx_deployments_tenant_commit_sha", "tenant_id", "commit_sha"),
+        Index(
+            "idx_deployments_dora_lookup",
+            "tenant_id",
+            "project_id",
+            "environment",
+            "authoritative_signal_source",
+            "deployed_at",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -1017,6 +1027,7 @@ class Deployment(Base):
     )
     deployed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     lead_time_seconds: Mapped[Optional[float]] = mapped_column(Numeric(12, 2))
+    active_fencing_token: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow, nullable=False
     )
@@ -1032,6 +1043,12 @@ class DeploymentPullRequest(Base):
 
     __table_args__ = (
         Index("idx_deployment_pull_requests_tenant_id", "tenant_id"),
+        Index(
+            "idx_deployment_pull_requests_tenant_dep_pr",
+            "tenant_id",
+            "deployment_id",
+            "pull_request_id",
+        ),
         UniqueConstraint("deployment_id", "pull_request_id", name="uq_deployment_pr"),
     )
 
@@ -1107,6 +1124,14 @@ class ProductionFailure(Base):
             "project_id",
             unique=True,
             postgresql_where=text("status = 'OPEN'"),
+        ),
+        Index(
+            "idx_production_failures_dora_mttr",
+            "tenant_id",
+            "project_id",
+            "status",
+            "resolved_at",
+            "started_at",
         ),
     )
 

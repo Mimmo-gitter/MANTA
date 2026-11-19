@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Optional
 
+from app.webhooks.versioning import extract_jira_issue_version
+
 # Instance-specific custom fields: adjust to your Jira.
 STORY_POINTS_FIELDS = ("customfield_10016", "customfield_10028", "story_points")
 SPRINT_FIELDS = ("customfield_10020", "sprint")
@@ -66,6 +68,7 @@ class NormalizedIssue:
     ac_text: Optional[str]
     created_at: Optional[datetime]
     event_at: Optional[datetime]
+    incoming_version: Optional[int] = None
 
 
 @dataclass
@@ -238,5 +241,6 @@ def normalize_jira_event(
         ac_text=extract_acceptance_criteria(fields),
         created_at=parse_dt(fields.get("created")),
         event_at=event_at,
+        incoming_version=extract_jira_issue_version(payload),
     )
     return NormalizedJiraEvent(kind="issue", event_name=name, issue=issue)

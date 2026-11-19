@@ -28,16 +28,22 @@ from datetime import datetime, timedelta, timezone
 import inspect
 import json
 import logging
-from typing import Any
+from typing import Any, Literal
 import uuid
 
-from sqlalchemy import text
+from sqlalchemy import select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 try:
-    from app.db.models.models import JobLease
+    from app.db.models.models import Deployment, Issue, JobLease, PullRequest, WebhookEvent
 except ImportError:
-    from backend.app.db.models.models import JobLease  # type: ignore[no-redef]
+    from backend.app.db.models.models import (  # type: ignore[no-redef]
+        Deployment,
+        Issue,
+        JobLease,
+        PullRequest,
+        WebhookEvent,
+    )
 
 logger = logging.getLogger("workers.fencing")
 
@@ -1133,3 +1139,172 @@ async def run_supervisor_reclamation_loop(
                 break
 
     return all_reclaimed
+
+
+FencedDomainTableName = Literal["webhook_events", "pull_requests", "issues", "deployments"]
+
+_FENCED_DOMAIN_MODELS: dict[FencedDomainTableName, type[Any]] = {
+    "webhook_events": WebhookEvent,
+    "pull_requests": PullRequest,
+    "issues": Issue,
+    "deployments": Deployment,
+}
+
+_CHECK_JOB_LEASE_OWNER_SQL = text(
+    """
+    SELECT owner_token, claimed_by
+    FROM job_leases
+    WHERE job_id = :job_id
+      AND tenant_id = :tenant_id
+    """
+)
+
+
+def log_stale_fencing_token_rejected(
+    *,
+    table_name: str,
+    record_id: str | uuid.UUID,
+    tenant_id: str | uuid.UUID,
+    claimed_token: int,
+    persisted_token: int | None = None,
+    job_id: str | None = None,
+    worker_id: str | None = None,
+) -> None:
+    """Emit a structured STALE_FENCING_TOKEN_REJECTED log event on fencing rejection."""
+    logger.warning(
+        "STALE_FENCING_TOKEN_REJECTED table=%s record_id=%s tenant_id=%s job_id=%s "
+        "worker_id=%s claimed_token=%s persisted_token=%s",
+        table_name,
+        str(record_id),
+        str(tenant_id),
+        job_id or "",
+        worker_id or "",
+        claimed_token,
+        persisted_token if persisted_token is not None else "unknown",
+        extra={
+            "event": "STALE_FENCING_TOKEN_REJECTED",
+            "table_name": table_name,
+            "record_id": str(record_id),
+            "tenant_id": str(tenant_id),
+            "job_id": job_id,
+            "worker_id": worker_id,
+            "claimed_token": claimed_token,
+            "persisted_token": persisted_token,
+        },
+    )
+
+
+async def execute_fenced_domain_update(
+    db: AsyncSession | Any,
+    *,
+    table_name: FencedDomainTableName,
+    record_id: uuid.UUID,
+    tenant_id: uuid.UUID,
+    worker_claimed_token: int,
+    values: Mapping[str, Any],
+    job_id: str | None = None,
+    worker_id: str = "worker",
+    verify_job_lease: bool = False,
+) -> bool:
+    """
+    SCRUM-412 (Task 22.4): Optimistic PostgreSQL fencing assertion on domain tables.
+
+    Executes:
+        UPDATE <table_name>
+        SET ..., active_fencing_token = :worker_claimed_token
+        WHERE id = :record_id
+          AND tenant_id = :tenant_id
+          AND active_fencing_token <= :worker_claimed_token
+        RETURNING id
+
+    Optionally checks `job_leases.owner_token == :worker_claimed_token` before writing.
+    When rejected due to a higher token, rolls back the active transaction cleanly,
+    emits a structured `STALE_FENCING_TOKEN_REJECTED` log event, and raises
+    `StaleFencingTokenError`.
+
+    Returns:
+        True if the record was updated; False only if no matching record exists at all.
+    """
+    model = _FENCED_DOMAIN_MODELS.get(table_name)
+    if model is None:
+        raise ValueError(f"Unsupported fenced domain table: {table_name!r}")
+    if worker_claimed_token < 0:
+        raise ValueError(f"worker_claimed_token must be >= 0 (got {worker_claimed_token})")
+
+    norm_tenant = _normalize_tenant_id(tenant_id)
+    effective_job_id = job_id or f"{table_name}:{record_id}"
+
+    if verify_job_lease and job_id:
+        lease_res = await _maybe_await(
+            db.execute(
+                _CHECK_JOB_LEASE_OWNER_SQL,
+                {"job_id": effective_job_id, "tenant_id": norm_tenant},
+            )
+        )
+        lease_row = lease_res.first() if hasattr(lease_res, "first") else None
+        if lease_row is None or int(lease_row[0]) != worker_claimed_token:
+            persisted_lease_token = int(lease_row[0]) if lease_row is not None else None
+            log_stale_fencing_token_rejected(
+                table_name="job_leases",
+                record_id=record_id,
+                tenant_id=norm_tenant,
+                claimed_token=worker_claimed_token,
+                persisted_token=persisted_lease_token,
+                job_id=effective_job_id,
+                worker_id=worker_id,
+            )
+            if hasattr(db, "rollback"):
+                await _maybe_await(db.rollback())
+            raise StaleFencingTokenError(
+                job_id=effective_job_id,
+                worker_id=worker_id,
+                claimed_token=worker_claimed_token,
+            )
+
+    update_values = dict(values)
+    update_values["active_fencing_token"] = worker_claimed_token
+
+    stmt = (
+        update(model)
+        .where(
+            model.id == record_id,
+            model.tenant_id == norm_tenant,
+            model.active_fencing_token <= worker_claimed_token,
+        )
+        .values(**update_values)
+        .returning(model.id)
+    )
+    res = await _maybe_await(db.execute(stmt))
+    updated_id = res.scalar_one_or_none() if hasattr(res, "scalar_one_or_none") else None
+    if updated_id is not None:
+        return True
+
+    # Check if the row exists with a higher active_fencing_token
+    existing_token_stmt = select(model.active_fencing_token).where(
+        model.id == record_id,
+        model.tenant_id == norm_tenant,
+    )
+    existing_res = await _maybe_await(db.execute(existing_token_stmt))
+    persisted_token = (
+        existing_res.scalar_one_or_none() if hasattr(existing_res, "scalar_one_or_none") else None
+    )
+
+    if persisted_token is not None:
+        log_stale_fencing_token_rejected(
+            table_name=table_name,
+            record_id=record_id,
+            tenant_id=norm_tenant,
+            claimed_token=worker_claimed_token,
+            persisted_token=int(persisted_token),
+            job_id=effective_job_id,
+            worker_id=worker_id,
+        )
+        if hasattr(db, "rollback"):
+            await _maybe_await(db.rollback())
+        raise StaleFencingTokenError(
+            job_id=effective_job_id,
+            worker_id=worker_id,
+            claimed_token=worker_claimed_token,
+        )
+
+    return False

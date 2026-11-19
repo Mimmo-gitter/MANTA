@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import hashlib
+import logging
 import re
 from typing import Optional
 import uuid
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.models import (
@@ -20,6 +22,8 @@ from app.jira.normalization import NormalizedIssue, NormalizedSprint
 
 # TODO: verify import path / signature of the Task 20.3 helper.
 from app.contributors.service import resolve_or_create_contributor_pseudonym
+
+logger = logging.getLogger("app.jira.service")
 
 
 def _to_int(v: Optional[str]) -> Optional[int]:
@@ -213,6 +217,11 @@ async def upsert_issue(
         ).id
 
     if issue is None:
+        initial_version = (
+            n.incoming_version
+            if n.incoming_version is not None
+            else (incoming if incoming is not None else 1)
+        )
         issue = Issue(
             tenant_id=tenant_id,
             project_id=project_id,
@@ -227,27 +236,64 @@ async def upsert_issue(
             assignee_pseudonym_id=assignee_id,
             issue_links=n.links,
             changelog_id=incoming,
-            entity_version=incoming if incoming is not None else 1,
+            entity_version=initial_version,
         )
         created = n.created_at or n.event_at
         if created is not None:
             issue.created_at = created
         db.add(issue)
+        await db.flush()
     else:
-        issue.issue_type = n.issue_type or issue.issue_type
-        issue.title = n.title or issue.title
-        issue.status = n.status or issue.status
+        incoming_ver = (
+            n.incoming_version
+            if n.incoming_version is not None
+            else (incoming if incoming is not None else ((issue.entity_version or 0) + 1))
+        )
+
+        # Conditional PostgreSQL guard asserting newer entity_version before mutation
+        update_values: dict[str, object] = {
+            "issue_type": n.issue_type or issue.issue_type,
+            "title": n.title or issue.title,
+            "status": n.status or issue.status,
+            "issue_links": n.links,
+            "entity_version": incoming_ver,
+            "updated_at": n.event_at or datetime.now(timezone.utc),
+        }
         if n.story_points is not None:
-            issue.story_points = n.story_points
+            update_values["story_points"] = n.story_points
         if sprint_id is not None:
-            issue.sprint_id = sprint_id
+            update_values["sprint_id"] = sprint_id
         if assignee_id is not None:
-            issue.assignee_pseudonym_id = assignee_id
-        issue.issue_links = n.links
+            update_values["assignee_pseudonym_id"] = assignee_id
         if incoming is not None:
-            issue.changelog_id = incoming
-            issue.entity_version = incoming
-    await db.flush()
+            update_values["changelog_id"] = incoming
+
+        # Allow timestamp-seeded creation (changelog_id IS NULL) to advance to first numeric changelog_id
+        if issue.changelog_id is None and incoming is not None:
+            version_guard = or_(Issue.changelog_id.is_(None), Issue.entity_version < incoming_ver)
+        else:
+            version_guard = Issue.entity_version < incoming_ver
+
+        upd_stmt = (
+            update(Issue)
+            .where(
+                Issue.id == issue.id,
+                Issue.tenant_id == tenant_id,
+                version_guard,
+            )
+            .values(**update_values)
+            .returning(Issue.id)
+        )
+        updated_id = (await db.execute(upd_stmt)).scalar_one_or_none()
+        if updated_id is None:
+            logger.warning(
+                "STALE_OUT_OF_ORDER_REJECTED table=issues record_id=%s key=%s incoming_version=%s",
+                issue.id,
+                n.key,
+                incoming_ver,
+            )
+            return issue, False
+        await db.refresh(issue)
 
     await _record_transition(db, tenant_id=tenant_id, issue=issue, n=n, prev_status=prev_status)
     await _record_ac_version(db, tenant_id=tenant_id, issue=issue, ac_text=n.ac_text)

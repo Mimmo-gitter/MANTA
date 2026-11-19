@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.models import Commit, PullRequest, Repository
 from app.git.normalization import NormalizedCommit, NormalizedPullRequest, NormalizedPush
+from app.webhooks.versioning import execute_versioned_update
 
 # TODO: verify import path / signature of the Task 20.3 helper.
 from app.contributors.service import resolve_or_create_contributor_pseudonym
@@ -277,29 +278,48 @@ async def process_pull_request(
             base_branch=n.base_branch,
             head_sha=n.head_sha,
             merge_commit_sha=n.merge_commit_sha,
+            entity_version=n.incoming_version if n.incoming_version is not None else 1,
             created_in_git_at=n.created_at or datetime.now(timezone.utc),
             merged_at=n.merged_at,
             closed_at=n.closed_at,
         )
         db.add(pr)
+        await db.flush()
     else:
         if _is_stale(pr.state, n):
             return f"noop:stale_pr_event:{n.number}"
-        pr.title = n.title or pr.title
-        pr.state = n.state
-        pr.head_branch = n.head_branch or pr.head_branch
-        pr.base_branch = n.base_branch or pr.base_branch
-        pr.head_sha = n.head_sha or pr.head_sha
+
+        incoming_ver = (
+            n.incoming_version if n.incoming_version is not None else ((pr.entity_version or 0) + 1)
+        )
+        update_values: dict[str, object] = {
+            "title": n.title or pr.title,
+            "state": n.state,
+            "head_branch": n.head_branch or pr.head_branch,
+            "base_branch": n.base_branch or pr.base_branch,
+            "head_sha": n.head_sha or pr.head_sha,
+            "updated_at": n.updated_at or datetime.now(timezone.utc),
+        }
         if n.state == "MERGED":
-            pr.merged_at = n.merged_at or pr.merged_at
-            pr.merge_commit_sha = n.merge_commit_sha or pr.merge_commit_sha
-            pr.closed_at = n.closed_at or pr.closed_at
+            update_values["merged_at"] = n.merged_at or pr.merged_at
+            update_values["merge_commit_sha"] = n.merge_commit_sha or pr.merge_commit_sha
+            update_values["closed_at"] = n.closed_at or pr.closed_at
         elif n.state == "CLOSED":
-            pr.closed_at = n.closed_at or pr.closed_at
+            update_values["closed_at"] = n.closed_at or pr.closed_at
         else:  # reopened
-            pr.closed_at = None
-        pr.entity_version = (pr.entity_version or 0) + 1
-    await db.flush()  # session has autoflush=False; pr.id must exist before linking
+            update_values["closed_at"] = None
+
+        mut_res = await execute_versioned_update(
+            db,
+            table_name="pull_requests",
+            record_id=pr.id,
+            tenant_id=tenant_id,
+            incoming_version=incoming_ver,
+            values=update_values,
+        )
+        if not mut_res.applied:
+            return f"noop:stale_pr_version:{n.number}"
+        await db.refresh(pr)
 
     await _attach_chain(
         db, tenant_id=tenant_id, repository_id=repo.id, pr_id=pr.id, head_sha=n.head_sha

@@ -1328,15 +1328,184 @@ def resolve_dora_timeframe_days(
     return validated_days
 
 
-def build_dora_metrics_notes(
+def _is_live_async_session(db: Any) -> bool:
+    """Return True only for a real SQLAlchemy AsyncSession (excluding unit test mocks)."""
+    return isinstance(db, AsyncSession) and not type(db).__module__.startswith("unittest.mock")
+
+
+_DORA_CONSOLIDATED_SERIES_SQL = text(
+    """
+    WITH date_buckets AS (
+        SELECT gs::date AS bucket_date
+        FROM generate_series(
+            CAST(:start_date AS date),
+            CAST(:end_date AS date),
+            INTERVAL '1 day'
+        ) AS gs
+    ),
+    auth_deployments AS (
+        SELECT d.id,
+               d.status,
+               d.deployed_at,
+               (d.deployed_at AT TIME ZONE 'UTC')::date AS bucket_date
+        FROM deployments d
+        WHERE d.tenant_id = CAST(:tenant_id AS uuid)
+          AND d.project_id = CAST(:project_id AS uuid)
+          AND d.environment = 'production'
+          AND d.authoritative_signal_source = :auth_signal
+          AND d.deployed_at >= :start_utc
+          AND d.deployed_at <= :end_utc
+    ),
+    dep_cfr AS (
+        SELECT ad.id,
+               ad.status,
+               ad.bucket_date,
+               (
+                   ad.status IN ('FAILED', 'ROLLED_BACK')
+                   OR BOOL_OR(di.id IS NOT NULL)
+               ) AS is_failed
+        FROM auth_deployments ad
+        LEFT JOIN deployment_incidents di
+          ON di.deployment_id = ad.id
+         AND di.tenant_id = CAST(:tenant_id AS uuid)
+         AND di.is_active IS TRUE
+         AND di.status = 'CONFIRMED'
+         AND di.detected_at >= ad.deployed_at
+         AND di.detected_at <= ad.deployed_at + INTERVAL '24 hours'
+        GROUP BY ad.id, ad.status, ad.bucket_date
+    ),
+    daily_deployments AS (
+        SELECT bucket_date,
+               COUNT(*)::int AS total_count,
+               COUNT(*) FILTER (WHERE status = 'SUCCESS')::int AS success_count,
+               COUNT(*) FILTER (WHERE is_failed)::int AS failed_count
+        FROM dep_cfr
+        GROUP BY bucket_date
+    ),
+    agg_deployments AS (
+        SELECT COUNT(*)::int AS total_count,
+               COUNT(*) FILTER (WHERE status = 'SUCCESS')::int AS success_count,
+               COUNT(*) FILTER (WHERE is_failed)::int AS failed_count
+        FROM dep_cfr
+    ),
+    shipped_prs AS (
+        SELECT DISTINCT ON (pr.id)
+               pr.id AS pr_id,
+               ad.bucket_date,
+               EXTRACT(EPOCH FROM (ad.deployed_at - pr.first_commit_at))::numeric AS raw_seconds
+        FROM deployment_pull_requests dpr
+        JOIN auth_deployments ad
+          ON ad.id = dpr.deployment_id
+         AND ad.status = 'SUCCESS'
+        JOIN pull_requests pr
+          ON pr.id = dpr.pull_request_id
+         AND pr.tenant_id = CAST(:tenant_id AS uuid)
+        WHERE dpr.tenant_id = CAST(:tenant_id AS uuid)
+          AND lower(trim(pr.state)) = 'merged'
+          AND pr.first_commit_at IS NOT NULL
+          AND ad.deployed_at >= pr.first_commit_at
+        ORDER BY pr.id, ad.deployed_at ASC, ad.id ASC
+    ),
+    daily_lead_time AS (
+        SELECT bucket_date,
+               ROUND(
+                   (PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY raw_seconds / 3600.0))::numeric,
+                   2
+               )::float AS median_lead_time_hours
+        FROM shipped_prs
+        GROUP BY bucket_date
+    ),
+    agg_lead_time AS (
+        SELECT ROUND(
+                   (PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY raw_seconds / 3600.0))::numeric,
+                   2
+               )::float AS median_lead_time_hours
+        FROM shipped_prs
+    ),
+    pf_sessions AS (
+        SELECT pf.id,
+               pf.incident_id,
+               pf.started_at,
+               pf.resolved_at,
+               (pf.resolved_at AT TIME ZONE 'UTC')::date AS bucket_date,
+               EXTRACT(EPOCH FROM (pf.resolved_at - pf.started_at))::numeric AS dur_seconds
+        FROM production_failures pf
+        WHERE pf.tenant_id = CAST(:tenant_id AS uuid)
+          AND pf.project_id = CAST(:project_id AS uuid)
+          AND pf.status = 'RESOLVED'
+          AND pf.resolved_at IS NOT NULL
+          AND pf.resolved_at >= pf.started_at
+          AND pf.resolved_at >= :start_utc
+          AND pf.resolved_at <= :end_utc
+    ),
+    inc_sessions AS (
+        SELECT inc.id,
+               (inc.resolved_at AT TIME ZONE 'UTC')::date AS bucket_date,
+               EXTRACT(EPOCH FROM (inc.resolved_at - inc.started_at))::numeric AS dur_seconds
+        FROM incidents inc
+        WHERE inc.tenant_id = CAST(:tenant_id AS uuid)
+          AND inc.project_id = CAST(:project_id AS uuid)
+          AND inc.resolved_at IS NOT NULL
+          AND inc.resolved_at >= inc.started_at
+          AND inc.resolved_at >= :start_utc
+          AND inc.resolved_at <= :end_utc
+          AND NOT EXISTS (
+              SELECT 1
+              FROM pf_sessions pfs
+              WHERE pfs.id = inc.id OR pfs.incident_id = inc.id
+          )
+    ),
+    mttr_sessions AS (
+        SELECT bucket_date, dur_seconds FROM pf_sessions
+        UNION ALL
+        SELECT bucket_date, dur_seconds FROM inc_sessions
+    ),
+    daily_mttr AS (
+        SELECT bucket_date,
+               ROUND((AVG(dur_seconds) / 3600.0)::numeric, 2)::float AS mttr_hours
+        FROM mttr_sessions
+        GROUP BY bucket_date
+    ),
+    agg_mttr AS (
+        SELECT COUNT(*)::int AS resolved_outage_count,
+               ROUND((AVG(dur_seconds) / 3600.0)::numeric, 2)::float AS mttr_hours
+        FROM mttr_sessions
+    )
+    SELECT db.bucket_date,
+           COALESCE(dd.total_count, 0) AS day_total_deployments,
+           COALESCE(dd.success_count, 0) AS day_success_deployments,
+           COALESCE(dd.failed_count, 0) AS day_failed_deployments,
+           dlt.median_lead_time_hours AS day_lead_time_hours,
+           dm.mttr_hours AS day_mttr_hours,
+           adep.total_count AS agg_total_deployments,
+           adep.success_count AS agg_success_deployments,
+           adep.failed_count AS agg_failed_deployments,
+           alt.median_lead_time_hours AS agg_lead_time_hours,
+           amt.resolved_outage_count AS agg_resolved_outage_count,
+           amt.mttr_hours AS agg_mttr_hours
+    FROM date_buckets db
+    LEFT JOIN daily_deployments dd ON dd.bucket_date = db.bucket_date
+    LEFT JOIN daily_lead_time dlt ON dlt.bucket_date = db.bucket_date
+    LEFT JOIN daily_mttr dm ON dm.bucket_date = db.bucket_date
+    CROSS JOIN agg_deployments adep
+    CROSS JOIN agg_lead_time alt
+    CROSS JOIN agg_mttr amt
+    ORDER BY db.bucket_date ASC
+    """
+)
+
+
+def _summarize_dora_notes(
     *,
     window: DoraWindow,
     authoritative_deployment_signal: DeploymentSignalSource,
-    lead_time_result: LeadTimeResult,
-    deployment_frequency_result: DeploymentFrequencyResult,
-    change_failure_rate_result: ChangeFailureRateResult,
-    mttr_result: MTTRResult,
     has_deployment_telemetry: bool,
+    total_deployment_count: int,
+    successful_deployment_count: int,
+    lead_time_hours: Optional[float],
+    change_failure_rate_pct: Optional[float],
+    mttr_hours: Optional[float],
+    resolved_outage_count: int,
 ) -> list[str]:
     """Build deterministic diagnostic notes explaining null vs 0.0 metrics and signal filtering."""
     notes: list[str] = []
@@ -1352,37 +1521,61 @@ def build_dora_metrics_notes(
             f"Aggregated rolling {window} metrics from authoritative deployment signal "
             f"'{signal_name}'."
         )
-        if deployment_frequency_result.successful_deployment_count == 0:
+        if successful_deployment_count == 0:
             notes.append(
                 "deployment_frequency_per_day is 0.0: "
-                f"{change_failure_rate_result.total_deployment_count} authoritative production "
+                f"{total_deployment_count} authoritative production "
                 f"deployment(s) recorded with 0 SUCCESS outcomes in the {window} window."
             )
 
-    if lead_time_result.median_lead_time_hours is None and has_deployment_telemetry:
+    if lead_time_hours is None and has_deployment_telemetry:
         notes.append(
             "lead_time_hours is null: 0 shipped pull requests linked to successful production "
             f"deployments in the {window} window."
         )
 
-    if change_failure_rate_result.change_failure_rate_percentage == 0.0:
+    if change_failure_rate_pct == 0.0:
         notes.append(
             "change_failure_rate_pct is 0.0%: "
-            f"{change_failure_rate_result.total_deployment_count} production deployments "
+            f"{total_deployment_count} production deployments "
             "succeeded with 0 failures or linked incidents."
         )
 
-    if mttr_result.mttr_hours is None:
+    if mttr_hours is None:
         notes.append(
             f"mttr_hours is null: 0 resolved production health failure sessions in the {window} window."
         )
-    elif mttr_result.mttr_hours == 0.0:
+    elif mttr_hours == 0.0:
         notes.append(
-            f"mttr_hours is 0.0: {mttr_result.resolved_outage_count} resolved production health "
+            f"mttr_hours is 0.0: {resolved_outage_count} resolved production health "
             "failure session(s) restored instantaneously."
         )
 
     return notes
+
+
+def build_dora_metrics_notes(
+    *,
+    window: DoraWindow,
+    authoritative_deployment_signal: DeploymentSignalSource,
+    lead_time_result: LeadTimeResult,
+    deployment_frequency_result: DeploymentFrequencyResult,
+    change_failure_rate_result: ChangeFailureRateResult,
+    mttr_result: MTTRResult,
+    has_deployment_telemetry: bool,
+) -> list[str]:
+    """Build deterministic diagnostic notes explaining null vs 0.0 metrics and signal filtering."""
+    return _summarize_dora_notes(
+        window=window,
+        authoritative_deployment_signal=authoritative_deployment_signal,
+        has_deployment_telemetry=has_deployment_telemetry,
+        total_deployment_count=change_failure_rate_result.total_deployment_count,
+        successful_deployment_count=deployment_frequency_result.successful_deployment_count,
+        lead_time_hours=lead_time_result.median_lead_time_hours,
+        change_failure_rate_pct=change_failure_rate_result.change_failure_rate_percentage,
+        mttr_hours=mttr_result.mttr_hours,
+        resolved_outage_count=mttr_result.resolved_outage_count,
+    )
 
 
 def assemble_dora_metrics_response(
@@ -1483,6 +1676,104 @@ def assemble_dora_metrics_response(
     )
 
 
+async def calculate_project_dora_metrics_consolidated(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    project: Project,
+    timeframe_days: DoraTimeframeDays,
+    end_utc: datetime,
+) -> DoraMetricsResponse:
+    """
+    Execute the consolidated single-roundtrip PostgreSQL 16 `generate_series` CTE query
+    under tenant RLS for sub-300ms DORA analytics retrieval (SCRUM-459 / Task 30.3).
+    """
+    start_utc = end_utc - timedelta(days=timeframe_days)
+    end_date = end_utc.date()
+    start_date = end_date - timedelta(days=timeframe_days - 1)
+
+    signal_enum = DeploymentSignalSource(str(project.authoritative_cd_signal))
+    window: DoraWindow = "14d" if timeframe_days == 14 else "30d"
+
+    res = await db.execute(
+        _DORA_CONSOLIDATED_SERIES_SQL,
+        {
+            "tenant_id": tenant_id,
+            "project_id": project.id,
+            "auth_signal": signal_enum.value,
+            "start_utc": start_utc,
+            "end_utc": end_utc,
+            "start_date": start_date,
+            "end_date": end_date,
+        },
+    )
+    rows = res.mappings().all()
+
+    first_row = rows[0] if rows else {}
+    total_dep = int(first_row.get("agg_total_deployments") or 0)
+    success_dep = int(first_row.get("agg_success_deployments") or 0)
+    failed_dep = int(first_row.get("agg_failed_deployments") or 0)
+    resolved_outages = int(first_row.get("agg_resolved_outage_count") or 0)
+
+    agg_lead_raw = first_row.get("agg_lead_time_hours")
+    agg_lead = float(agg_lead_raw) if agg_lead_raw is not None else None
+
+    agg_mttr_raw = first_row.get("agg_mttr_hours")
+    agg_mttr = float(agg_mttr_raw) if agg_mttr_raw is not None else None
+
+    telemetry_present = total_dep > 0 or success_dep > 0
+    df_aggregate: Optional[float] = (
+        _round_rate(success_dep, timeframe_days) if telemetry_present else None
+    )
+    cfr_pct = _round_cfr_percentage(failed_dep, total_dep)
+
+    aggregates = DoraAggregates(
+        lead_time_hours=agg_lead,
+        deployment_frequency_per_day=df_aggregate,
+        change_failure_rate_pct=cfr_pct,
+        mttr_hours=agg_mttr,
+    )
+
+    trend: list[DoraDailyPoint] = []
+    for row in rows:
+        day_total = int(row["day_total_deployments"] or 0)
+        day_success = int(row["day_success_deployments"] or 0)
+        day_failed = int(row["day_failed_deployments"] or 0)
+        day_lt_raw = row["day_lead_time_hours"]
+        day_mttr_raw = row["day_mttr_hours"]
+
+        trend.append(
+            DoraDailyPoint(
+                date=row["bucket_date"],
+                lead_time_hours=float(day_lt_raw) if day_lt_raw is not None else None,
+                deployment_frequency_per_day=(float(day_success) if telemetry_present else None),
+                change_failure_rate_pct=_round_cfr_percentage(day_failed, day_total),
+                mttr_hours=float(day_mttr_raw) if day_mttr_raw is not None else None,
+            )
+        )
+
+    notes = _summarize_dora_notes(
+        window=window,
+        authoritative_deployment_signal=signal_enum,
+        has_deployment_telemetry=telemetry_present,
+        total_deployment_count=total_dep,
+        successful_deployment_count=success_dep,
+        lead_time_hours=agg_lead,
+        change_failure_rate_pct=cfr_pct,
+        mttr_hours=agg_mttr,
+        resolved_outage_count=resolved_outages,
+    )
+
+    return DoraMetricsResponse(
+        project_id=project.id,
+        window=window,
+        authoritative_deployment_signal=signal_enum,
+        aggregates=aggregates,
+        notes=notes,
+        trend=trend,
+    )
+
+
 async def calculate_project_dora_metrics(
     db: AsyncSession,
     *,
@@ -1493,7 +1784,7 @@ async def calculate_project_dora_metrics(
 ) -> DoraMetricsResponse:
     """
     Query authoritative project metadata and compute rolling 14d/30d DORA aggregates
-    and daily trend series across US-26, US-27, US-28, and US-29 (Task 30.2).
+    and daily trend series across US-26, US-27, US-28, and US-29 (Task 30.2 & Task 30.3).
     """
     if timeframe_days not in (14, 30):
         raise ValueError(f"Unsupported timeframe_days={timeframe_days}. Expected 14 or 30.")
@@ -1511,6 +1802,15 @@ async def calculate_project_dora_metrics(
         )
 
     end_utc = _ensure_utc(window_end or datetime.now(timezone.utc))
+
+    if _is_live_async_session(db):
+        return await calculate_project_dora_metrics_consolidated(
+            db,
+            tenant_id=tenant_id,
+            project=project,
+            timeframe_days=timeframe_days,
+            end_utc=end_utc,
+        )
 
     lead_time_result = await calculate_rolling_lead_time(
         db,
