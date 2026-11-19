@@ -434,7 +434,8 @@ async def ingest_github_pull_request_in_session(
             # Optimistic fencing validation: reject stale events
             if inbound_token > 0 and inbound_token <= existing_pr.active_fencing_token:
                 logger.warning(
-                    "Rejecting stale synchronize event for PR #%s (inbound=%s <= active=%s)",
+                    "STALE_FENCING_TOKEN_REJECTED Rejecting stale synchronize event for PR #%s "
+                    "(inbound=%s <= active=%s)",
                     pr_number,
                     inbound_token,
                     existing_pr.active_fencing_token,
@@ -491,7 +492,8 @@ async def ingest_github_pull_request_in_session(
             # Optimistic fencing validation: reject stale events
             if inbound_token > 0 and inbound_token <= existing_pr.active_fencing_token:
                 logger.warning(
-                    "Rejecting stale closed event for PR #%s (inbound=%s <= active=%s)",
+                    "STALE_FENCING_TOKEN_REJECTED Rejecting stale closed event for PR #%s "
+                    "(inbound=%s <= active=%s)",
                     pr_number,
                     inbound_token,
                     existing_pr.active_fencing_token,
