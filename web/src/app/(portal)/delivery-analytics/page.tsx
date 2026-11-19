@@ -1,17 +1,9 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect } from "react";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import {
-  AlertTriangle,
-  Bug,
-  ChevronDown,
-  ChevronUp,
-  FolderOpen,
-  Lock,
-  PlugZap,
-} from "lucide-react";
+import { AlertTriangle, FolderOpen, Lock, PlugZap } from "lucide-react";
 import { useAuth } from "@/providers/auth-provider";
 import { usePermissions } from "@/hooks/use-permissions";
 import { useProjectsQuery } from "@/hooks/use-projects";
@@ -25,8 +17,6 @@ import {
   classifyTelemetry,
   formatClockTime,
   formatRelativeTime,
-  isMockModeEnabled,
-  resolveMockScenario,
 } from "@/lib/dora/dora-utils";
 import {
   DEFAULT_DORA_TIMEFRAME,
@@ -43,7 +33,6 @@ import {
   DoraSkeleton,
   DoraStatePanel,
   MetricCard,
-  MockDataBanner,
   TrendChartCard,
   type DataStatus,
 } from "@/components/dora/dora-cards";
@@ -76,9 +65,6 @@ export default function DeliveryAnalyticsPage() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const nowMs = useNow();
-  const [statePanelOpen, setStatePanelOpen] = useState(true);
-
-  const mockScenario = resolveMockScenario(searchParams.get("mockScenario"));
   const timeframe = parseTimeframe(searchParams.get("timeframe"));
 
   const projectsQuery = useProjectsQuery(isAuthenticated && canView);
@@ -92,7 +78,6 @@ export default function DeliveryAnalyticsPage() {
     projectId,
     days: timeframe,
     enabled: isAuthenticated && canView,
-    mockScenario,
   });
   const dashboardResult = dashboardQuery.data ?? null;
   const apiViewModel: DoraDashboardViewModel | null =
@@ -101,7 +86,6 @@ export default function DeliveryAnalyticsPage() {
   const signal = useDoraSignal({
     projectId,
     enabled: isAuthenticated && canView,
-    mockActive: mockScenario !== null,
     dashboard: apiViewModel,
   });
 
@@ -184,7 +168,6 @@ export default function DeliveryAnalyticsPage() {
   }
 
   // ---- Resolve the dashboard mode ------------------------------------------
-  const mockBlocked = apiViewModel?.source === "mock" && !isMockModeEnabled();
   const signalNotConfigured =
     signal.state.status === "ready" && !signal.state.signal.configured;
 
@@ -196,11 +179,11 @@ export default function DeliveryAnalyticsPage() {
     viewModel = buildEmptyDashboard({
       projectId,
       timeframeDays: timeframe,
-      source: apiViewModel?.source ?? (mockScenario ? "mock" : "api"),
+      source: "api",
     });
   } else if (dashboardQuery.isLoading) {
     mode = "loading";
-  } else if (dashboardQuery.isError || mockBlocked) {
+  } else if (dashboardQuery.isError) {
     mode = "error";
   } else if (dashboardResult?.kind === "unavailable") {
     mode = "api_unavailable";
@@ -227,8 +210,6 @@ export default function DeliveryAnalyticsPage() {
     if (mode === "cold_state") {
       return { label: "Awaiting deployment integration", tone: "muted" };
     }
-    if (viewModel?.source === "mock")
-      return { label: "Mock data", tone: "warn" };
     switch (mode) {
       case "loading":
         return { label: "Loading…", tone: "muted" };
@@ -271,9 +252,6 @@ export default function DeliveryAnalyticsPage() {
         aria-label="Delivery Analytics"
         className="mx-auto flex w-full max-w-[1600px] flex-col gap-6 p-6"
       >
-        {mockScenario !== null && !isColdState && (
-          <MockDataBanner scenario={mockScenario} />
-        )}
 
         <DoraPageHeader verification={verification} />
 
@@ -423,71 +401,6 @@ export default function DeliveryAnalyticsPage() {
           onRetry={signal.refetch}
         />
       </section>
-
-      <aside
-        data-testid="dora-state-switcher"
-        className="fixed bottom-5 right-5 z-50 w-[260px] overflow-hidden rounded-xl border border-[#30384a] bg-[#151b27] shadow-[0_12px_40px_rgba(0,0,0,0.45)]"
-        aria-label="DORA page state switcher"
-      >
-        <button
-          type="button"
-          onClick={() => setStatePanelOpen((open) => !open)}
-          aria-expanded={statePanelOpen}
-          className="flex w-full items-center justify-between gap-3 border-b border-[#252b3b] px-4 py-3 text-left hover:bg-[#1b2331] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#00e599]"
-        >
-          <span className="flex items-center gap-2 font-mono text-[11px] font-semibold uppercase tracking-[0.06em] text-[#e2e8f0]">
-            <Bug className="size-4 text-[#00e599]" aria-hidden="true" />
-            DORA page states
-            <span className="rounded bg-[rgba(0,229,153,0.12)] px-1.5 py-0.5 text-[9px] text-[#00e599]">
-              DEV
-            </span>
-          </span>
-          {statePanelOpen ? (
-            <ChevronDown className="size-4 text-[#7c839b]" aria-hidden="true" />
-          ) : (
-            <ChevronUp className="size-4 text-[#7c839b]" aria-hidden="true" />
-          )}
-        </button>
-
-        {statePanelOpen && (
-          <div className="flex flex-col gap-1 p-2">
-            <p className="px-2 pb-1 pt-1 font-mono text-[9px] uppercase tracking-[0.08em] text-[#68738a]">
-              Select a preview state
-            </p>
-            {(
-              [
-                ["populated", "Populated data"],
-                ["partial", "Partial data"],
-                ["signal_not_configured", "Cold State"],
-                ["unavailable", "API unavailable"],
-                ["error", "Request error"],
-                ["loading", "Loading state"],
-              ] as const
-            ).map(([scenario, label]) => {
-              const active = mockScenario === scenario;
-              return (
-                <button
-                  key={scenario}
-                  type="button"
-                  data-testid={`dora-state-${scenario}`}
-                  aria-pressed={active}
-                  onClick={() => updateParams({ mockScenario: scenario })}
-                  className={`flex items-center justify-between rounded-md px-3 py-2 text-left text-[11px] transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-[#00e599] ${
-                    active
-                      ? "bg-[rgba(0,229,153,0.12)] font-semibold text-[#00e599]"
-                      : "text-[#a4a8b8] hover:bg-[#202838] hover:text-[#e2e8f0]"
-                  }`}
-                >
-                  {label}
-                  {active && (
-                    <span className="size-1.5 rounded-full bg-[#00e599]" />
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        )}
-      </aside>
     </div>
   );
 }

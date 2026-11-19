@@ -28,8 +28,8 @@ export type DoraTier = "elite" | "high" | "medium" | "low";
 
 export type DoraUnit = "hours" | "minutes" | "per_day" | "percent" | "count";
 
-/** "mock" view models must never be rendered outside non-production mock mode. */
-export type DoraDataSource = "api" | "mock";
+/** Data source for the production DORA dashboard. */
+export type DoraDataSource = "api";
 
 /** Backend-provided verification status. "unavailable" = backend does not report it. */
 export type DoraVerificationStatus = "verified" | "unverified" | "unavailable";
@@ -123,7 +123,7 @@ export interface DoraDashboardViewModel {
   verification: DoraVerification;
   metrics: Record<DoraMetricId, DoraMetricViewModel>;
   trends: Record<DoraMetricId, DoraTrendViewModel>;
-  /** Signal details reported alongside metrics (mock mode, or sync info from the API). */
+  /** Deployment signal details reported alongside metrics by the API. */
   signal: DoraSignalViewModel | null;
 }
 
@@ -131,13 +131,7 @@ export type DoraFetchResult =
   | { kind: "ok"; data: DoraDashboardViewModel }
   | { kind: "unavailable"; reason: string };
 
-export type DoraMockScenario =
-  | "populated"
-  | "partial"
-  | "empty"
-  | "signal_not_configured"
-  | "unavailable"
-  | "error"
-  | "loading";
-
-export type DoraEmptyVariant = "not_configured" | "awaiting_telemetry" | "no_data";
+export type DoraEmptyVariant =
+  | "not_configured"
+  | "awaiting_telemetry"
+  | "no_data";
