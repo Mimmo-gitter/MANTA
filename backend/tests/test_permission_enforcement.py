@@ -61,6 +61,7 @@ def make_token(
     roles: list[str] | None = None,
     direct_role: str | None = None,
     tenant_id: str = TENANT_ID,
+    user_id: str | None = None,
 ) -> str:
     now = int(time.time())
     payload: dict[str, Any] = {
@@ -73,6 +74,8 @@ def make_token(
         "iss": f"{settings.KEYCLOAK_URL}/realms/{settings.KEYCLOAK_REALM}",
         "exp": now + 3600,
     }
+    if user_id is not None:
+        payload["user_id"] = user_id
     if roles is not None:
         payload["realm_access"] = {"roles": roles}
     if direct_role is not None:
@@ -316,6 +319,7 @@ async def test_all_matrix_decisions_enforced(auth_fixture):
         DirectDeploymentResponse,
     )
     from app.dora.schemas import DoraAggregates, DoraMetricsResponse
+    from app.mobile.schemas import RegisterMobileDeviceResponse
 
     mock_deploy_resp = DirectDeploymentResponse(
         id=uuid.UUID("22222222-2222-2222-2222-222222222222"),
@@ -348,6 +352,16 @@ async def test_all_matrix_decisions_enforced(auth_fixture):
         notes=["No authoritative production deployments recorded in the 30d window."],
         trend=[],
     )
+    mock_mobile_resp = RegisterMobileDeviceResponse(
+        id=uuid.UUID("33333333-3333-3333-3333-333333333333"),
+        platform="android",
+        device_name="Pixel",
+        app_version="1.0.0",
+        is_active=True,
+        last_seen_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        updated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
 
     async def _noop_tenant_db():
         yield object()
@@ -379,20 +393,26 @@ async def test_all_matrix_decisions_enforced(auth_fixture):
                 mock.AsyncMock(return_value=mock_dora_resp),
             ),
             mock.patch(
+                "app.mobile.router.resolve_or_create_mobile_device",
+                mock.AsyncMock(return_value=mock_mobile_resp),
+            ),
+            mock.patch(
                 "app.auth.members_router.get_tenant_db_context",
                 side_effect=_empty_members_db,
             ),
         ):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
                 for role_id, role_actions in matrix.matrix.items():
-                    token = make_token(pk, roles=[role_id], sub=f"user_{role_id.lower()}")
+                    token = make_token(
+                        pk,
+                        roles=[role_id],
+                        sub=f"user_{role_id.lower()}",
+                        user_id=str(uuid.uuid5(uuid.NAMESPACE_DNS, f"user_{role_id.lower()}")),
+                    )
                     headers = {"Authorization": f"Bearer {token}"}
 
                     for action_id, cell in role_actions.items():
                         perm_action = Permission(action_id)
-                        if perm_action == Permission.MANAGE_OWN_MOBILE_DEVICES:
-                            assert cell["decision"] == "ALLOW"
-                            continue
                         method, url = ACTION_ROUTE_MAP[perm_action]
                         expected_decision = cell["decision"]
 
@@ -404,6 +424,11 @@ async def test_all_matrix_decisions_enforced(auth_fixture):
                                 "outcome": "SUCCESS",
                                 "deployed_at": "2026-01-01T00:00:00Z",
                             }
+                        elif perm_action == Permission.MANAGE_OWN_MOBILE_DEVICES:
+                            req_kwargs["json"] = {
+                                "fcm_token": "matrix-test-fcm-token",
+                                "platform": "android",
+                            }
 
                         resp = await ac.request(method, url, **req_kwargs)
 
@@ -412,6 +437,7 @@ async def test_all_matrix_decisions_enforced(auth_fixture):
                                 Permission.MANAGE_WEBHOOK_INTEGRATIONS,
                                 Permission.MANAGE_TENANT_USERS_AND_ROLES,
                                 Permission.VIEW_PROJECT_DORA,
+                                Permission.MANAGE_OWN_MOBILE_DEVICES,
                             ):
                                 assert resp.status_code == 200, (
                                     f"Expected 200 for [{role_id}][{action_id}], got {resp.status_code}: {resp.text}"

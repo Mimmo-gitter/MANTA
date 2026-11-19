@@ -9,14 +9,27 @@ import httpx
 from httpx import ASGITransport, AsyncClient
 import jwt
 from jwt.algorithms import RSAAlgorithm
-import pytest
 from pydantic import ValidationError
+import pytest
+from sqlalchemy import func, select
 
 from app.auth.jwks import JWKSClient
 from app.config import settings
+from app.db.models.models import MobileDevice
+from app.db.session import async_engine, get_tenant_db_context
 from app.main import app
 from app.mobile.schemas import RegisterMobileDeviceRequest
 from app.mobile.service import resolve_or_create_mobile_device
+from app.tenants.rate_limiter import registration_rate_limiter
+
+
+@pytest.fixture(autouse=True)
+async def reset_mobile_test_state():
+    """Reset registration rate limiter and dispose DB connections between tests."""
+    registration_rate_limiter.reset()
+    yield
+    await async_engine.dispose()
+    registration_rate_limiter.reset()
 
 
 class MockJWKSServer:
@@ -183,104 +196,121 @@ async def test_register_mobile_device_returns_only_non_critical_device_data() ->
     }
 
 
-# @pytest.mark.asyncio
-# async def test_register_mobile_device_is_idempotent(mobile_auth_fixture) -> None:
-#     private_key = mobile_auth_fixture
-#     tenant_id, user_id, email = await register_test_tenant()
-#     token = create_mobile_auth_token(private_key, tenant_id, user_id, email)
-#     fcm_token = "idempotent-mobile-token"
+@pytest.mark.asyncio
+async def test_mobile_device_endpoints_require_authentication() -> None:
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        post_resp = await client.post(
+            "/api/v1/mobile/devices",
+            json={"fcm_token": "unauthenticated-token"},
+        )
+        delete_resp = await client.delete("/api/v1/mobile/devices/unauthenticated-token")
 
-#     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-#         first = await post_mobile_device(
-#             client,
-#             token,
-#             fcm_token,
-#             platform="android",
-#             device_name="Pixel",
-#             app_version="1.0.0",
-#         )
-#         second = await post_mobile_device(
-#             client,
-#             token,
-#             fcm_token,
-#             platform="ios",
-#             device_name="iPhone",
-#             app_version="2.0.0",
-#         )
-
-#     assert first.status_code == 200, first.text
-#     assert second.status_code == 200, second.text
-#     first_data = first.json()
-#     second_data = second.json()
-#     assert second_data["id"] == first_data["id"]
-#     assert second_data["platform"] == "ios"
-#     assert second_data["device_name"] == "iPhone"
-#     assert second_data["app_version"] == "2.0.0"
-#     assert second_data["last_seen_at"] >= first_data["last_seen_at"]
-
-#     async with get_tenant_db_context(tenant_id) as session:
-#         count = await session.scalar(
-#             select(func.count())
-#             .select_from(MobileDevice)
-#             .where(
-#                 MobileDevice.tenant_id == tenant_id,
-#                 MobileDevice.user_id == user_id,
-#                 MobileDevice.fcm_token == fcm_token,
-#             )
-#         )
-#     assert count == 1
+    assert post_resp.status_code == 401
+    assert post_resp.json() == {"detail": "Not authenticated"}
+    assert delete_resp.status_code == 401
+    assert delete_resp.json() == {"detail": "Not authenticated"}
 
 
-# @pytest.mark.asyncio
-# async def test_mobile_device_rls_hides_registration_from_another_tenant(
-#     mobile_auth_fixture,
-# ) -> None:
-#     private_key = mobile_auth_fixture
-#     tenant_a_id, user_a_id, email_a = await register_test_tenant()
-#     tenant_b_id, _, _ = await register_test_tenant()
-#     token_a = create_mobile_auth_token(private_key, tenant_a_id, user_a_id, email_a)
+@pytest.mark.asyncio
+async def test_register_mobile_device_is_idempotent(mobile_auth_fixture) -> None:
+    private_key = mobile_auth_fixture
+    tenant_id, user_id, email = await register_test_tenant()
+    token = create_mobile_auth_token(private_key, tenant_id, user_id, email)
+    fcm_token = "idempotent-mobile-token"
 
-#     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-#         response = await post_mobile_device(client, token_a, "tenant-isolation-token")
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first = await post_mobile_device(
+            client,
+            token,
+            fcm_token,
+            platform="android",
+            device_name="Pixel",
+            app_version="1.0.0",
+        )
+        second = await post_mobile_device(
+            client,
+            token,
+            fcm_token,
+            platform="ios",
+            device_name="iPhone",
+            app_version="2.0.0",
+        )
 
-#     assert response.status_code == 200, response.text
-#     device_id = uuid.UUID(response.json()["id"])
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    first_data = first.json()
+    second_data = second.json()
+    assert second_data["id"] == first_data["id"]
+    assert second_data["platform"] == "ios"
+    assert second_data["device_name"] == "iPhone"
+    assert second_data["app_version"] == "2.0.0"
+    assert datetime.fromisoformat(second_data["last_seen_at"]) >= datetime.fromisoformat(
+        first_data["last_seen_at"]
+    )
 
-#     async with get_tenant_db_context(tenant_b_id) as session:
-#         visible_device = await session.scalar(
-#             select(MobileDevice).where(MobileDevice.id == device_id)
-#         )
+    async with get_tenant_db_context(tenant_id) as session:
+        count = await session.scalar(
+            select(func.count())
+            .select_from(MobileDevice)
+            .where(
+                MobileDevice.tenant_id == tenant_id,
+                MobileDevice.user_id == user_id,
+                MobileDevice.fcm_token == fcm_token,
+            )
+        )
+    assert count == 1
 
-#     assert visible_device is None
+
+@pytest.mark.asyncio
+async def test_mobile_device_rls_hides_registration_from_another_tenant(
+    mobile_auth_fixture,
+) -> None:
+    private_key = mobile_auth_fixture
+    tenant_a_id, user_a_id, email_a = await register_test_tenant()
+    tenant_b_id, _, _ = await register_test_tenant()
+    token_a = create_mobile_auth_token(private_key, tenant_a_id, user_a_id, email_a)
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        response = await post_mobile_device(client, token_a, "tenant-isolation-token")
+
+    assert response.status_code == 200, response.text
+    device_id = uuid.UUID(response.json()["id"])
+
+    async with get_tenant_db_context(tenant_b_id) as session:
+        visible_device = await session.scalar(
+            select(MobileDevice).where(MobileDevice.id == device_id)
+        )
+
+    assert visible_device is None
 
 
-# @pytest.mark.asyncio
-# async def test_delete_mobile_device_removes_registration(mobile_auth_fixture) -> None:
-#     private_key = mobile_auth_fixture
-#     tenant_id, user_id, email = await register_test_tenant()
-#     token = create_mobile_auth_token(private_key, tenant_id, user_id, email)
-#     fcm_token = "delete-mobile-token"
+@pytest.mark.asyncio
+async def test_delete_mobile_device_removes_registration(mobile_auth_fixture) -> None:
+    private_key = mobile_auth_fixture
+    tenant_id, user_id, email = await register_test_tenant()
+    token = create_mobile_auth_token(private_key, tenant_id, user_id, email)
+    fcm_token = "delete-mobile-token"
 
-#     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-#         registered = await post_mobile_device(client, token, fcm_token)
-#         assert registered.status_code == 200, registered.text
-#         deleted = await client.delete(
-#             f"/api/v1/mobile/devices/{fcm_token}",
-#             headers={"Authorization": f"Bearer {token}"},
-#         )
-#         repeated_delete = await client.delete(
-#             f"/api/v1/mobile/devices/{fcm_token}",
-#             headers={"Authorization": f"Bearer {token}"},
-#         )
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        registered = await post_mobile_device(client, token, fcm_token)
+        assert registered.status_code == 200, registered.text
+        deleted = await client.delete(
+            f"/api/v1/mobile/devices/{fcm_token}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        repeated_delete = await client.delete(
+            f"/api/v1/mobile/devices/{fcm_token}",
+            headers={"Authorization": f"Bearer {token}"},
+        )
 
-#     assert deleted.status_code == 204
-#     assert repeated_delete.status_code == 204
-#     async with get_tenant_db_context(tenant_id) as session:
-#         device = await session.scalar(
-#             select(MobileDevice).where(
-#                 MobileDevice.tenant_id == tenant_id,
-#                 MobileDevice.user_id == user_id,
-#                 MobileDevice.fcm_token == fcm_token,
-#             )
-#         )
-#     assert device is None
+    assert deleted.status_code == 204
+    assert repeated_delete.status_code == 204
+    async with get_tenant_db_context(tenant_id) as session:
+        device = await session.scalar(
+            select(MobileDevice).where(
+                MobileDevice.tenant_id == tenant_id,
+                MobileDevice.user_id == user_id,
+                MobileDevice.fcm_token == fcm_token,
+            )
+        )
+    assert device is None

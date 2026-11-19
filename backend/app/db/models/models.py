@@ -1511,6 +1511,7 @@ class AuditLog(Base):
 class MobileDevice(Base):
     __tablename__ = "mobile_devices"
     __table_args__ = (
+        Index("idx_mobile_devices_tenant_id", "tenant_id"),
         UniqueConstraint("tenant_id", "user_id", "fcm_token", name="uq_tenant_user_fcm_token"),
     )
 

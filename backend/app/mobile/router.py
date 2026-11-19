@@ -62,7 +62,7 @@ async def remove_mobile_device(
     if user.user_id is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="User ID claim is required to register a new mobile device.",
+            detail="User ID claim is required to remove a mobile device.",
         )
     if len(token.strip()) == 0:
         raise HTTPException(
