@@ -816,6 +816,7 @@ async def test_live_pg_e2e_stale_events_preserve_state_complete_without_dlq_and_
                 project_id=proj_id,
                 provider="jira",
                 external_account_id="jira-424",
+                webhook_secret_hash="test-jira-secret-hash",
                 is_active=True,
             )
         )
@@ -826,6 +827,7 @@ async def test_live_pg_e2e_stale_events_preserve_state_complete_without_dlq_and_
                 project_id=proj_id,
                 provider="slack",
                 external_account_id="slack-424",
+                webhook_secret_hash="test-slack-secret-hash",
                 is_active=True,
             )
         )
