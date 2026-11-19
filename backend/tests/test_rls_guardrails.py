@@ -170,8 +170,8 @@ def test_sqlalchemy_models_match_tenant_rls_expectations():
         if "tenant_id" in table_obj.columns:
             models_with_tenant_id.add(table_name)
 
-    assert len(models_with_tenant_id) == 44, (
-        f"Expected 44 SQLAlchemy models with tenant_id, found {len(models_with_tenant_id)}"
+    assert len(models_with_tenant_id) == 45, (
+        f"Expected 45 SQLAlchemy models with tenant_id, found {len(models_with_tenant_id)}"
     )
 
     # Global exempt tables must never contain a tenant_id column

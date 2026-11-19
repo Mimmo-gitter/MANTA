@@ -28,6 +28,7 @@ from app.auth.permissions import (
     Permission,
     get_permission_matrix,
     get_route_declared_permissions,
+    extract_all_app_routes,
     require_permission,
     resolve_caller_roles,
 )
@@ -141,6 +142,7 @@ ACTION_ROUTE_MAP: dict[Permission, tuple[str, str]] = {
     Permission.PUBLISH_GLOBAL_ADR: ("POST", "/api/v1/adrs/adr-1/publish-global"),
     Permission.MANAGE_WEBHOOK_INTEGRATIONS: ("GET", "/api/v1/integrations"),
     Permission.MANAGE_TENANT_USERS_AND_ROLES: ("GET", "/api/v1/members"),
+    Permission.MANAGE_OWN_MOBILE_DEVICES: ("POST", "/api/v1/mobile/devices"),
 }
 
 
@@ -185,6 +187,31 @@ def test_each_protected_route_has_declared_permission():
     )
 
 
+def test_mobile_device_routes_require_manage_own_mobile_devices():
+    expected_permission = frozenset({Permission.MANAGE_OWN_MOBILE_DEVICES.value})
+    expected_routes = {
+        ("/api/v1/mobile/devices", "POST"),
+        ("/api/v1/mobile/devices/{token}", "DELETE"),
+    }
+    actual_routes = {
+        (path, method)
+        for path, route in extract_all_app_routes(app)
+        for method in getattr(route, "methods", set())
+        if (path, method) in expected_routes
+    }
+
+    assert actual_routes == expected_routes
+    for path, route in extract_all_app_routes(app):
+        if path in {"/api/v1/mobile/devices", "/api/v1/mobile/devices/{token}"}:
+            assert get_route_declared_permissions(route) == expected_permission
+
+    matrix = get_permission_matrix()
+    assert all(
+        matrix.matrix[role_id][Permission.MANAGE_OWN_MOBILE_DEVICES.value]["decision"] == "ALLOW"
+        for role_id in matrix.roles_data
+    )
+
+
 @pytest.mark.asyncio
 async def test_all_12_stub_endpoints_in_openapi_schema():
     """
@@ -205,6 +232,7 @@ async def test_all_12_stub_endpoints_in_openapi_schema():
         Permission.MANAGE_WEBHOOK_INTEGRATIONS,
         Permission.INGEST_PROJECT_DEPLOYMENTS,
         Permission.MANAGE_TENANT_USERS_AND_ROLES,
+        Permission.MANAGE_OWN_MOBILE_DEVICES,
         Permission.VIEW_PROJECT_DORA,
     }
     stub_permissions = {p for p in Permission if p not in real_permissions}
@@ -247,6 +275,7 @@ async def test_stub_endpoints_unauthenticated_returns_401():
                 Permission.MANAGE_WEBHOOK_INTEGRATIONS,
                 Permission.INGEST_PROJECT_DEPLOYMENTS,
                 Permission.MANAGE_TENANT_USERS_AND_ROLES,
+                Permission.MANAGE_OWN_MOBILE_DEVICES,
                 Permission.VIEW_PROJECT_DORA,
             }:
                 continue
@@ -264,13 +293,13 @@ async def test_stub_endpoints_unauthenticated_returns_401():
 
 
 @pytest.mark.asyncio
-async def test_all_91_matrix_decisions_enforced(auth_fixture):
+async def test_all_matrix_decisions_enforced(auth_fixture):
     """
     SCRUM-308 Acceptance Criteria:
     - Stubs exist for each matrix action not yet implemented.
     - Permission checks apply to stubs the same way as to real endpoints.
 
-    Exhaustively evaluate all 98 (role, action) pairs in docs/roles-permissions.json
+    Exhaustively evaluate all 105 (role, action) pairs in docs/roles-permissions.json
     against the actual registered application endpoints.
     - DENY: HTTP 403 with consistent FORBIDDEN_RESPONSE.
     - ALLOW on stubs: HTTP 501 with StubEndpointResponse.
@@ -361,6 +390,9 @@ async def test_all_91_matrix_decisions_enforced(auth_fixture):
 
                     for action_id, cell in role_actions.items():
                         perm_action = Permission(action_id)
+                        if perm_action == Permission.MANAGE_OWN_MOBILE_DEVICES:
+                            assert cell["decision"] == "ALLOW"
+                            continue
                         method, url = ACTION_ROUTE_MAP[perm_action]
                         expected_decision = cell["decision"]
 

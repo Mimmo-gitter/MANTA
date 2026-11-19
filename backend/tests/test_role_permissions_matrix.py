@@ -36,6 +36,7 @@ EXPECTED_ACTIONS = {
     "PUBLISH_GLOBAL_ADR",
     "MANAGE_WEBHOOK_INTEGRATIONS",
     "MANAGE_TENANT_USERS_AND_ROLES",
+    "MANAGE_OWN_MOBILE_DEVICES",
 }
 
 # Verbatim Architecture Blueprint §6.2 matrix (using canonical DELIVERY_DIRECTOR for DELIVERY_EXEC)
@@ -123,14 +124,14 @@ class TestRolePermissionsMatrix(unittest.TestCase):
             self.assertTrue(role.get("description"), f"Missing description on {role}")
             self.assertTrue(role.get("source"), f"Missing source on {role}")
 
-    def test_thirteen_actions_declared(self):
-        """Verify all fourteen platform actions across 5 domains are defined."""
+    def test_fifteen_actions_declared(self):
+        """Verify all fifteen platform actions are defined."""
         actions = self.data.get("actions", [])
         action_ids = [a.get("id") for a in actions]
 
         # No duplicate action IDs
         self.assertEqual(len(action_ids), len(set(action_ids)), "Duplicate action IDs found")
-        # Exactly the 14 expected actions
+        # Exactly the 15 expected actions
         self.assertEqual(set(action_ids), EXPECTED_ACTIONS)
 
         # Check required fields on every action
@@ -146,7 +147,7 @@ class TestRolePermissionsMatrix(unittest.TestCase):
         """
         SCRUM-306 Acceptance Criteria:
         1. Every role/action pair has an explicit decision (ALLOW or DENY).
-        2. Total decided pairs = 7 roles * 13 actions = 91 explicit cells.
+        2. Total decided pairs = 7 roles * 15 actions = 105 explicit cells.
         """
         matrix = self.data.get("matrix", {})
         self.assertEqual(
@@ -170,7 +171,7 @@ class TestRolePermissionsMatrix(unittest.TestCase):
                 )
                 self.assertIn(
                     cell.get("source"),
-                    ("ARCHITECTURE_6.2", "SRS_DERIVED"),
+                    ("ARCHITECTURE_6.2", "SRS_DERIVED", "SCRUM_494"),
                     f"Cell [{role_id}][{action_id}] must state authoritative source",
                 )
                 self.assertIsInstance(
@@ -184,7 +185,7 @@ class TestRolePermissionsMatrix(unittest.TestCase):
                 total_decisions += 1
 
         self.assertEqual(
-            total_decisions, 7 * 14, f"Expected 98 explicit decisions, counted {total_decisions}"
+            total_decisions, 7 * 15, f"Expected 105 explicit decisions, counted {total_decisions}"
         )
 
     def test_architecture_6_2_baseline_parity(self):

@@ -55,7 +55,7 @@ class TestPermissionMatrixCompleteness(unittest.TestCase):
     def test_current_matrix_completeness_baseline(self) -> None:
         """
         Baseline completeness verification:
-        Every role x action cell must have an explicit ALLOW or DENY decision across all 7 roles x 13 actions (91 cells).
+        Every role x action cell must have an explicit ALLOW or DENY decision across all 7 roles x 15 actions (105 cells).
         """
         errors = validate_permission_matrix_completeness(self.docs_matrix_data)
         self.assertEqual(
@@ -72,7 +72,7 @@ class TestPermissionMatrixCompleteness(unittest.TestCase):
         matrix = self.docs_matrix_data.get("matrix", {})
 
         self.assertEqual(len(roles), 7, f"Expected 7 roles, found {len(roles)}")
-        self.assertEqual(len(actions), 14, f"Expected 14 actions, found {len(actions)}")
+        self.assertEqual(len(actions), 15, f"Expected 15 actions, found {len(actions)}")
 
         total_cells = 0
         for r in roles:
@@ -91,8 +91,8 @@ class TestPermissionMatrixCompleteness(unittest.TestCase):
 
         self.assertEqual(
             total_cells,
-            98,
-            f"Expected exactly 98 explicit decisions (7 roles x 14 actions), counted {total_cells}",
+            105,
+            f"Expected exactly 105 explicit decisions (7 roles x 15 actions), counted {total_cells}",
         )
 
     def test_adding_action_without_decision_fails_completeness_check(self) -> None:
