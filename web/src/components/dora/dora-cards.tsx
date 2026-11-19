@@ -562,7 +562,10 @@ export function MetricCard({
                 data-testid="dora-metric-value"
                 className="font-mono text-[36px] font-medium leading-[40px] tracking-[-0.02em] text-[#e2e8f0]"
               >
-                {formatNumber(metric.value as number)}
+                {formatNumber(
+                  metric.value as number,
+                  metric.id === "mttr" ? 2 : 1,
+                )}
               </span>
               <span className="text-[13px] text-[#7c839b]">
                 {unitLabel(metric.unit)}
