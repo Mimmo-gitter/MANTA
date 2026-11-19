@@ -99,33 +99,33 @@ export function DoraPageHeader({
   verification: DoraVerification;
 }) {
   const ui = VERIFICATION_UI[verification.status];
+
   return (
     <header className="flex flex-col gap-1">
       <div className="flex flex-wrap items-center gap-3">
         <h1 className="text-[24px] font-semibold leading-[32px] tracking-[-0.4px] text-[#e2e8f0]">
           Delivery Analytics
         </h1>
-        <span
-          data-testid="dora-verification"
-          data-status={verification.status}
-          title={
-            verification.detail ??
-            (verification.status === "unavailable"
-              ? "The backend has not reported a verification status."
-              : undefined)
-          }
-          className={cn(
-            "inline-flex items-center gap-[6px] rounded-full border px-[10px] py-[3px] font-mono text-[10px] font-semibold uppercase tracking-[0.06em]",
-            ui.className,
-          )}
-        >
+
+        {verification.status !== "unavailable" && (
           <span
-            className={cn("size-[6px] rounded-full", ui.dot)}
-            aria-hidden="true"
-          />
-          {ui.label}
-        </span>
+            data-testid="dora-verification"
+            data-status={verification.status}
+            title={verification.detail ?? undefined}
+            className={cn(
+              "inline-flex items-center gap-[6px] rounded-full border px-[10px] py-[3px] font-mono text-[10px] font-semibold uppercase tracking-[0.06em]",
+              ui.className,
+            )}
+          >
+            <span
+              className={cn("size-[6px] rounded-full", ui.dot)}
+              aria-hidden="true"
+            />
+            {ui.label}
+          </span>
+        )}
       </div>
+
       <p className="text-[13px] text-[#7c839b]">
         Engineering delivery performance, architectural velocity, and DORA
         telemetry benchmarks.
@@ -562,7 +562,10 @@ export function MetricCard({
                 data-testid="dora-metric-value"
                 className="font-mono text-[36px] font-medium leading-[40px] tracking-[-0.02em] text-[#e2e8f0]"
               >
-                {formatNumber(metric.value as number)}
+                {formatNumber(
+                  metric.value as number,
+                  metric.id === "mttr" ? 2 : 1,
+                )}
               </span>
               <span className="text-[13px] text-[#7c839b]">
                 {unitLabel(metric.unit)}
