@@ -83,11 +83,12 @@ async def process_staged_deployment_event_in_session(
 
     provider = (event.provider or "").strip().lower()
     payload = event.payload if isinstance(event.payload, dict) else {}
+    event_type_clean = (event.event_type or "").strip().lower()
 
     handler_result: Optional[str] = None
-    if provider == "github" and event.event_type == "push":
+    if provider == "github" and event_type_clean == "push":
         handler_result = await handle_push(db, event, tenant_id)
-    elif provider == "github" and event.event_type == "pull_request":
+    elif provider == "github" and event_type_clean == "pull_request":
         handler_result = await handle_pull_request(db, event, tenant_id)
     elif provider == "jira":
         handler_result = await handle_jira_event(db, event, tenant_id)

@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     SWEEP_BATCH_SIZE: int = 100
     SWEEPER_HEARTBEAT_FILE: str = "/tmp/sweeper.heartbeat"
 
+    # Worker Prometheus Metrics Exporter (SCRUM-424)
+    WORKER_METRICS_PORT: int = 9101
+
     @property
     def cors_origins(self) -> list[str]:
         return [orig.strip() for orig in self.CORS_ORIGINS.split(",") if orig.strip()]

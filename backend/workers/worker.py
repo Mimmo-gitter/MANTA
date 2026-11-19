@@ -966,11 +966,30 @@ async def run_worker_daemon() -> None:
     import redis.asyncio as aioredis
 
     from app.db.session import AsyncSessionLocal, async_engine
+    import app.webhooks.metrics  # noqa: F401 - register Prometheus metrics on daemon startup
 
     logging.basicConfig(
         level=os.getenv("LOG_LEVEL", "INFO").upper(),
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
+
+    default_metrics_port = getattr(settings, "WORKER_METRICS_PORT", 9101)
+    try:
+        metrics_port = int(os.getenv("WORKER_METRICS_PORT", str(default_metrics_port)))
+    except ValueError:
+        metrics_port = 0
+    if metrics_port > 0:
+        try:
+            from prometheus_client import start_http_server
+
+            start_http_server(metrics_port)
+            logger.info("Worker Prometheus metrics server listening on :%d", metrics_port)
+        except OSError as exc:
+            logger.warning(
+                "Could not start worker Prometheus metrics server on port %d: %s",
+                metrics_port,
+                exc,
+            )
 
     redis_url = (
         settings.REDIS_URL

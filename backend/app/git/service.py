@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.models import Commit, PullRequest, Repository
 from app.git.normalization import NormalizedCommit, NormalizedPullRequest, NormalizedPush
+from app.webhooks.metrics import record_dropped_stale_event
 from app.webhooks.versioning import execute_versioned_update
 
 # TODO: verify import path / signature of the Task 20.3 helper.
@@ -287,6 +288,16 @@ async def process_pull_request(
         await db.flush()
     else:
         if _is_stale(pr.state, n):
+            record_dropped_stale_event("github")
+            logger.warning(
+                "STALE_OUT_OF_ORDER_REJECTED provider=github table=pull_requests "
+                "record_id=%s pr_number=%s state=%s incoming_action=%s incoming_version=%s",
+                pr.id,
+                n.number,
+                pr.state,
+                n.action,
+                n.incoming_version,
+            )
             return f"noop:stale_pr_event:{n.number}"
 
         incoming_ver = (

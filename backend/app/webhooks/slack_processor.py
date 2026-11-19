@@ -21,10 +21,11 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.models import CommunicationEvent, Integration, Project
+from app.webhooks.metrics import record_dropped_stale_event
 from app.webhooks.sweeper import complete_webhook_event
 from app.webhooks.versioning import (
     VersionedMutationResult,
-    extract_slack_event_version,
+    extract_entity_version,
     parse_slack_ts_to_micros,
 )
 
@@ -143,8 +144,10 @@ async def upsert_communication_event_versioned(
             incoming_version=incoming_version,
         )
 
+    record_dropped_stale_event("slack")
     logger.warning(
-        "STALE_OUT_OF_ORDER_REJECTED table=communication_events channel=%s thread_ts=%s incoming_version=%s",
+        "STALE_OUT_OF_ORDER_REJECTED provider=slack table=communication_events "
+        "channel=%s thread_ts=%s incoming_version=%s",
         channel_id,
         thread_ts,
         incoming_version,
@@ -171,9 +174,18 @@ async def ingest_slack_event_in_session(
     """
     event_dict = payload.get("event")
     ev: Mapping[str, Any] = event_dict if isinstance(event_dict, Mapping) else payload
+    nested_msg = ev.get("message")
+    msg_map: Mapping[str, Any] = nested_msg if isinstance(nested_msg, Mapping) else {}
 
     channel_id = str(ev.get("channel") or payload.get("channel_id") or "").strip()
-    thread_ts = str(ev.get("thread_ts") or ev.get("ts") or payload.get("thread_ts") or "").strip()
+    thread_ts = str(
+        ev.get("thread_ts")
+        or msg_map.get("thread_ts")
+        or msg_map.get("ts")
+        or ev.get("ts")
+        or payload.get("thread_ts")
+        or ""
+    ).strip()
 
     if not channel_id or not thread_ts:
         await complete_webhook_event(db, event_id, tenant_id=tenant_id)
@@ -189,7 +201,7 @@ async def ingest_slack_event_in_session(
         await complete_webhook_event(db, event_id, tenant_id=tenant_id)
         return "noop:unlinked_slack_integration"
 
-    incoming_version = extract_slack_event_version(payload)
+    incoming_version = extract_entity_version("slack", payload)
     if incoming_version is None:
         await complete_webhook_event(db, event_id, tenant_id=tenant_id)
         return "noop:missing_slack_event_ts"

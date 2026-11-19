@@ -51,6 +51,9 @@ async def handle_jira_event(db: AsyncSession, event: Any, tenant_id: uuid.UUID) 
         integration_id=event.integration_id,
     )
 
+    if not applied:
+        return f"noop:stale_issue_version:{issue.external_key}"
+
     if applied and (issue.issue_type or "").lower() == "incident":
         if (issue.status or "").strip().lower() in CANCELLED_STATUSES:
             await unlink_cancelled_incident(db, issue)

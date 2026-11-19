@@ -22,6 +22,7 @@ logger = logging.getLogger("app.auth.middleware")
 PUBLIC_PATHS = frozenset(
     {
         "/health",
+        "/metrics",
         "/docs",
         "/docs/oauth2-redirect",
         "/redoc",
