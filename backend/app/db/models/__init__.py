@@ -46,7 +46,7 @@ from .models import (
     ContributorPseudonymSalt,
     AuditLog,
     Invitation,
-    MobileDevice
+    MobileDevice,
 )
 
 __all__ = [
@@ -97,5 +97,5 @@ __all__ = [
     "ProcessedOutboxEvent",
     "ContributorPseudonymSalt",
     "AuditLog",
-    "MobileDevice"
+    "MobileDevice",
 ]

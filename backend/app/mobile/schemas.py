@@ -6,6 +6,7 @@ import uuid
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 
+
 class RegisterMobileDeviceRequest(BaseModel):
     """Request payload for POST /api/v1/mobile/devices."""
 
@@ -44,6 +45,7 @@ class RegisterMobileDeviceRequest(BaseModel):
                 raise ValueError(f"{info.field_name} must not be blank")
             return normalized
         return value
+
 
 class RegisterMobileDeviceResponse(BaseModel):
     """Device metadata returned after registration; excludes the FCM token and owner IDs."""

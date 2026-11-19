@@ -1,13 +1,15 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.auth.dependencies import get_current_user
+from app.auth.permissions import Permission, require_permission
 from app.auth.schemas import TokenClaims
 from app.db.session import get_tenant_db
 from .schemas import RegisterMobileDeviceRequest, RegisterMobileDeviceResponse
 from .service import resolve_or_create_mobile_device, delete_mobile_device
 
 mobile_router = APIRouter(prefix="/api/v1/mobile", tags=["Mobile & FCM"])
+require_mobile_device_management = require_permission(Permission.MANAGE_OWN_MOBILE_DEVICES)
+
 
 @mobile_router.post(
     "/devices",
@@ -23,7 +25,7 @@ mobile_router = APIRouter(prefix="/api/v1/mobile", tags=["Mobile & FCM"])
 )
 async def register_mobile_device(
     payload: RegisterMobileDeviceRequest,
-    user: TokenClaims = Depends(get_current_user),
+    user: TokenClaims = Depends(require_mobile_device_management),
     db: AsyncSession = Depends(get_tenant_db),
 ) -> RegisterMobileDeviceResponse:
     """Registers a new mobile client."""
@@ -33,7 +35,8 @@ async def register_mobile_device(
             detail="User ID claim is required to register a new mobile device.",
         )
 
-    return await resolve_or_create_mobile_device(db,
+    return await resolve_or_create_mobile_device(
+        db,
         user.tenant_uuid,
         user.user_id,
         payload,
@@ -52,7 +55,7 @@ async def register_mobile_device(
 )
 async def remove_mobile_device(
     token: str,
-    user: TokenClaims = Depends(get_current_user),
+    user: TokenClaims = Depends(require_mobile_device_management),
     db: AsyncSession = Depends(get_tenant_db),
 ):
     """Removes existing mobile client by its FCM token."""

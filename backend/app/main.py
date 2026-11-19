@@ -78,6 +78,7 @@ app.include_router(adr_router)
 # Mobile FCM token registration endpoints (SCRUM-494)
 app.include_router(mobile_router)
 
+
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}
