@@ -75,23 +75,23 @@ The test suite leverages pre-seeded test personas configured in the Keycloak tes
 
 ## 3. Representative Role-Access Scenarios Matrix (7 Roles)
 
-Below is the definitive scenario matrix mapping representative allowed and denied actions for all seven roles to the authoritative [Role-Permission Matrix](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--13-actions) and machine-readable [`roles-permissions.json`](roles-permissions.json):
+Below is the definitive scenario matrix mapping representative allowed and denied actions for all seven roles to the authoritative [Role-Permission Matrix](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--15-actions) and machine-readable [`roles-permissions.json`](roles-permissions.json):
 
 | Scenario ID | Role Under Test | Action Evaluated | Matrix Decision | Target Endpoint & Method | Expected API Status Code | Expected UI Visibility & Client Outcome | Automated Test Link |
 | :--- | :--- | :--- | :---: | :--- | :---: | :--- | :--- |
-| **`TC-RBAC-DEV-001`** | `DEVELOPER` | [`TRIGGER_REFACTOR_ANALYSIS`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--13-actions) | **`ALLOW`** | `POST /api/v1/refactoring/projects/{id}/analyze` | **`501 Not Implemented`** / **`200 OK`** | Navigation link `nav-link-refactoring-verification` is visible; refactoring trigger button is rendered in DOM. | `test_role_access_scenarios.py` $\rightarrow$ `test_developer_allowed_trigger_refactor_analysis` |
-| **`TC-RBAC-DEV-002`** | `DEVELOPER` | [`MANAGE_WEBHOOK_INTEGRATIONS`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--13-actions) | **`DENY`** | `GET /api/v1/integrations` | **`403 Forbidden`** | `ADMINISTRATION` header and `nav-link-integrations` are hidden; direct URL navigation to `/integrations` redirects to `/`. | `test_role_access_scenarios.py` $\rightarrow$ `test_developer_denied_manage_webhook_integrations` |
-| **`TC-RBAC-SM-001`** | `SCRUM_MASTER` | [`VIEW_SPRINT_BURNDOWN_WIP`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--13-actions) | **`ALLOW`** | `GET /api/v1/projects/{id}/sprints/burndown` | **`501 Not Implemented`** / **`200 OK`** | Navigation link `nav-link-sprint-wip` is visible; burndown and WIP congestion graphs render. | `test_role_access_scenarios.py` $\rightarrow$ `test_scrum_master_allowed_view_sprint_burndown` |
-| **`TC-RBAC-SM-002`** | `SCRUM_MASTER` | [`TRIGGER_REFACTOR_ANALYSIS`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--13-actions) | **`DENY`** | `POST /api/v1/refactoring/projects/{id}/analyze` | **`403 Forbidden`** | Trigger refactor action button is not rendered in DOM (purged via `<Can do="...">` check). | `test_role_access_scenarios.py` $\rightarrow$ `test_scrum_master_denied_trigger_refactor_analysis` |
-| **`TC-RBAC-PM-001`** | `PROJECT_MANAGER` | [`RECEIVE_SCOPE_CREEP_ALERT`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--13-actions) | **`ALLOW`** | `GET /api/v1/projects/{id}/scope-alerts` | **`501 Not Implemented`** / **`200 OK`** | Navigation link `nav-link-scope-creep` is visible; scope alert badges and warning dots render in sidebar. | `test_role_access_scenarios.py` $\rightarrow$ `test_project_manager_allowed_scope_creep_alert` |
-| **`TC-RBAC-PM-002`** | `PROJECT_MANAGER` | [`REASSIGN_PR_REVIEWER_MOBILE`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--13-actions) | **`DENY`** | `POST /api/v1/projects/{id}/pull-requests/{pr_id}/reassign-reviewer` | **`403 Forbidden`** | Operational reviewer reassignment button is hidden on PR cards; BA checklist item 2 enforced. | `test_role_access_scenarios.py` $\rightarrow$ `test_project_manager_denied_reassign_pr_reviewer` |
-| **`TC-RBAC-SA-001`** | `SOLUTION_ARCHITECT` | [`PUBLISH_GLOBAL_ADR`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--13-actions) | **`ALLOW`** | `POST /api/v1/adrs/{id}/publish-global` | **`501 Not Implemented`** / **`200 OK`** | Navigation link `nav-link-adr-governance` is visible; global ADR promotion sign-off gate is accessible. | `test_role_access_scenarios.py` $\rightarrow$ `test_solution_architect_allowed_publish_global_adr` |
-| **`TC-RBAC-SA-002`** | `SOLUTION_ARCHITECT` | [`MANAGE_WEBHOOK_INTEGRATIONS`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--13-actions) | **`DENY`** | `GET /api/v1/integrations` | **`403 Forbidden`** | Navigation link `nav-link-integrations` is not visible; direct navigation to `/integrations` redirects to `/`. | `test_role_access_scenarios.py` $\rightarrow$ `test_solution_architect_denied_manage_webhooks` |
-| **`TC-RBAC-DD-001`** | `DELIVERY_DIRECTOR` | [`VIEW_PORTFOLIO_OVERVIEW`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--13-actions) | **`ALLOW`** | `GET /api/v1/dora/portfolio` | **`501 Not Implemented`** / **`200 OK`** | Executive portfolio dashboard, cross-project deadline risks, and delivery health overview are visible. | `test_role_access_scenarios.py` $\rightarrow$ `test_delivery_director_allowed_view_portfolio` |
-| **`TC-RBAC-DD-002`** | `DELIVERY_DIRECTOR` | [`TRIGGER_REFACTOR_ANALYSIS`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--13-actions) | **`DENY`** | `POST /api/v1/refactoring/projects/{id}/analyze` | **`403 Forbidden`** | Refactoring trigger controls are hidden in code telemetry screens. | `test_role_access_scenarios.py` $\rightarrow$ `test_delivery_director_denied_trigger_refactor` |
-| **`TC-RBAC-TM-001`** | `TOP_MANAGEMENT` | [`VIEW_PORTFOLIO_OVERVIEW`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--13-actions) | **`ALLOW`** | `GET /api/v1/dora/portfolio` | **`501 Not Implemented`** / **`200 OK`** | Strategic C-level executive summary, DORA benchmarks, and cross-project velocity trends are visible. | `test_role_access_scenarios.py` $\rightarrow$ `test_top_management_allowed_view_portfolio` |
-| **`TC-RBAC-TM-002`** | `TOP_MANAGEMENT` | [`VIEW_SPRINT_BURNDOWN_WIP`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--13-actions) | **`DENY`** | `GET /api/v1/projects/{id}/sprints/burndown` | **`403 Forbidden`** | Navigation link `nav-link-sprint-wip` is not visible; operational sprint WIP charts are restricted. | `test_role_access_scenarios.py` $\rightarrow$ `test_top_management_denied_view_sprint_burndown` |
-| **`TC-RBAC-TA-001`** | `TENANT_ADMIN` | [`MANAGE_WEBHOOK_INTEGRATIONS`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--13-actions) | **`ALLOW`** | `GET /api/v1/integrations` | **`200 OK`** | `ADMINISTRATION` section header and `nav-link-integrations` are visible; webhook management table renders. | `test_role_access_scenarios.py` $\rightarrow$ `test_tenant_admin_allowed_manage_integrations` |
+| **`TC-RBAC-DEV-001`** | `DEVELOPER` | [`TRIGGER_REFACTOR_ANALYSIS`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--15-actions) | **`ALLOW`** | `POST /api/v1/refactoring/projects/{id}/analyze` | **`501 Not Implemented`** / **`200 OK`** | Navigation link `nav-link-refactoring-verification` is visible; refactoring trigger button is rendered in DOM. | `test_role_access_scenarios.py` $\rightarrow$ `test_developer_allowed_trigger_refactor_analysis` |
+| **`TC-RBAC-DEV-002`** | `DEVELOPER` | [`MANAGE_WEBHOOK_INTEGRATIONS`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--15-actions) | **`DENY`** | `GET /api/v1/integrations` | **`403 Forbidden`** | `ADMINISTRATION` header and `nav-link-integrations` are hidden; direct URL navigation to `/integrations` redirects to `/`. | `test_role_access_scenarios.py` $\rightarrow$ `test_developer_denied_manage_webhook_integrations` |
+| **`TC-RBAC-SM-001`** | `SCRUM_MASTER` | [`VIEW_SPRINT_BURNDOWN_WIP`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--15-actions) | **`ALLOW`** | `GET /api/v1/projects/{id}/sprints/burndown` | **`501 Not Implemented`** / **`200 OK`** | Navigation link `nav-link-sprint-wip` is visible; burndown and WIP congestion graphs render. | `test_role_access_scenarios.py` $\rightarrow$ `test_scrum_master_allowed_view_sprint_burndown` |
+| **`TC-RBAC-SM-002`** | `SCRUM_MASTER` | [`TRIGGER_REFACTOR_ANALYSIS`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--15-actions) | **`DENY`** | `POST /api/v1/refactoring/projects/{id}/analyze` | **`403 Forbidden`** | Trigger refactor action button is not rendered in DOM (purged via `<Can do="...">` check). | `test_role_access_scenarios.py` $\rightarrow$ `test_scrum_master_denied_trigger_refactor_analysis` |
+| **`TC-RBAC-PM-001`** | `PROJECT_MANAGER` | [`RECEIVE_SCOPE_CREEP_ALERT`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--15-actions) | **`ALLOW`** | `GET /api/v1/projects/{id}/scope-alerts` | **`501 Not Implemented`** / **`200 OK`** | Navigation link `nav-link-scope-creep` is visible; scope alert badges and warning dots render in sidebar. | `test_role_access_scenarios.py` $\rightarrow$ `test_project_manager_allowed_scope_creep_alert` |
+| **`TC-RBAC-PM-002`** | `PROJECT_MANAGER` | [`REASSIGN_PR_REVIEWER_MOBILE`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--15-actions) | **`DENY`** | `POST /api/v1/projects/{id}/pull-requests/{pr_id}/reassign-reviewer` | **`403 Forbidden`** | Operational reviewer reassignment button is hidden on PR cards; BA checklist item 2 enforced. | `test_role_access_scenarios.py` $\rightarrow$ `test_project_manager_denied_reassign_pr_reviewer` |
+| **`TC-RBAC-SA-001`** | `SOLUTION_ARCHITECT` | [`PUBLISH_GLOBAL_ADR`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--15-actions) | **`ALLOW`** | `POST /api/v1/adrs/{id}/publish-global` | **`501 Not Implemented`** / **`200 OK`** | Navigation link `nav-link-adr-governance` is visible; global ADR promotion sign-off gate is accessible. | `test_role_access_scenarios.py` $\rightarrow$ `test_solution_architect_allowed_publish_global_adr` |
+| **`TC-RBAC-SA-002`** | `SOLUTION_ARCHITECT` | [`MANAGE_WEBHOOK_INTEGRATIONS`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--15-actions) | **`DENY`** | `GET /api/v1/integrations` | **`403 Forbidden`** | Navigation link `nav-link-integrations` is not visible; direct navigation to `/integrations` redirects to `/`. | `test_role_access_scenarios.py` $\rightarrow$ `test_solution_architect_denied_manage_webhooks` |
+| **`TC-RBAC-DD-001`** | `DELIVERY_DIRECTOR` | [`VIEW_PORTFOLIO_OVERVIEW`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--15-actions) | **`ALLOW`** | `GET /api/v1/dora/portfolio` | **`501 Not Implemented`** / **`200 OK`** | Executive portfolio dashboard, cross-project deadline risks, and delivery health overview are visible. | `test_role_access_scenarios.py` $\rightarrow$ `test_delivery_director_allowed_view_portfolio` |
+| **`TC-RBAC-DD-002`** | `DELIVERY_DIRECTOR` | [`TRIGGER_REFACTOR_ANALYSIS`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--15-actions) | **`DENY`** | `POST /api/v1/refactoring/projects/{id}/analyze` | **`403 Forbidden`** | Refactoring trigger controls are hidden in code telemetry screens. | `test_role_access_scenarios.py` $\rightarrow$ `test_delivery_director_denied_trigger_refactor` |
+| **`TC-RBAC-TM-001`** | `TOP_MANAGEMENT` | [`VIEW_PORTFOLIO_OVERVIEW`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--15-actions) | **`ALLOW`** | `GET /api/v1/dora/portfolio` | **`501 Not Implemented`** / **`200 OK`** | Strategic C-level executive summary, DORA benchmarks, and cross-project velocity trends are visible. | `test_role_access_scenarios.py` $\rightarrow$ `test_top_management_allowed_view_portfolio` |
+| **`TC-RBAC-TM-002`** | `TOP_MANAGEMENT` | [`VIEW_SPRINT_BURNDOWN_WIP`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--15-actions) | **`DENY`** | `GET /api/v1/projects/{id}/sprints/burndown` | **`403 Forbidden`** | Navigation link `nav-link-sprint-wip` is not visible; operational sprint WIP charts are restricted. | `test_role_access_scenarios.py` $\rightarrow$ `test_top_management_denied_view_sprint_burndown` |
+| **`TC-RBAC-TA-001`** | `TENANT_ADMIN` | [`MANAGE_WEBHOOK_INTEGRATIONS`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--15-actions) | **`ALLOW`** | `GET /api/v1/integrations` | **`200 OK`** | `ADMINISTRATION` section header and `nav-link-integrations` are visible; webhook management table renders. | `test_role_access_scenarios.py` $\rightarrow$ `test_tenant_admin_allowed_manage_integrations` |
 | **`TC-RBAC-TA-002`** | `TENANT_ADMIN` | *(Cross-Tenant Boundary Isolation)* | **`DENY`** *(RLS)* | `GET /api/v1/integrations` *(targeting Tenant Beta)* | **`0 rows returned`** / **`404 Not Found`** | Tenant Beta integration secrets and webhooks are completely invisible to Tenant Alpha Administrator. | `test_tenant_boundary_adversarial.py` $\rightarrow$ `test_cross_tenant_read_by_id_returns_404` |
 
 ---
@@ -104,7 +104,7 @@ Below is the definitive scenario matrix mapping representative allowed and denie
 - **Keycloak Fixture:** Username `alpha_dev`, Password `dev123`, Realm Roles: `["DEVELOPER"]`.  
 
 #### Scenario 1.1: Allowed Action — `TRIGGER_REFACTOR_ANALYSIS` (`TC-RBAC-DEV-001`)
-- **Matrix Entry:** [`TRIGGER_REFACTOR_ANALYSIS`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--13-actions) (`ALLOW`).  
+- **Matrix Entry:** [`TRIGGER_REFACTOR_ANALYSIS`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--15-actions) (`ALLOW`).
 - **Preconditions:**  
   1. Authenticated as `DEVELOPER` within target tenant.  
   2. Git commit SHA matches SCIP index metadata SHA (`repository_head_sha == scip_index_metadata_sha`).  
@@ -124,7 +124,7 @@ Below is the definitive scenario matrix mapping representative allowed and denie
   - Page `/refactoring-verification` renders active "Trigger Refactor Analysis" button.  
 
 #### Scenario 1.2: Denied Action — `MANAGE_WEBHOOK_INTEGRATIONS` (`TC-RBAC-DEV-002`)
-- **Matrix Entry:** [`MANAGE_WEBHOOK_INTEGRATIONS`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--13-actions) (`DENY`).  
+- **Matrix Entry:** [`MANAGE_WEBHOOK_INTEGRATIONS`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--15-actions) (`DENY`).
 - **Rationale:** Webhook secrets and OAuth credentials require `TENANT_ADMIN` privileges; developers must not inspect or mutate tenant connection tokens.  
 - **Actions / API Request:**
   ```http
@@ -164,7 +164,7 @@ Below is the definitive scenario matrix mapping representative allowed and denie
 - **Keycloak Fixture:** Username `alpha_scrum`, Password `scrum123`, Realm Roles: `["SCRUM_MASTER"]`.  
 
 #### Scenario 2.1: Allowed Action — `VIEW_SPRINT_BURNDOWN_WIP` (`TC-RBAC-SM-001`)
-- **Matrix Entry:** [`VIEW_SPRINT_BURNDOWN_WIP`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--13-actions) (`ALLOW`).  
+- **Matrix Entry:** [`VIEW_SPRINT_BURNDOWN_WIP`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--15-actions) (`ALLOW`).
 - **Actions / API Request:**
   ```http
   GET /api/v1/projects/11111111-1111-1111-1111-111111111111/sprints/burndown
@@ -178,7 +178,7 @@ Below is the definitive scenario matrix mapping representative allowed and denie
   - Burndown graphs, velocity metrics, and WIP limit congestion alerts are visible.  
 
 #### Scenario 2.2: Denied Action — `TRIGGER_REFACTOR_ANALYSIS` (`TC-RBAC-SM-002`)
-- **Matrix Entry:** [`TRIGGER_REFACTOR_ANALYSIS`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--13-actions) (`DENY`).  
+- **Matrix Entry:** [`TRIGGER_REFACTOR_ANALYSIS`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--15-actions) (`DENY`).
 - **Rationale:** Triggering automated code refactoring and sandbox AST mutation runs is strictly restricted to engineering developers and architects.  
 - **Actions / API Request:**
   ```http
@@ -216,7 +216,7 @@ Below is the definitive scenario matrix mapping representative allowed and denie
 - **Keycloak Fixture:** Username `alpha_pm`, Password `pm123`, Realm Roles: `["PROJECT_MANAGER"]`.  
 
 #### Scenario 3.1: Allowed Action — `RECEIVE_SCOPE_CREEP_ALERT` (`TC-RBAC-PM-001`)
-- **Matrix Entry:** [`RECEIVE_SCOPE_CREEP_ALERT`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--13-actions) (`ALLOW`).  
+- **Matrix Entry:** [`RECEIVE_SCOPE_CREEP_ALERT`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--15-actions) (`ALLOW`).
 - **Actions / API Request:**
   ```http
   GET /api/v1/projects/11111111-1111-1111-1111-111111111111/scope-alerts
@@ -230,7 +230,7 @@ Below is the definitive scenario matrix mapping representative allowed and denie
   - The `Risks & Alerts` section displays red alert dots (`hasAlertDot: true`) and notification badges.  
 
 #### Scenario 3.2: Denied Action — `REASSIGN_PR_REVIEWER_MOBILE` (`TC-RBAC-PM-002`)
-- **Matrix Entry:** [`REASSIGN_PR_REVIEWER_MOBILE`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--13-actions) (`DENY`).  
+- **Matrix Entry:** [`REASSIGN_PR_REVIEWER_MOBILE`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--15-actions) (`DENY`).
 - **Rationale:** Confirmed under BA Checklist Item 2 (`docs/roles-permissions.md#6-business-analyst-ba-review-checklist`): Operational PR reviewer reassignments are reserved for agile facilitators (Scrum Masters) and delivery executives (Delivery Directors).  
 - **Actions / API Request:**
   ```http
@@ -271,7 +271,7 @@ Below is the definitive scenario matrix mapping representative allowed and denie
 - **Keycloak Fixture:** Username `alpha_arch`, Password `arch123`, Realm Roles: `["SOLUTION_ARCHITECT"]`.  
 
 #### Scenario 4.1: Allowed Action — `PUBLISH_GLOBAL_ADR` (`TC-RBAC-SA-001`)
-- **Matrix Entry:** [`PUBLISH_GLOBAL_ADR`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--13-actions) (`ALLOW`).  
+- **Matrix Entry:** [`PUBLISH_GLOBAL_ADR`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--15-actions) (`ALLOW`).
 - **Preconditions:**  
   1. Mandatory sign-off gate: caller holds `SOLUTION_ARCHITECT` or `TENANT_ADMIN`.  
   2. Record precondition: `assert adr.status == 'approved' and adr.sanitization_verified is True`.  
@@ -288,7 +288,7 @@ Below is the definitive scenario matrix mapping representative allowed and denie
   - Page `/adr-governance` renders the "Publish to Global" action controls.  
 
 #### Scenario 4.2: Denied Action — `MANAGE_WEBHOOK_INTEGRATIONS` (`TC-RBAC-SA-002`)
-- **Matrix Entry:** [`MANAGE_WEBHOOK_INTEGRATIONS`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--13-actions) (`DENY`).  
+- **Matrix Entry:** [`MANAGE_WEBHOOK_INTEGRATIONS`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--15-actions) (`DENY`).
 - **Rationale:** Solution Architects govern software architecture and ADRs, but do not administer tenant infrastructure credentials, webhook secrets, or KMS keys.  
 - **Actions / API Request:**
   ```http
@@ -327,7 +327,7 @@ Below is the definitive scenario matrix mapping representative allowed and denie
 - **Keycloak Fixture:** Username `alpha_director`, Password `director123`, Realm Roles: `["DELIVERY_DIRECTOR"]` *(and `beta_exec` with `["DELIVERY_EXEC"]`)*.  
 
 #### Scenario 5.1: Allowed Action — `VIEW_PORTFOLIO_OVERVIEW` (`TC-RBAC-DD-001`)
-- **Matrix Entry:** [`VIEW_PORTFOLIO_OVERVIEW`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--13-actions) (`ALLOW`).  
+- **Matrix Entry:** [`VIEW_PORTFOLIO_OVERVIEW`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--15-actions) (`ALLOW`).
 - **Actions / API Request:**
   ```http
   GET /api/v1/dora/portfolio
@@ -340,7 +340,7 @@ Below is the definitive scenario matrix mapping representative allowed and denie
   - Cross-project executive delivery metrics, consolidated DORA benchmarks, and SLA risk summaries are visible on the dashboard.  
 
 #### Scenario 5.2: Denied Action — `TRIGGER_REFACTOR_ANALYSIS` (`TC-RBAC-DD-002`)
-- **Matrix Entry:** [`TRIGGER_REFACTOR_ANALYSIS`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--13-actions) (`DENY`).  
+- **Matrix Entry:** [`TRIGGER_REFACTOR_ANALYSIS`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--15-actions) (`DENY`).
 - **Rationale:** Delivery Directors focus on portfolio delivery health and SLA interventions; initiating sandbox code refactor transformations is restricted to engineering developers and architects.  
 - **Actions / API Request:**
   ```http
@@ -378,7 +378,7 @@ Below is the definitive scenario matrix mapping representative allowed and denie
 - **Keycloak Fixture:** Username `alpha_top`, Password `top123`, Realm Roles: `["TOP_MANAGEMENT"]`.  
 
 #### Scenario 6.1: Allowed Action — `VIEW_PORTFOLIO_OVERVIEW` (`TC-RBAC-TM-001`)
-- **Matrix Entry:** [`VIEW_PORTFOLIO_OVERVIEW`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--13-actions) (`ALLOW`).  
+- **Matrix Entry:** [`VIEW_PORTFOLIO_OVERVIEW`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--15-actions) (`ALLOW`).
 - **Actions / API Request:**
   ```http
   GET /api/v1/dora/portfolio
@@ -391,7 +391,7 @@ Below is the definitive scenario matrix mapping representative allowed and denie
   - Executive summary and strategic portfolio DORA benchmarks render on `/`.  
 
 #### Scenario 6.2: Denied Action — `VIEW_SPRINT_BURNDOWN_WIP` (`TC-RBAC-TM-002`)
-- **Matrix Entry:** [`VIEW_SPRINT_BURNDOWN_WIP`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--13-actions) (`DENY`).  
+- **Matrix Entry:** [`VIEW_SPRINT_BURNDOWN_WIP`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--15-actions) (`DENY`).
 - **Rationale:** Top Management maintains high-level read-only portfolio governance; team-level WIP limits, ticket burndowns, and operational task reassignments are strictly hidden to prevent micromanagement and clutter (BA Checklist Item 3).  
 - **Actions / API Request:**
   ```http
@@ -429,7 +429,7 @@ Below is the definitive scenario matrix mapping representative allowed and denie
 - **Keycloak Fixture:** Username `alpha_admin`, Password `admin123`, Realm Roles: `["TENANT_ADMIN"]`.  
 
 #### Scenario 7.1: Allowed Action — `MANAGE_WEBHOOK_INTEGRATIONS` (`TC-RBAC-TA-001`)
-- **Matrix Entry:** [`MANAGE_WEBHOOK_INTEGRATIONS`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--13-actions) (`ALLOW`).  
+- **Matrix Entry:** [`MANAGE_WEBHOOK_INTEGRATIONS`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--15-actions) (`ALLOW`).
 - **Actions / API Request:**
   ```http
   GET /api/v1/integrations
@@ -493,7 +493,7 @@ Below is the definitive scenario matrix mapping representative allowed and denie
 | Ticket Requirement / Acceptance Criteria | Status | Verification Evidence |
 | :--- | :---: | :--- |
 | **AC 1: All seven roles are covered** | **`PASS`** | Detailed specifications, representative allowed/denied actions, expected status codes, and UI visibility provided for all 7 roles: `DEVELOPER`, `SCRUM_MASTER`, `PROJECT_MANAGER`, `SOLUTION_ARCHITECT`, `DELIVERY_DIRECTOR`, `TOP_MANAGEMENT`, and `TENANT_ADMIN`. |
-| **AC 2: Scenarios link to matrix entries** | **`PASS`** | Every scenario explicitly links to its matrix entry in [`docs/roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--13-actions`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--13-actions) and matches machine-readable rules in [`docs/roles-permissions.json`](roles-permissions.json). |
+| **AC 2: Scenarios link to matrix entries** | **`PASS`** | Every scenario explicitly links to its matrix entry in [`docs/roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--15-actions`](roles-permissions.md#3-authoritative-role-permission-matrix-7-roles--15-actions) and matches machine-readable rules in [`docs/roles-permissions.json`](roles-permissions.json). |
 | **AC 3: Status codes & UI visibility specified** | **`PASS`** | Each scenario documents exact HTTP status codes (`200 OK`, `501 Not Implemented`, `403 Forbidden`, `401 Unauthorized`), response JSON schemas, sidebar element testids, and route guard redirect behaviors. |
 | **AC 4: Automated Test Execution** | **`PASS`** | All scenarios are covered by automated tests in `backend/tests/test_role_access_scenarios.py`, `backend/tests/test_permission_enforcement.py`, and `web/e2e/rbac-permissions.spec.ts`. |
 

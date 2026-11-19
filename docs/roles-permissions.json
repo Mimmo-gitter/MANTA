@@ -46,7 +46,9 @@
       "id": "DELIVERY_DIRECTOR",
       "display_name": "Delivery Director",
       "description": "Delivery executive responsible for portfolio-wide delivery health oversight, bottleneck intervention, and mobile one-tap reviewer reassignment.",
-      "aliases": ["DELIVERY_EXEC"],
+      "aliases": [
+        "DELIVERY_EXEC"
+      ],
       "source": "SRS §2.3, Architecture §6.2, §11.2"
     },
     {
@@ -202,6 +204,16 @@
         "GDPR erasure permanently purges user salt in KMS and overwrites PII with [DELETED]"
       ],
       "source": "SRS §2.3, §3.2.11, Architecture §10.3"
+    },
+    {
+      "id": "MANAGE_OWN_MOBILE_DEVICES",
+      "domain": "Mobile & Notifications",
+      "description": "Register, refresh, or remove the authenticated user's own mobile device registrations for push notifications.",
+      "preconditions": [
+        "Authenticated tenant and user identity verified via JWT",
+        "Operation is scoped to the authenticated user's own device registrations"
+      ],
+      "source": "SCRUM_494"
     }
   ],
   "matrix": {
@@ -303,6 +315,13 @@
         "condition": null,
         "needs_ba_review": false,
         "notes": "Direct deployment ingestion is restricted to Tenant Admin / CI automation principals."
+      },
+      "MANAGE_OWN_MOBILE_DEVICES": {
+        "decision": "ALLOW",
+        "source": "SCRUM_494",
+        "condition": "authenticated_user_devices_only",
+        "needs_ba_review": false,
+        "notes": "All roles may manage only their own mobile device registrations."
       }
     },
     "SCRUM_MASTER": {
@@ -403,6 +422,13 @@
         "condition": null,
         "needs_ba_review": false,
         "notes": "Direct deployment ingestion is restricted to Tenant Admin / CI automation principals."
+      },
+      "MANAGE_OWN_MOBILE_DEVICES": {
+        "decision": "ALLOW",
+        "source": "SCRUM_494",
+        "condition": "authenticated_user_devices_only",
+        "needs_ba_review": false,
+        "notes": "All roles may manage only their own mobile device registrations."
       }
     },
     "PROJECT_MANAGER": {
@@ -503,6 +529,13 @@
         "condition": null,
         "needs_ba_review": false,
         "notes": "Direct deployment ingestion is restricted to Tenant Admin / CI automation principals."
+      },
+      "MANAGE_OWN_MOBILE_DEVICES": {
+        "decision": "ALLOW",
+        "source": "SCRUM_494",
+        "condition": "authenticated_user_devices_only",
+        "needs_ba_review": false,
+        "notes": "All roles may manage only their own mobile device registrations."
       }
     },
     "SOLUTION_ARCHITECT": {
@@ -603,6 +636,13 @@
         "condition": null,
         "needs_ba_review": false,
         "notes": "Direct deployment ingestion is restricted to Tenant Admin / CI automation principals."
+      },
+      "MANAGE_OWN_MOBILE_DEVICES": {
+        "decision": "ALLOW",
+        "source": "SCRUM_494",
+        "condition": "authenticated_user_devices_only",
+        "needs_ba_review": false,
+        "notes": "All roles may manage only their own mobile device registrations."
       }
     },
     "DELIVERY_DIRECTOR": {
@@ -703,6 +743,13 @@
         "condition": null,
         "needs_ba_review": false,
         "notes": "Direct deployment ingestion is restricted to Tenant Admin / CI automation principals."
+      },
+      "MANAGE_OWN_MOBILE_DEVICES": {
+        "decision": "ALLOW",
+        "source": "SCRUM_494",
+        "condition": "authenticated_user_devices_only",
+        "needs_ba_review": false,
+        "notes": "All roles may manage only their own mobile device registrations."
       }
     },
     "TOP_MANAGEMENT": {
@@ -803,6 +850,13 @@
         "condition": null,
         "needs_ba_review": false,
         "notes": "Top Management maintains strategic read-only oversight; direct deployment ingestion is denied."
+      },
+      "MANAGE_OWN_MOBILE_DEVICES": {
+        "decision": "ALLOW",
+        "source": "SCRUM_494",
+        "condition": "authenticated_user_devices_only",
+        "needs_ba_review": false,
+        "notes": "All roles may manage only their own mobile device registrations."
       }
     },
     "TENANT_ADMIN": {
@@ -903,6 +957,13 @@
         "condition": null,
         "needs_ba_review": false,
         "notes": "Authorized to ingest deployment outcomes directly via REST API or CI/CD automation principals."
+      },
+      "MANAGE_OWN_MOBILE_DEVICES": {
+        "decision": "ALLOW",
+        "source": "SCRUM_494",
+        "condition": "authenticated_user_devices_only",
+        "needs_ba_review": false,
+        "notes": "All roles may manage only their own mobile device registrations."
       }
     }
   }
