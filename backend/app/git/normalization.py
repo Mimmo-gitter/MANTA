@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
-from app.webhooks.versioning import extract_github_pr_version
+from app.webhooks.versioning import extract_entity_version
 
 _TZ_NO_COLON = re.compile(r"([+-]\d{2})(\d{2})$")
 HANDLED_PR_ACTIONS = {"opened", "synchronize", "reopened", "closed"}
@@ -182,5 +182,5 @@ def normalize_pull_request(payload: dict[str, Any]) -> NormalizedPullRequest:
         merged_at=parse_dt(pr.get("merged_at")),
         closed_at=parse_dt(pr.get("closed_at")),
         author_login=(pr.get("user") or {}).get("login"),
-        incoming_version=extract_github_pr_version(payload),
+        incoming_version=extract_entity_version("github", payload),
     )

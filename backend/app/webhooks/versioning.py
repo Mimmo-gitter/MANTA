@@ -26,10 +26,20 @@ from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.models import CommunicationEvent, Issue, PullRequest
+from app.webhooks.metrics import (
+    DROPPED_STALE_EVENT_TOTAL,
+    SUPPORTED_STALE_EVENT_PROVIDERS,
+    TABLE_TO_STALE_EVENT_PROVIDER,
+    dropped_stale_event_total,
+    get_dropped_stale_event_count,
+    record_dropped_stale_event,
+)
 
 logger = logging.getLogger("app.webhooks.versioning")
 
 _TZ_NO_COLON = re.compile(r"([+-]\d{2})(\d{2})$")
+_NUMERIC_EPOCH_RE = re.compile(r"^[+-]?\d+(?:\.\d+)?$")
+_UTC_EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 VersionedTableName = Literal["pull_requests", "issues", "communication_events"]
 
@@ -84,26 +94,49 @@ def parse_utc_datetime(value: Any) -> Optional[datetime]:
 
 
 def datetime_to_epoch_ms(dt: datetime) -> int:
-    """Convert a datetime to UTC epoch milliseconds using Decimal arithmetic."""
+    """Convert a datetime to exact UTC epoch milliseconds using integer arithmetic."""
     utc_dt = dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
     utc_dt = utc_dt.astimezone(timezone.utc)
-    return int((Decimal(str(utc_dt.timestamp())) * Decimal("1000")).to_integral_value())
+    delta = utc_dt - _UTC_EPOCH
+    return (delta.days * 86_400 + delta.seconds) * 1000 + (delta.microseconds // 1000)
 
 
 def parse_timestamp_to_epoch_ms(value: Any) -> Optional[int]:
-    """Parse an ISO-8601 timestamp or numeric epoch value into UTC epoch milliseconds."""
-    if value is None:
+    """Parse an ISO-8601 timestamp, datetime, or numeric epoch value into positive UTC epoch ms."""
+    if value is None or isinstance(value, bool):
         return None
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        if value <= 0:
+    if isinstance(value, datetime):
+        ms = datetime_to_epoch_ms(value)
+        return ms if ms > 0 else None
+    if isinstance(value, (int, float, Decimal)):
+        try:
+            dec = Decimal(str(value))
+        except InvalidOperation:
             return None
-        return value * 1000 if value < 1_000_000_000_000 else value
+        if not dec.is_finite() or dec <= 0:
+            return None
+        if dec < Decimal("1000000000000"):
+            return int((dec * Decimal("1000")).to_integral_value())
+        return int(dec.to_integral_value())
+    if isinstance(value, str):
+        raw = value.strip()
+        if not raw:
+            return None
+        if _NUMERIC_EPOCH_RE.match(raw):
+            try:
+                dec = Decimal(raw)
+                if not dec.is_finite() or dec <= 0:
+                    return None
+                if dec < Decimal("1000000000000"):
+                    return int((dec * Decimal("1000")).to_integral_value())
+                return int(dec.to_integral_value())
+            except InvalidOperation:
+                return None
     dt = parse_utc_datetime(value)
     if dt is None:
         return None
-    return datetime_to_epoch_ms(dt)
+    ms = datetime_to_epoch_ms(dt)
+    return ms if ms > 0 else None
 
 
 def parse_slack_ts_to_micros(value: Any) -> Optional[int]:
@@ -118,11 +151,11 @@ def parse_slack_ts_to_micros(value: Any) -> Optional[int]:
         return None
     try:
         dec = Decimal(raw)
-    except InvalidOperation:
+        if not dec.is_finite() or dec <= 0:
+            return None
+        return int((dec * Decimal("1000000")).to_integral_value())
+    except (InvalidOperation, ValueError, OverflowError):
         return None
-    if dec <= 0:
-        return None
-    return int((dec * Decimal("1000000")).to_integral_value())
 
 
 def _parse_positive_int(value: Any) -> Optional[int]:
@@ -137,10 +170,12 @@ def _parse_positive_int(value: Any) -> Optional[int]:
 
 def extract_github_pr_version(payload: Mapping[str, Any]) -> Optional[int]:
     """
-    SCRUM-422 Rule (GitHub PR):
+    SCRUM-422 / SCRUM-424 Rule (GitHub PR):
     Extracts monotonic version from `pull_request.updated_at` parsed to UTC epoch ms,
     falling back through `merged_at`, `closed_at`, `created_at`, or explicit `entity_version`.
     """
+    if not isinstance(payload, Mapping):
+        return None
     pr_dict = payload.get("pull_request")
     pr_map: Mapping[str, Any] = pr_dict if isinstance(pr_dict, Mapping) else {}
 
@@ -160,10 +195,12 @@ def extract_github_pr_version(payload: Mapping[str, Any]) -> Optional[int]:
 
 def extract_jira_issue_version(payload: Mapping[str, Any]) -> Optional[int]:
     """
-    SCRUM-422 Rule (Jira Issue):
+    SCRUM-422 / SCRUM-424 Rule (Jira Issue):
     Extracts `changelog.id` parsed as positive BigInteger, falling back to
     `issue.fields.updated` (or payload timestamp / created) in UTC epoch milliseconds.
     """
+    if not isinstance(payload, Mapping):
+        return None
     changelog = payload.get("changelog")
     if isinstance(changelog, Mapping):
         changelog_ver = _parse_positive_int(changelog.get("id"))
@@ -193,18 +230,27 @@ def extract_jira_issue_version(payload: Mapping[str, Any]) -> Optional[int]:
 
 def extract_slack_event_version(payload: Mapping[str, Any]) -> Optional[int]:
     """
-    SCRUM-422 Rule (Slack Event):
-    Extracts `event.event_ts` (or `payload.event_ts` / `event.ts` / `event.thread_ts`)
-    parsed via Decimal into UTC epoch microseconds. Falls back to `event_time * 1_000_000`.
+    SCRUM-422 / SCRUM-424 Rule (Slack Event):
+    Extracts `event.event_ts` (or `payload.event_ts` / `event.ts` / `event.message.edited.ts` /
+    `event.message.ts` / `event.thread_ts`) parsed via Decimal into UTC epoch microseconds.
+    Falls back to `event_time * 1_000_000`.
     """
+    if not isinstance(payload, Mapping):
+        return None
     event_dict = payload.get("event")
     event_map: Mapping[str, Any] = event_dict if isinstance(event_dict, Mapping) else {}
+    msg_dict = event_map.get("message")
+    msg_map: Mapping[str, Any] = msg_dict if isinstance(msg_dict, Mapping) else {}
+    edited_dict = msg_map.get("edited")
+    edited_map: Mapping[str, Any] = edited_dict if isinstance(edited_dict, Mapping) else {}
 
     for candidate in (
         event_map.get("event_ts"),
         payload.get("event_ts"),
         event_map.get("ts"),
         payload.get("ts"),
+        edited_map.get("ts"),
+        msg_map.get("ts"),
         event_map.get("thread_ts"),
         payload.get("thread_ts"),
     ):
@@ -281,8 +327,11 @@ async def execute_versioned_update(
             incoming_version=incoming_version,
         )
 
+    provider = TABLE_TO_STALE_EVENT_PROVIDER[table_name]
+    record_dropped_stale_event(provider)
     logger.warning(
-        "STALE_OUT_OF_ORDER_REJECTED table=%s record_id=%s tenant_id=%s incoming_version=%s",
+        "STALE_OUT_OF_ORDER_REJECTED provider=%s table=%s record_id=%s tenant_id=%s incoming_version=%s",
+        provider,
         table_name,
         record_id,
         tenant_id,
@@ -294,3 +343,23 @@ async def execute_versioned_update(
         entity_id=record_id,
         incoming_version=incoming_version,
     )
+
+
+__all__ = [
+    "DROPPED_STALE_EVENT_TOTAL",
+    "SUPPORTED_STALE_EVENT_PROVIDERS",
+    "VersionedMutationResult",
+    "VersionedTableName",
+    "datetime_to_epoch_ms",
+    "dropped_stale_event_total",
+    "execute_versioned_update",
+    "extract_entity_version",
+    "extract_github_pr_version",
+    "extract_jira_issue_version",
+    "extract_slack_event_version",
+    "get_dropped_stale_event_count",
+    "parse_slack_ts_to_micros",
+    "parse_timestamp_to_epoch_ms",
+    "parse_utc_datetime",
+    "record_dropped_stale_event",
+]

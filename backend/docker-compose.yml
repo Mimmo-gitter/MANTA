@@ -172,6 +172,7 @@ services:
       - ACTIVE_ENCRYPTION_KEY_ID=${ACTIVE_ENCRYPTION_KEY_ID:-primary}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - WORKER_HEARTBEAT_FILE=/tmp/worker.heartbeat
+      - WORKER_METRICS_PORT=${WORKER_METRICS_PORT:-9101}
     networks:
       - manta_net
     depends_on:

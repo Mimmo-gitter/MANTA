@@ -9,7 +9,7 @@ import re
 from typing import Optional
 import uuid
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.models import (
@@ -19,6 +19,7 @@ from app.db.models.models import (
     Sprint,
 )
 from app.jira.normalization import NormalizedIssue, NormalizedSprint
+from app.webhooks.metrics import record_dropped_stale_event
 
 # TODO: verify import path / signature of the Task 20.3 helper.
 from app.contributors.service import resolve_or_create_contributor_pseudonym
@@ -195,6 +196,15 @@ async def upsert_issue(
         and issue.changelog_id is not None
         and incoming <= issue.changelog_id
     ):
+        record_dropped_stale_event("jira")
+        logger.warning(
+            "STALE_OUT_OF_ORDER_REJECTED provider=jira table=issues record_id=%s key=%s "
+            "incoming_changelog_id=%s stored_changelog_id=%s",
+            issue.id,
+            n.key,
+            incoming,
+            issue.changelog_id,
+        )
         return issue, False
 
     prev_status = issue.status if issue is not None else None
@@ -268,11 +278,26 @@ async def upsert_issue(
         if incoming is not None:
             update_values["changelog_id"] = incoming
 
-        # Allow timestamp-seeded creation (changelog_id IS NULL) to advance to first numeric changelog_id
-        if issue.changelog_id is None and incoming is not None:
-            version_guard = or_(Issue.changelog_id.is_(None), Issue.entity_version < incoming_ver)
+        # Guard across Jira's two version domains:
+        # 1. Upgrading from timestamp-seeded creation (changelog_id IS NULL) to first numeric changelog_id:
+        #    allow if stored row still has changelog_id IS NULL, OR incoming_ver > stored entity_version.
+        # 2. Same-domain numeric changelog_id update: enforce entity_version < incoming_ver.
+        # 3. Non-changelog fallback payload (incoming is None): ONLY mutate if stored row also has
+        #    changelog_id IS NULL AND entity_version < incoming_ver (prevents delayed jira:issue_created
+        #    epoch-ms timestamps from overwriting an authoritative numeric changelog_id).
+        if incoming is not None:
+            if issue.changelog_id is None:
+                version_guard = or_(
+                    Issue.changelog_id.is_(None),
+                    Issue.entity_version < incoming_ver,
+                )
+            else:
+                version_guard = Issue.entity_version < incoming_ver
         else:
-            version_guard = Issue.entity_version < incoming_ver
+            version_guard = and_(
+                Issue.changelog_id.is_(None),
+                Issue.entity_version < incoming_ver,
+            )
 
         upd_stmt = (
             update(Issue)
@@ -286,8 +311,9 @@ async def upsert_issue(
         )
         updated_id = (await db.execute(upd_stmt)).scalar_one_or_none()
         if updated_id is None:
+            record_dropped_stale_event("jira")
             logger.warning(
-                "STALE_OUT_OF_ORDER_REJECTED table=issues record_id=%s key=%s incoming_version=%s",
+                "STALE_OUT_OF_ORDER_REJECTED provider=jira table=issues record_id=%s key=%s incoming_version=%s",
                 issue.id,
                 n.key,
                 incoming_ver,
