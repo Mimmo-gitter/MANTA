@@ -1472,3 +1472,325 @@ async def test_task_68_3_and_68_4_live_postgres_rls_and_mttr_end_to_end():
                 except Exception:
                     pass
         await async_engine.dispose()
+
+
+# ===========================================================================
+# 5. Task 68.7 (SCRUM-456): Health Signal Ingestion, Duplicate-Fail
+#    Suppression, Orphan-Pass Ignoring & Cross-Tenant Rejection Pytest Tests
+# ===========================================================================
+
+
+@pytest.mark.asyncio
+async def test_task_68_7_health_signal_ingestion_and_duplicate_fail_suppression_lifecycle(
+    in_memory_env,
+):
+    """
+    Task 68.7 (SCRUM-456) / TC-HEALTH-SIG-001, 002, 004, 005:
+    Verify end-to-end signal lifecycle:
+    1. Initial healthy state.
+    2. Incoming FAIL signal opens a new failure session (status=OPEN, started_at=t0).
+    3. Multiple consecutive duplicate FAIL signals are suppressed (action=duplicate_fail_ignored,
+       noop=True, duplicate=True), monotonic started_at is strictly preserved, and 0 extra rows are created.
+    4. Incoming PASS signal resolves the session (status=RESOLVED, resolved_at=t_pass, recovery_time_seconds=calc).
+    5. Consecutive orphan PASS signals are ignored as clean no-ops (action=orphan_pass_ignored,
+       noop=True, orphan=True) without creating or corrupting rows.
+    """
+    store: InMemoryTenantStore = in_memory_env["store"]
+    tenant_id = uuid.uuid4()
+    secret = "whsec_scrum456_lifecycle_key_777"
+    proj = store.seed_project(tenant_id=tenant_id, secret=secret)
+    session = FakeTenantAsyncSession(store, tenant_id)
+
+    t0_fail = datetime(2026, 11, 15, 14, 0, 0, tzinfo=timezone.utc)
+    t1_dup = datetime(2026, 11, 15, 14, 3, 0, tzinfo=timezone.utc)
+    t2_dup = datetime(2026, 11, 15, 14, 7, 0, tzinfo=timezone.utc)
+    t3_dup = datetime(2026, 11, 15, 14, 15, 0, tzinfo=timezone.utc)
+    t4_pass = datetime(2026, 11, 15, 14, 45, 0, tzinfo=timezone.utc)
+    t5_orphan = datetime(2026, 11, 15, 15, 0, 0, tzinfo=timezone.utc)
+    t6_orphan = datetime(2026, 11, 15, 15, 30, 0, tzinfo=timezone.utc)
+
+    # 1. Initial State: Project is HEALTHY, 0 failures, 0 incidents
+    assert proj.health_status == "HEALTHY"
+    assert len(store.failures) == 0
+    assert len(store.incidents) == 0
+
+    # 2. FAIL signal at 14:00:00Z -> opens failure session
+    res_open = await process_health_signal(
+        session,
+        tenant_id=tenant_id,
+        project_id=proj.id,
+        status="FAIL",
+        signal_timestamp=t0_fail,
+        probe_source="datadog",
+        severity="SEV-1",
+    )
+    await session.flush()
+
+    assert res_open.action == "opened"
+    assert res_open.noop is False
+    assert res_open.duplicate is False
+    assert res_open.session_status == "OPEN"
+    assert res_open.project_health_status == "FAILING"
+    assert res_open.started_at == t0_fail
+    assert res_open.resolved_at is None
+    assert res_open.recovery_time_seconds is None
+    assert len(store.failures) == 1
+    assert len(store.incidents) == 1
+    assert store.failures[0].status == "OPEN"
+    assert store.failures[0].started_at == t0_fail
+    assert proj.health_status == "FAILING"
+
+    # 3. Consecutive duplicate FAIL signals at 14:03, 14:07, and 14:15 -> suppressed
+    for dup_time in (t1_dup, t2_dup, t3_dup):
+        res_dup = await process_health_signal(
+            session,
+            tenant_id=tenant_id,
+            project_id=proj.id,
+            status="FAIL",
+            signal_timestamp=dup_time,
+            probe_source="datadog",
+        )
+        await session.flush()
+
+        assert res_dup.action == "duplicate_fail_ignored"
+        assert res_dup.noop is True
+        assert res_dup.duplicate is True
+        assert res_dup.session_id == res_open.session_id
+        assert res_dup.started_at == t0_fail
+        assert len(store.failures) == 1, "Duplicate FAIL must not create extra failure rows"
+        assert len(store.incidents) == 1, "Duplicate FAIL must not create extra incident rows"
+        assert store.failures[0].started_at == t0_fail, "started_at must remain monotonic"
+        assert store.failures[0].status == "OPEN"
+
+    # 4. PASS signal at 14:45:00Z (45 min = 2700s recovery) -> resolves failure session
+    res_pass = await process_health_signal(
+        session,
+        tenant_id=tenant_id,
+        project_id=proj.id,
+        status="PASS",
+        signal_timestamp=t4_pass,
+        probe_source="datadog",
+    )
+    await session.flush()
+
+    assert res_pass.action == "resolved"
+    assert res_pass.noop is False
+    assert res_pass.session_status == "RESOLVED"
+    assert res_pass.project_health_status == "HEALTHY"
+    assert res_pass.session_id == res_open.session_id
+    assert res_pass.started_at == t0_fail
+    assert res_pass.resolved_at == t4_pass
+    assert res_pass.recovery_time_seconds == 2700.0
+    assert len(store.failures) == 1
+    assert len(store.incidents) == 1
+    assert store.failures[0].status == "RESOLVED"
+    assert store.failures[0].resolved_at == t4_pass
+    assert store.failures[0].recovery_time_seconds == 2700.0
+    assert store.incidents[0].resolved_at == t4_pass
+    assert store.incidents[0].recovery_time_seconds == 2700.0
+    assert proj.health_status == "HEALTHY"
+
+    # 5. Successive orphan PASS signals while healthy at 15:00 and 15:30 -> no-op
+    for orphan_time in (t5_orphan, t6_orphan):
+        res_orphan = await process_health_signal(
+            session,
+            tenant_id=tenant_id,
+            project_id=proj.id,
+            status="PASS",
+            signal_timestamp=orphan_time,
+            probe_source="datadog",
+        )
+        await session.flush()
+
+        assert res_orphan.action == "orphan_pass_ignored"
+        assert res_orphan.noop is True
+        assert res_orphan.orphan is True
+        assert res_orphan.session_id is None
+        assert res_orphan.project_health_status == "HEALTHY"
+        assert len(store.failures) == 1, "Orphan PASS must never insert new rows"
+        assert len(store.incidents) == 1
+        assert store.failures[0].resolved_at == t4_pass, "Resolved session must remain untouched"
+        assert store.failures[0].recovery_time_seconds == 2700.0
+
+
+@pytest.mark.asyncio
+async def test_task_68_7_cross_tenant_rejection_and_security_controls(in_memory_env):
+    """
+    Task 68.7 (SCRUM-456) / TC-HEALTH-SIG-006, 007, 008, 011, 012, 013, 015:
+    Verify cross-tenant security and authentication gate enforcement:
+    1. Cross-tenant HMAC secret targeting foreign project -> 401 Unauthorized.
+    2. Cross-tenant JWT targeting foreign project -> 404 Not Found (anti-enumeration).
+    3. Cross-tenant X-Tenant-ID header -> 403 Forbidden.
+    4. Non-admin DEVELOPER role JWT -> 403 Forbidden.
+    5. Tampered payload body after valid HMAC signature -> 401 Unauthorized.
+    6. Missing auth credentials -> 401 Unauthorized.
+    7. Foreign tenant rows and health status remain completely untouched.
+    """
+    store: InMemoryTenantStore = in_memory_env["store"]
+    tenant_a = uuid.uuid4()
+    tenant_b = uuid.uuid4()
+
+    secret_a = "whsec_scrum456_alpha_key_001"
+    secret_b = "whsec_scrum456_beta_key_002"
+
+    proj_a = store.seed_project(tenant_id=tenant_a, secret=secret_a)
+    proj_b = store.seed_project(tenant_id=tenant_b, secret=secret_b)
+
+    jwt_a_admin = _mint_jwt(
+        in_memory_env["private_key"],
+        kid=in_memory_env["kid"],
+        tenant_id=tenant_a,
+        roles=["TENANT_ADMIN"],
+        sub="admin-alpha",
+    )
+    jwt_a_dev = _mint_jwt(
+        in_memory_env["private_key"],
+        kid=in_memory_env["kid"],
+        tenant_id=tenant_a,
+        roles=["DEVELOPER"],
+        sub="dev-alpha",
+    )
+
+    valid_payload = json.dumps(
+        {"status": "FAIL", "signal_timestamp": "2026-11-15T10:00:00Z"}
+    ).encode("utf-8")
+    tampered_payload = json.dumps(
+        {"status": "FAIL", "signal_timestamp": "2026-11-15T10:00:01Z"}
+    ).encode("utf-8")
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        # 1. Tenant A's HMAC secret targeting Tenant B's webhook -> 401 Unauthorized
+        r_cross_hmac = await ac.post(
+            f"/api/v1/webhooks/projects/{proj_b.id}/health",
+            content=valid_payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": _sign_hmac(secret_a, valid_payload),
+            },
+        )
+        assert r_cross_hmac.status_code == 401
+
+        # 2. Tenant A's JWT targeting Tenant B's health-signals endpoint -> 404 Anti-Enumeration
+        r_cross_jwt = await ac.post(
+            f"/api/v1/projects/{proj_b.id}/health-signals",
+            content=valid_payload,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {jwt_a_admin}",
+            },
+        )
+        assert r_cross_jwt.status_code == 404
+
+        # 3. Forged X-Tenant-ID header (Tenant A header on Tenant B project) -> 403 Forbidden
+        r_forged_header = await ac.post(
+            f"/api/v1/webhooks/projects/{proj_b.id}/health",
+            content=valid_payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-Tenant-ID": str(tenant_a),
+                "X-Hub-Signature-256": _sign_hmac(secret_b, valid_payload),
+            },
+        )
+        assert r_forged_header.status_code == 403
+
+        # 4. DEVELOPER role cannot post health signals without webhook secret -> 403 Forbidden
+        r_dev_forbidden = await ac.post(
+            f"/api/v1/projects/{proj_a.id}/health-signals",
+            content=valid_payload,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {jwt_a_dev}",
+            },
+        )
+        assert r_dev_forbidden.status_code == 403
+        assert r_dev_forbidden.json() == FORBIDDEN_RESPONSE
+
+        # 5. Tampered payload body after valid signature calculation -> 401 Unauthorized
+        sig_for_valid = _sign_hmac(secret_a, valid_payload)
+        r_tampered = await ac.post(
+            f"/api/v1/webhooks/projects/{proj_a.id}/health",
+            content=tampered_payload,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": sig_for_valid,
+            },
+        )
+        assert r_tampered.status_code == 401
+
+        # 6. Missing authentication headers -> 401 Unauthorized
+        r_no_auth = await ac.post(
+            f"/api/v1/webhooks/projects/{proj_a.id}/health",
+            content=valid_payload,
+            headers={"Content-Type": "application/json"},
+        )
+        assert r_no_auth.status_code == 401
+
+    # Verify zero failure or incident rows created
+    assert len(store.failures) == 0
+    assert len(store.incidents) == 0
+    assert proj_a.health_status == "HEALTHY"
+    assert proj_b.health_status == "HEALTHY"
+
+
+@pytest.mark.asyncio
+async def test_task_68_7_zero_second_failover_recovery_and_skew_rejection(in_memory_env):
+    """
+    Task 68.7 (SCRUM-456) / TC-HEALTH-SIG-017, 018:
+    Verify:
+    1. Instantaneous zero-second failover recovery (started_at == resolved_at -> recovery_time_seconds = 0.0s).
+    2. Clock-skew rejection: PASS signal timestamp earlier than active started_at fails with HTTP 422,
+       preserving the OPEN failure session without corruption.
+    """
+    store: InMemoryTenantStore = in_memory_env["store"]
+    tenant_id = uuid.uuid4()
+    proj = store.seed_project(tenant_id=tenant_id)
+    session = FakeTenantAsyncSession(store, tenant_id)
+
+    # 1. Zero-second failover: FAIL and PASS with identical timestamp
+    t_instant = datetime(2026, 11, 15, 12, 0, 0, tzinfo=timezone.utc)
+    await process_health_signal(
+        session, tenant_id=tenant_id, project_id=proj.id, status="FAIL", signal_timestamp=t_instant
+    )
+    await session.flush()
+    res_instant_pass = await process_health_signal(
+        session, tenant_id=tenant_id, project_id=proj.id, status="PASS", signal_timestamp=t_instant
+    )
+    await session.flush()
+
+    assert res_instant_pass.action == "resolved"
+    assert res_instant_pass.recovery_time_seconds == 0.0
+    assert len(store.failures) == 1
+    assert store.failures[0].status == "RESOLVED"
+    assert store.failures[0].recovery_time_seconds == 0.0
+    assert proj.health_status == "HEALTHY"
+
+    # 2. Clock skew rejection on subsequent outage:
+    # FAIL at 13:00, then anomalous PASS at 12:50 (10 minutes earlier than started_at)
+    t_outage2 = datetime(2026, 11, 15, 13, 0, 0, tzinfo=timezone.utc)
+    t_skewed_pass = datetime(2026, 11, 15, 12, 50, 0, tzinfo=timezone.utc)
+
+    await process_health_signal(
+        session, tenant_id=tenant_id, project_id=proj.id, status="FAIL", signal_timestamp=t_outage2
+    )
+    await session.flush()
+
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException) as exc_info:
+        await process_health_signal(
+            session,
+            tenant_id=tenant_id,
+            project_id=proj.id,
+            status="PASS",
+            signal_timestamp=t_skewed_pass,
+        )
+    assert exc_info.value.status_code == 422
+    assert "cannot precede active failure session started_at" in exc_info.value.detail
+
+    # Session 2 must remain intact and OPEN
+    assert len(store.failures) == 2
+    assert store.failures[1].status == "OPEN"
+    assert store.failures[1].started_at == t_outage2
+    assert store.failures[1].resolved_at is None
+    assert proj.health_status == "FAILING"
+
