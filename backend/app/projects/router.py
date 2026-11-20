@@ -15,6 +15,7 @@ from app.dora.service import (
     get_project_dora_metrics as get_project_dora_metrics_service,
     resolve_dora_timeframe_days,
 )
+from app.projects.flow_metrics import get_burndown_response, get_flow_metrics_response
 from app.projects.health_service import (
     get_project_health_config as get_project_health_config_service,
     handle_project_health_signal_http,
@@ -372,19 +373,30 @@ async def rotate_project_health_secret(
 
 @router.get(
     "/{project_id}/sprints/burndown",
-    tags=["Stubs"],
-    **stub_route_kwargs(
-        Permission.VIEW_SPRINT_BURNDOWN_WIP,
-        summary="View Sprint Burndown and WIP",
-        description="Monitor team velocity, sprint burndown charts, and Work In Progress (WIP) limit congestion.",
-    ),
+    summary="Sprint burndown",
+    description="Daily remaining story points and ideal burndown line for a sprint.",
 )
-async def get_sprint_burndown_and_wip(
-    project_id: str,
+async def get_sprint_burndown(
+    project_id: uuid.UUID,
+    sprint_id: Optional[uuid.UUID] = Query(default=None),
     user: TokenClaims = Depends(require_permission(Permission.VIEW_SPRINT_BURNDOWN_WIP)),
-) -> StubEndpointResponse:
-    """Monitor team velocity, sprint burndown charts, and WIP limit congestion."""
-    return build_stub_response(Permission.VIEW_SPRINT_BURNDOWN_WIP)
+) -> dict:
+    """Daily remaining_sp and linear ideal_sp across the sprint date range."""
+    return await get_burndown_response(user.tenant_uuid, project_id, sprint_id)
+
+
+@router.get(
+    "/{project_id}/flow-metrics",
+    summary="Sprint flow metrics",
+    description="Burndown series plus current WIP counts by status compared with WIP limits.",
+)
+async def get_flow_metrics(
+    project_id: uuid.UUID,
+    sprint_id: Optional[uuid.UUID] = Query(default=None),
+    user: TokenClaims = Depends(require_permission(Permission.VIEW_SPRINT_BURNDOWN_WIP)),
+) -> dict:
+    """Burndown series and WIP status counts versus wip_limits."""
+    return await get_flow_metrics_response(user.tenant_uuid, project_id, sprint_id)
 
 
 @router.get(

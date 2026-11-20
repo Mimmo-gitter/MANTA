@@ -237,6 +237,7 @@ async def test_all_12_stub_endpoints_in_openapi_schema():
         Permission.MANAGE_TENANT_USERS_AND_ROLES,
         Permission.MANAGE_OWN_MOBILE_DEVICES,
         Permission.VIEW_PROJECT_DORA,
+        Permission.VIEW_SPRINT_BURNDOWN_WIP,  # Task 76.2: real endpoint now
     }
     stub_permissions = {p for p in Permission if p not in real_permissions}
     found_stubs: set[str] = set()
@@ -266,7 +267,7 @@ async def test_all_12_stub_endpoints_in_openapi_schema():
 
         found_stubs.add(perm.value)
 
-    assert len(found_stubs) == 10, f"Expected 10 stub endpoints, found {len(found_stubs)}"
+    assert len(found_stubs) == 9, f"Expected 9 stub endpoints, found {len(found_stubs)}"
 
 
 @pytest.mark.asyncio
@@ -400,6 +401,10 @@ async def test_all_matrix_decisions_enforced(auth_fixture):
                 "app.auth.members_router.get_tenant_db_context",
                 side_effect=_empty_members_db,
             ),
+            mock.patch(
+                "app.projects.router.get_burndown_response",
+                mock.AsyncMock(return_value={"sprint_id": None, "sprint_name": None, "series": []}),
+            ),
         ):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
                 for role_id, role_actions in matrix.matrix.items():
@@ -438,6 +443,7 @@ async def test_all_matrix_decisions_enforced(auth_fixture):
                                 Permission.MANAGE_TENANT_USERS_AND_ROLES,
                                 Permission.VIEW_PROJECT_DORA,
                                 Permission.MANAGE_OWN_MOBILE_DEVICES,
+                                Permission.VIEW_SPRINT_BURNDOWN_WIP,
                             ):
                                 assert resp.status_code == 200, (
                                     f"Expected 200 for [{role_id}][{action_id}], got {resp.status_code}: {resp.text}"

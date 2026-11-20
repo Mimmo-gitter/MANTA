@@ -246,7 +246,8 @@ async def upsert_issue(
             assignee_pseudonym_id=assignee_id,
             issue_links=n.links,
             changelog_id=incoming,
-            entity_version=initial_version,
+            entity_version=incoming if incoming is not None else 1,
+            resolved_at=n.resolved_at,
         )
         created = n.created_at or n.event_at
         if created is not None:
@@ -274,7 +275,9 @@ async def upsert_issue(
         if sprint_id is not None:
             update_values["sprint_id"] = sprint_id
         if assignee_id is not None:
-            update_values["assignee_pseudonym_id"] = assignee_id
+            issue.assignee_pseudonym_id = assignee_id
+        issue.issue_links = n.links
+        issue.resolved_at = n.resolved_at
         if incoming is not None:
             update_values["changelog_id"] = incoming
 
