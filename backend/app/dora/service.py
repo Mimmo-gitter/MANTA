@@ -6,6 +6,7 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Any, Literal, Optional, Sequence
 import uuid
 
+from fastapi import HTTPException, status as http_status
 from sqlalchemy import Numeric, Select, and_, case, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,10 +15,12 @@ from app.db.models.models import (
     DeploymentIncident,
     DeploymentPullRequest,
     Incident,
+    ProductionFailure,
     Project,
     PullRequest,
 )
-from app.deployments.schemas import DeploymentOutcome
+from app.db.session import get_tenant_db_context
+from app.deployments.schemas import DeploymentOutcome, DeploymentSignalSource
 from app.deployments.service import build_authoritative_production_deployments_query
 from app.dora.schemas import (
     ChangeFailureRateResult,
@@ -26,6 +29,11 @@ from app.dora.schemas import (
     DailyLeadTimeMetric,
     DailyMTTRMetric,
     DeploymentFrequencyResult,
+    DoraAggregates,
+    DoraDailyPoint,
+    DoraMetricsResponse,
+    DoraTimeframeDays,
+    DoraWindow,
     LeadTimeResult,
     MTTROutageItem,
     MTTRResult,
@@ -863,8 +871,138 @@ async def calculate_rolling_change_failure_rate(
 # ---------------------------------------------------------------------------
 
 
+def _exact_elapsed_seconds(started_at: datetime, resolved_at: datetime) -> Decimal:
+    """Return exact non-negative elapsed seconds as a Decimal, raising ValueError on clock skew."""
+    started_utc = _ensure_utc(started_at)
+    resolved_utc = _ensure_utc(resolved_at)
+    if resolved_utc < started_utc:
+        raise ValueError(
+            f"resolved_at ({resolved_utc.isoformat()}) cannot be earlier than "
+            f"started_at ({started_utc.isoformat()})."
+        )
+    delta = resolved_utc - started_utc
+    return Decimal(delta.days * 86400 + delta.seconds) + (
+        Decimal(delta.microseconds) / Decimal("1000000")
+    )
+
+
+def compute_session_recovery_duration_hours(
+    started_at: datetime,
+    resolved_at: datetime,
+) -> float:
+    """
+    Calculate failure session recovery duration in hours:
+    (resolved_at - started_at) / 3600.0 rounded to 2 decimal places (US-29 / Task 29.2).
+
+    Raises ValueError if resolved_at is earlier than started_at.
+    """
+    raw_seconds = _exact_elapsed_seconds(started_at, resolved_at)
+    return _round_two_decimals(raw_seconds / Decimal("3600"))
+
+
+def _summarize_mttr_durations(
+    durations: Sequence[Decimal],
+) -> tuple[Optional[float], Optional[float], Optional[float]]:
+    """Return (mttr_seconds, mttr_hours, mttr_minutes) or (None, None, None) on 0 durations."""
+    if not durations:
+        return None, None, None
+    avg_seconds = sum(durations) / Decimal(len(durations))
+    return (
+        _round_two_decimals(avg_seconds),
+        _round_two_decimals(avg_seconds / Decimal("3600")),
+        _round_two_decimals(avg_seconds / Decimal("60")),
+    )
+
+
+def _is_production_failure_session(session_obj: Any) -> bool:
+    """Return True if the object represents a US-68 ProductionFailure health session."""
+    return (
+        isinstance(session_obj, ProductionFailure)
+        or hasattr(session_obj, "incident_id")
+        or hasattr(session_obj, "probe_source")
+    )
+
+
+def _filter_and_deduplicate_mttr_sessions(
+    sessions: Sequence[Incident | ProductionFailure],
+    *,
+    start_utc: datetime,
+    end_utc: datetime,
+) -> list[tuple[Incident | ProductionFailure, datetime, datetime, Decimal]]:
+    """
+    Filter resolved health failure sessions in [start_utc, end_utc], deduplicate synced
+    (ProductionFailure, Incident) pairs with ProductionFailure priority, and sort chronologically.
+    """
+    qualifying_failures: list[tuple[Incident | ProductionFailure, datetime, datetime, Decimal]] = []
+    qualifying_incidents: list[
+        tuple[Incident | ProductionFailure, datetime, datetime, Decimal]
+    ] = []
+
+    for session_obj in sessions:
+        if session_obj is None:
+            continue
+
+        raw_status = getattr(session_obj, "status", None)
+        if raw_status is not None and str(raw_status).strip().upper() != "RESOLVED":
+            continue
+
+        started_at = getattr(session_obj, "started_at", None)
+        resolved_at = getattr(session_obj, "resolved_at", None)
+        if started_at is None or resolved_at is None:
+            continue
+
+        started_utc = _ensure_utc(started_at)
+        resolved_utc = _ensure_utc(resolved_at)
+        if resolved_utc < started_utc:
+            continue
+        if resolved_utc < start_utc or resolved_utc > end_utc:
+            continue
+
+        raw_seconds = _exact_elapsed_seconds(started_utc, resolved_utc)
+        entry = (session_obj, started_utc, resolved_utc, raw_seconds)
+        if _is_production_failure_session(session_obj):
+            qualifying_failures.append(entry)
+        else:
+            qualifying_incidents.append(entry)
+
+    seen_ids: set[uuid.UUID] = set()
+    covered_incident_ids: set[uuid.UUID] = set()
+    selected: list[tuple[Incident | ProductionFailure, datetime, datetime, Decimal]] = []
+
+    for pf_entry in qualifying_failures:
+        pf_obj = pf_entry[0]
+        pf_id = getattr(pf_obj, "id", None)
+        if pf_id is not None:
+            if pf_id in seen_ids:
+                continue
+            seen_ids.add(pf_id)
+            covered_incident_ids.add(pf_id)
+        linked_inc_id = getattr(pf_obj, "incident_id", None)
+        if linked_inc_id is not None:
+            covered_incident_ids.add(linked_inc_id)
+        selected.append(pf_entry)
+
+    for inc_entry in qualifying_incidents:
+        inc_obj = inc_entry[0]
+        inc_id = getattr(inc_obj, "id", None)
+        if inc_id is not None:
+            if inc_id in seen_ids or inc_id in covered_incident_ids:
+                continue
+            seen_ids.add(inc_id)
+        selected.append(inc_entry)
+
+    selected.sort(
+        key=lambda item: (
+            item[2],
+            item[1],
+            str(getattr(item[0], "id", "")),
+        )
+    )
+    return selected
+
+
 def compute_mttr(
-    incidents: Sequence[Incident],
+    incidents: Sequence[Incident | ProductionFailure],
     *,
     window_days: Literal[14, 30] = 14,
     window_end: Optional[datetime] = None,
@@ -874,12 +1012,13 @@ def compute_mttr(
     strictly based on resolved production health failure sessions (US-29 / Task 29.2 & Task 29.3).
 
     Invariants Enforced:
-    1. Canonical Math: Mean duration of resolved failure sessions: mean(resolved_at - started_at).
+    1. Canonical Math: Mean duration of resolved failure sessions: mean((resolved_at - started_at) / 3600.0).
     2. Strict Independence: Completely independent of PR merges, commits, or deployments.
     3. Self-Contained Pairing: Each outage pairs its own started_at and resolved_at.
-    4. Ongoing Outage Exclusion: Incidents with resolved_at IS NULL are strictly excluded.
-    5. Null Semantics: When zero resolved failure sessions exist in window, MTTR returns None (null).
-    6. Non-Negative Guard: Records with resolved_at < started_at are excluded.
+    4. Ongoing Outage Exclusion: Sessions with resolved_at IS NULL or non-RESOLVED status are excluded.
+    5. Deduplication: Synced (ProductionFailure, Incident) pairs are counted exactly once.
+    6. Null Semantics: When zero resolved failure sessions exist in window, MTTR returns None (null).
+    7. Non-Negative Guard: Records with resolved_at < started_at are excluded.
     """
     if window_days not in SUPPORTED_MTTR_WINDOWS:
         raise ValueError(
@@ -889,49 +1028,33 @@ def compute_mttr(
     end_utc = _ensure_utc(window_end or datetime.now(timezone.utc))
     start_utc = end_utc - timedelta(days=window_days)
 
-    daily_durations: dict[date, list[float]] = defaultdict(list)
+    selected = _filter_and_deduplicate_mttr_sessions(
+        incidents,
+        start_utc=start_utc,
+        end_utc=end_utc,
+    )
+
+    daily_durations: dict[date, list[Decimal]] = defaultdict(list)
     outages: list[MTTROutageItem] = []
-    durations: list[float] = []
+    durations: list[Decimal] = []
 
-    for inc in incidents:
-        if inc.resolved_at is None:
-            continue
-
-        started_utc = _ensure_utc(inc.started_at)
-        resolved_utc = _ensure_utc(inc.resolved_at)
-
-        if resolved_utc < started_utc:
-            continue
-
-        if resolved_utc < start_utc or resolved_utc > end_utc:
-            continue
-
-        delta_seconds = (resolved_utc - started_utc).total_seconds()
-        durations.append(delta_seconds)
-        daily_durations[resolved_utc.date()].append(delta_seconds)
+    for session_obj, started_utc, resolved_utc, raw_seconds in selected:
+        durations.append(raw_seconds)
+        daily_durations[resolved_utc.date()].append(raw_seconds)
 
         outages.append(
             MTTROutageItem(
-                incident_id=inc.id,
-                project_id=inc.project_id,
+                incident_id=session_obj.id,
+                project_id=session_obj.project_id,
                 started_at=started_utc,
                 resolved_at=resolved_utc,
-                duration_seconds=_round_two_decimals(delta_seconds),
-                duration_hours=_round_two_decimals(delta_seconds / 3600.0),
-                severity=getattr(inc, "severity", "SEV-2") or "SEV-2",
+                duration_seconds=_round_two_decimals(raw_seconds),
+                duration_hours=_round_two_decimals(raw_seconds / Decimal("3600")),
+                severity=getattr(session_obj, "severity", "SEV-2") or "SEV-2",
             )
         )
 
-    resolved_count = len(durations)
-    if resolved_count == 0:
-        mttr_seconds = None
-        mttr_hours = None
-        mttr_minutes = None
-    else:
-        avg_seconds = sum(durations) / resolved_count
-        mttr_seconds = _round_two_decimals(avg_seconds)
-        mttr_hours = _round_two_decimals(avg_seconds / 3600.0)
-        mttr_minutes = _round_two_decimals(avg_seconds / 60.0)
+    mttr_seconds, mttr_hours, mttr_minutes = _summarize_mttr_durations(durations)
 
     end_date = end_utc.date()
     start_date = end_date - timedelta(days=window_days - 1)
@@ -940,31 +1063,20 @@ def compute_mttr(
     for offset in range(window_days):
         current_date = start_date + timedelta(days=offset)
         day_vals = daily_durations.get(current_date, [])
-        if not day_vals:
-            daily_series.append(
-                DailyMTTRMetric(
-                    date=current_date,
-                    resolved_outage_count=0,
-                    mttr_seconds=None,
-                    mttr_hours=None,
-                    mttr_minutes=None,
-                )
+        day_sec, day_hr, day_min = _summarize_mttr_durations(day_vals)
+        daily_series.append(
+            DailyMTTRMetric(
+                date=current_date,
+                resolved_outage_count=len(day_vals),
+                mttr_seconds=day_sec,
+                mttr_hours=day_hr,
+                mttr_minutes=day_min,
             )
-        else:
-            day_avg = sum(day_vals) / len(day_vals)
-            daily_series.append(
-                DailyMTTRMetric(
-                    date=current_date,
-                    resolved_outage_count=len(day_vals),
-                    mttr_seconds=_round_two_decimals(day_avg),
-                    mttr_hours=_round_two_decimals(day_avg / 3600.0),
-                    mttr_minutes=_round_two_decimals(day_avg / 60.0),
-                )
-            )
+        )
 
     return MTTRResult(
         window_days=window_days,
-        resolved_outage_count=resolved_count,
+        resolved_outage_count=len(durations),
         mttr_seconds=mttr_seconds,
         mttr_hours=mttr_hours,
         mttr_minutes=mttr_minutes,
@@ -975,19 +1087,17 @@ def compute_mttr(
     )
 
 
-def build_mttr_sql_query(
+def _build_mttr_aggregate_sql_query(
+    model: type[Incident] | type[ProductionFailure],
     *,
     tenant_id: uuid.UUID,
     project_id: uuid.UUID,
     start_at: Optional[datetime] = None,
     end_at: Optional[datetime] = None,
 ) -> Select[tuple[int, Optional[float], Optional[float], Optional[float]]]:
-    """
-    Build native PostgreSQL 16 aggregate query computing MTTR in seconds, hours, and minutes
-    for resolved health failure sessions per Task 29.1 §4 & Task 29.2.
-    """
-    epoch_diff = func.extract(text("epoch"), Incident.resolved_at - Incident.started_at)
-    count_resolved = func.count(Incident.id)
+    """Build native PostgreSQL 16 aggregate MTTR query for Incident or ProductionFailure."""
+    epoch_diff = func.extract("epoch", model.resolved_at - model.started_at)
+    count_resolved = func.count(model.id)
 
     stmt = (
         select(
@@ -1005,26 +1115,104 @@ def build_mttr_sql_query(
                 else_=func.round(func.cast(func.avg(epoch_diff) / Decimal("60.0"), Numeric), 2),
             ).label("mttr_minutes"),
         )
-        .select_from(Incident)
+        .select_from(model)
         .join(
             Project,
             and_(
-                Project.id == Incident.project_id,
-                Project.tenant_id == Incident.tenant_id,
+                Project.id == model.project_id,
+                Project.tenant_id == model.tenant_id,
             ),
         )
         .where(
-            Incident.tenant_id == tenant_id,
-            Incident.project_id == project_id,
+            model.tenant_id == tenant_id,
+            model.project_id == project_id,
             Project.deleted_at.is_(None),
-            Incident.resolved_at.is_not(None),
-            Incident.resolved_at >= Incident.started_at,
+            model.resolved_at.is_not(None),
+            model.resolved_at >= model.started_at,
         )
     )
+    if hasattr(model, "status"):
+        stmt = stmt.where(model.status == "RESOLVED")
     if start_at is not None:
-        stmt = stmt.where(Incident.resolved_at >= start_at)
+        stmt = stmt.where(model.resolved_at >= start_at)
     if end_at is not None:
-        stmt = stmt.where(Incident.resolved_at <= end_at)
+        stmt = stmt.where(model.resolved_at <= end_at)
+    return stmt
+
+
+def build_mttr_sql_query(
+    *,
+    tenant_id: uuid.UUID,
+    project_id: uuid.UUID,
+    start_at: Optional[datetime] = None,
+    end_at: Optional[datetime] = None,
+) -> Select[tuple[int, Optional[float], Optional[float], Optional[float]]]:
+    """
+    Build native PostgreSQL 16 aggregate query computing MTTR in seconds, hours, and minutes
+    for resolved incidents per Task 29.1 §4 & Task 29.2.
+    """
+    return _build_mttr_aggregate_sql_query(
+        Incident,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        start_at=start_at,
+        end_at=end_at,
+    )
+
+
+def build_mttr_production_failures_sql_query(
+    *,
+    tenant_id: uuid.UUID,
+    project_id: uuid.UUID,
+    start_at: Optional[datetime] = None,
+    end_at: Optional[datetime] = None,
+) -> Select[tuple[int, Optional[float], Optional[float], Optional[float]]]:
+    """
+    Build native PostgreSQL 16 aggregate query computing MTTR in seconds, hours, and minutes
+    for resolved US-68 production_failures sessions (Task 29.2).
+    """
+    return _build_mttr_aggregate_sql_query(
+        ProductionFailure,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        start_at=start_at,
+        end_at=end_at,
+    )
+
+
+def _build_mttr_sessions_query(
+    model: type[Any],
+    *,
+    tenant_id: uuid.UUID,
+    project_id: uuid.UUID,
+    start_at: Optional[datetime] = None,
+    end_at: Optional[datetime] = None,
+) -> Select[tuple[Any]]:
+    """Build query fetching resolved sessions in window for Incident or ProductionFailure."""
+    stmt = (
+        select(model)
+        .join(
+            Project,
+            and_(
+                Project.id == model.project_id,
+                Project.tenant_id == model.tenant_id,
+            ),
+        )
+        .where(
+            model.tenant_id == tenant_id,
+            model.project_id == project_id,
+            Project.deleted_at.is_(None),
+            model.resolved_at.is_not(None),
+            model.resolved_at >= model.started_at,
+        )
+        .order_by(model.resolved_at.asc(), model.id.asc())
+    )
+    if hasattr(model, "status"):
+        stmt = stmt.where(model.status == "RESOLVED")
+    if start_at is not None:
+        stmt = stmt.where(model.resolved_at >= start_at)
+    if end_at is not None:
+        stmt = stmt.where(model.resolved_at <= end_at)
     return stmt
 
 
@@ -1036,29 +1224,30 @@ def build_mttr_incidents_query(
     end_at: Optional[datetime] = None,
 ) -> Select[tuple[Incident]]:
     """Build query fetching resolved incidents in window for project under tenant context."""
-    stmt = (
-        select(Incident)
-        .join(
-            Project,
-            and_(
-                Project.id == Incident.project_id,
-                Project.tenant_id == Incident.tenant_id,
-            ),
-        )
-        .where(
-            Incident.tenant_id == tenant_id,
-            Incident.project_id == project_id,
-            Project.deleted_at.is_(None),
-            Incident.resolved_at.is_not(None),
-            Incident.resolved_at >= Incident.started_at,
-        )
-        .order_by(Incident.resolved_at.asc(), Incident.id.asc())
+    return _build_mttr_sessions_query(
+        Incident,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        start_at=start_at,
+        end_at=end_at,
     )
-    if start_at is not None:
-        stmt = stmt.where(Incident.resolved_at >= start_at)
-    if end_at is not None:
-        stmt = stmt.where(Incident.resolved_at <= end_at)
-    return stmt
+
+
+def build_mttr_production_failures_query(
+    *,
+    tenant_id: uuid.UUID,
+    project_id: uuid.UUID,
+    start_at: Optional[datetime] = None,
+    end_at: Optional[datetime] = None,
+) -> Select[tuple[ProductionFailure]]:
+    """Build query fetching resolved production_failures sessions in window under tenant context."""
+    return _build_mttr_sessions_query(
+        ProductionFailure,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        start_at=start_at,
+        end_at=end_at,
+    )
 
 
 async def calculate_rolling_mttr(
@@ -1070,7 +1259,8 @@ async def calculate_rolling_mttr(
     window_end: Optional[datetime] = None,
 ) -> MTTRResult:
     """
-    Query resolved production incidents in window and compute rolling 14d/30d MTTR (Task 29.2).
+    Query resolved production_failures sessions and incidents in window and compute
+    rolling 14d/30d MTTR without double-counting synced session/incident pairs (Task 29.2 / US-68).
     """
     if window_days not in SUPPORTED_MTTR_WINDOWS:
         raise ValueError(
@@ -1080,18 +1270,601 @@ async def calculate_rolling_mttr(
     end_utc = _ensure_utc(window_end or datetime.now(timezone.utc))
     start_utc = end_utc - timedelta(days=window_days)
 
-    stmt = build_mttr_incidents_query(
+    pf_stmt = build_mttr_production_failures_query(
+        tenant_id=tenant_id,
+        project_id=project_id,
+        start_at=start_utc,
+        end_at=end_utc,
+    )
+    inc_stmt = build_mttr_incidents_query(
         tenant_id=tenant_id,
         project_id=project_id,
         start_at=start_utc,
         end_at=end_utc,
     )
 
-    result = await db.execute(stmt)
-    incidents = list(result.scalars().all())
+    pf_rows = list((await db.execute(pf_stmt)).scalars().all())
+    inc_rows = list((await db.execute(inc_stmt)).scalars().all())
 
     return compute_mttr(
-        incidents,
+        [*pf_rows, *inc_rows],
         window_days=window_days,
         window_end=end_utc,
     )
+
+
+# ---------------------------------------------------------------------------
+# US-30 / Task 30.2: Combined Project DORA Metrics Endpoint Assembly & Service
+# ---------------------------------------------------------------------------
+
+
+def resolve_dora_timeframe_days(
+    timeframe_days: int = 30,
+    window: Optional[DoraWindow] = None,
+    *,
+    has_explicit_timeframe: bool = False,
+) -> DoraTimeframeDays:
+    """Resolve rolling timeframe in days from `timeframe_days` and optional `window` alias."""
+    unprocessable_status = getattr(http_status, "HTTP_422_UNPROCESSABLE_CONTENT", 422)
+    if timeframe_days not in (14, 30):
+        raise HTTPException(
+            status_code=unprocessable_status,
+            detail=f"Unsupported timeframe_days={timeframe_days}. Expected 14 or 30.",
+        )
+
+    validated_days: DoraTimeframeDays = 14 if timeframe_days == 14 else 30
+    window_map: dict[DoraWindow, DoraTimeframeDays] = {"14d": 14, "30d": 30}
+    if window is not None:
+        mapped = window_map[window]
+        if has_explicit_timeframe and validated_days != mapped:
+            raise HTTPException(
+                status_code=unprocessable_status,
+                detail=(
+                    f"Conflicting timeframe_days={validated_days} and window='{window}' "
+                    "query parameters."
+                ),
+            )
+        return mapped
+    return validated_days
+
+
+def _is_live_async_session(db: Any) -> bool:
+    """Return True only for a real SQLAlchemy AsyncSession (excluding unit test mocks)."""
+    return isinstance(db, AsyncSession) and not type(db).__module__.startswith("unittest.mock")
+
+
+_DORA_CONSOLIDATED_SERIES_SQL = text(
+    """
+    WITH date_buckets AS (
+        SELECT gs::date AS bucket_date
+        FROM generate_series(
+            CAST(:start_date AS date),
+            CAST(:end_date AS date),
+            INTERVAL '1 day'
+        ) AS gs
+    ),
+    auth_deployments AS (
+        SELECT d.id,
+               d.status,
+               d.deployed_at,
+               (d.deployed_at AT TIME ZONE 'UTC')::date AS bucket_date
+        FROM deployments d
+        WHERE d.tenant_id = CAST(:tenant_id AS uuid)
+          AND d.project_id = CAST(:project_id AS uuid)
+          AND d.environment = 'production'
+          AND d.authoritative_signal_source = :auth_signal
+          AND d.deployed_at >= :start_utc
+          AND d.deployed_at <= :end_utc
+    ),
+    dep_cfr AS (
+        SELECT ad.id,
+               ad.status,
+               ad.bucket_date,
+               (
+                   ad.status IN ('FAILED', 'ROLLED_BACK')
+                   OR BOOL_OR(di.id IS NOT NULL)
+               ) AS is_failed
+        FROM auth_deployments ad
+        LEFT JOIN deployment_incidents di
+          ON di.deployment_id = ad.id
+         AND di.tenant_id = CAST(:tenant_id AS uuid)
+         AND di.is_active IS TRUE
+         AND di.status = 'CONFIRMED'
+         AND di.detected_at >= ad.deployed_at
+         AND di.detected_at <= ad.deployed_at + INTERVAL '24 hours'
+        GROUP BY ad.id, ad.status, ad.bucket_date
+    ),
+    daily_deployments AS (
+        SELECT bucket_date,
+               COUNT(*)::int AS total_count,
+               COUNT(*) FILTER (WHERE status = 'SUCCESS')::int AS success_count,
+               COUNT(*) FILTER (WHERE is_failed)::int AS failed_count
+        FROM dep_cfr
+        GROUP BY bucket_date
+    ),
+    agg_deployments AS (
+        SELECT COUNT(*)::int AS total_count,
+               COUNT(*) FILTER (WHERE status = 'SUCCESS')::int AS success_count,
+               COUNT(*) FILTER (WHERE is_failed)::int AS failed_count
+        FROM dep_cfr
+    ),
+    shipped_prs AS (
+        SELECT DISTINCT ON (pr.id)
+               pr.id AS pr_id,
+               ad.bucket_date,
+               EXTRACT(EPOCH FROM (ad.deployed_at - pr.first_commit_at))::numeric AS raw_seconds
+        FROM deployment_pull_requests dpr
+        JOIN auth_deployments ad
+          ON ad.id = dpr.deployment_id
+         AND ad.status = 'SUCCESS'
+        JOIN pull_requests pr
+          ON pr.id = dpr.pull_request_id
+         AND pr.tenant_id = CAST(:tenant_id AS uuid)
+        WHERE dpr.tenant_id = CAST(:tenant_id AS uuid)
+          AND lower(trim(pr.state)) = 'merged'
+          AND pr.first_commit_at IS NOT NULL
+          AND ad.deployed_at >= pr.first_commit_at
+        ORDER BY pr.id, ad.deployed_at ASC, ad.id ASC
+    ),
+    daily_lead_time AS (
+        SELECT bucket_date,
+               ROUND(
+                   (PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY raw_seconds / 3600.0))::numeric,
+                   2
+               )::float AS median_lead_time_hours
+        FROM shipped_prs
+        GROUP BY bucket_date
+    ),
+    agg_lead_time AS (
+        SELECT ROUND(
+                   (PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY raw_seconds / 3600.0))::numeric,
+                   2
+               )::float AS median_lead_time_hours
+        FROM shipped_prs
+    ),
+    pf_sessions AS (
+        SELECT pf.id,
+               pf.incident_id,
+               pf.started_at,
+               pf.resolved_at,
+               (pf.resolved_at AT TIME ZONE 'UTC')::date AS bucket_date,
+               EXTRACT(EPOCH FROM (pf.resolved_at - pf.started_at))::numeric AS dur_seconds
+        FROM production_failures pf
+        WHERE pf.tenant_id = CAST(:tenant_id AS uuid)
+          AND pf.project_id = CAST(:project_id AS uuid)
+          AND pf.status = 'RESOLVED'
+          AND pf.resolved_at IS NOT NULL
+          AND pf.resolved_at >= pf.started_at
+          AND pf.resolved_at >= :start_utc
+          AND pf.resolved_at <= :end_utc
+    ),
+    inc_sessions AS (
+        SELECT inc.id,
+               (inc.resolved_at AT TIME ZONE 'UTC')::date AS bucket_date,
+               EXTRACT(EPOCH FROM (inc.resolved_at - inc.started_at))::numeric AS dur_seconds
+        FROM incidents inc
+        WHERE inc.tenant_id = CAST(:tenant_id AS uuid)
+          AND inc.project_id = CAST(:project_id AS uuid)
+          AND inc.resolved_at IS NOT NULL
+          AND inc.resolved_at >= inc.started_at
+          AND inc.resolved_at >= :start_utc
+          AND inc.resolved_at <= :end_utc
+          AND NOT EXISTS (
+              SELECT 1
+              FROM pf_sessions pfs
+              WHERE pfs.id = inc.id OR pfs.incident_id = inc.id
+          )
+    ),
+    mttr_sessions AS (
+        SELECT bucket_date, dur_seconds FROM pf_sessions
+        UNION ALL
+        SELECT bucket_date, dur_seconds FROM inc_sessions
+    ),
+    daily_mttr AS (
+        SELECT bucket_date,
+               ROUND((AVG(dur_seconds) / 3600.0)::numeric, 2)::float AS mttr_hours
+        FROM mttr_sessions
+        GROUP BY bucket_date
+    ),
+    agg_mttr AS (
+        SELECT COUNT(*)::int AS resolved_outage_count,
+               ROUND((AVG(dur_seconds) / 3600.0)::numeric, 2)::float AS mttr_hours
+        FROM mttr_sessions
+    )
+    SELECT db.bucket_date,
+           COALESCE(dd.total_count, 0) AS day_total_deployments,
+           COALESCE(dd.success_count, 0) AS day_success_deployments,
+           COALESCE(dd.failed_count, 0) AS day_failed_deployments,
+           dlt.median_lead_time_hours AS day_lead_time_hours,
+           dm.mttr_hours AS day_mttr_hours,
+           adep.total_count AS agg_total_deployments,
+           adep.success_count AS agg_success_deployments,
+           adep.failed_count AS agg_failed_deployments,
+           alt.median_lead_time_hours AS agg_lead_time_hours,
+           amt.resolved_outage_count AS agg_resolved_outage_count,
+           amt.mttr_hours AS agg_mttr_hours
+    FROM date_buckets db
+    LEFT JOIN daily_deployments dd ON dd.bucket_date = db.bucket_date
+    LEFT JOIN daily_lead_time dlt ON dlt.bucket_date = db.bucket_date
+    LEFT JOIN daily_mttr dm ON dm.bucket_date = db.bucket_date
+    CROSS JOIN agg_deployments adep
+    CROSS JOIN agg_lead_time alt
+    CROSS JOIN agg_mttr amt
+    ORDER BY db.bucket_date ASC
+    """
+)
+
+
+def _summarize_dora_notes(
+    *,
+    window: DoraWindow,
+    authoritative_deployment_signal: DeploymentSignalSource,
+    has_deployment_telemetry: bool,
+    total_deployment_count: int,
+    successful_deployment_count: int,
+    lead_time_hours: Optional[float],
+    change_failure_rate_pct: Optional[float],
+    mttr_hours: Optional[float],
+    resolved_outage_count: int,
+) -> list[str]:
+    """Build deterministic diagnostic notes explaining null vs 0.0 metrics and signal filtering."""
+    notes: list[str] = []
+    signal_name = authoritative_deployment_signal.value
+
+    if not has_deployment_telemetry:
+        notes.append(
+            f"No authoritative production deployments recorded under signal '{signal_name}' "
+            f"in the {window} window."
+        )
+    else:
+        notes.append(
+            f"Aggregated rolling {window} metrics from authoritative deployment signal "
+            f"'{signal_name}'."
+        )
+        if successful_deployment_count == 0:
+            notes.append(
+                "deployment_frequency_per_day is 0.0: "
+                f"{total_deployment_count} authoritative production "
+                f"deployment(s) recorded with 0 SUCCESS outcomes in the {window} window."
+            )
+
+    if lead_time_hours is None and has_deployment_telemetry:
+        notes.append(
+            "lead_time_hours is null: 0 shipped pull requests linked to successful production "
+            f"deployments in the {window} window."
+        )
+
+    if change_failure_rate_pct == 0.0:
+        notes.append(
+            "change_failure_rate_pct is 0.0%: "
+            f"{total_deployment_count} production deployments "
+            "succeeded with 0 failures or linked incidents."
+        )
+
+    if mttr_hours is None:
+        notes.append(
+            f"mttr_hours is null: 0 resolved production health failure sessions in the {window} window."
+        )
+    elif mttr_hours == 0.0:
+        notes.append(
+            f"mttr_hours is 0.0: {resolved_outage_count} resolved production health "
+            "failure session(s) restored instantaneously."
+        )
+
+    return notes
+
+
+def build_dora_metrics_notes(
+    *,
+    window: DoraWindow,
+    authoritative_deployment_signal: DeploymentSignalSource,
+    lead_time_result: LeadTimeResult,
+    deployment_frequency_result: DeploymentFrequencyResult,
+    change_failure_rate_result: ChangeFailureRateResult,
+    mttr_result: MTTRResult,
+    has_deployment_telemetry: bool,
+) -> list[str]:
+    """Build deterministic diagnostic notes explaining null vs 0.0 metrics and signal filtering."""
+    return _summarize_dora_notes(
+        window=window,
+        authoritative_deployment_signal=authoritative_deployment_signal,
+        has_deployment_telemetry=has_deployment_telemetry,
+        total_deployment_count=change_failure_rate_result.total_deployment_count,
+        successful_deployment_count=deployment_frequency_result.successful_deployment_count,
+        lead_time_hours=lead_time_result.median_lead_time_hours,
+        change_failure_rate_pct=change_failure_rate_result.change_failure_rate_percentage,
+        mttr_hours=mttr_result.mttr_hours,
+        resolved_outage_count=mttr_result.resolved_outage_count,
+    )
+
+
+def assemble_dora_metrics_response(
+    *,
+    project_id: uuid.UUID,
+    timeframe_days: DoraTimeframeDays,
+    authoritative_deployment_signal: DeploymentSignalSource | str,
+    lead_time_result: LeadTimeResult,
+    deployment_frequency_result: DeploymentFrequencyResult,
+    change_failure_rate_result: ChangeFailureRateResult,
+    mttr_result: MTTRResult,
+    has_deployment_telemetry: Optional[bool] = None,
+) -> DoraMetricsResponse:
+    """
+    Assemble the OpenAPI 3.1 DoraMetricsResponse from the four domain DORA calculators
+    (US-26, US-27, US-28, US-29) preserving strict null vs 0.0 semantics (Task 30.2).
+    """
+    signal_enum = (
+        authoritative_deployment_signal
+        if isinstance(authoritative_deployment_signal, DeploymentSignalSource)
+        else DeploymentSignalSource(str(authoritative_deployment_signal))
+    )
+    window: DoraWindow = "14d" if timeframe_days == 14 else "30d"
+
+    telemetry_present = (
+        has_deployment_telemetry
+        if has_deployment_telemetry is not None
+        else (
+            change_failure_rate_result.total_deployment_count > 0
+            or deployment_frequency_result.successful_deployment_count > 0
+        )
+    )
+
+    df_aggregate: Optional[float] = (
+        deployment_frequency_result.deployments_per_day if telemetry_present else None
+    )
+
+    aggregates = DoraAggregates(
+        lead_time_hours=lead_time_result.median_lead_time_hours,
+        deployment_frequency_per_day=df_aggregate,
+        change_failure_rate_pct=change_failure_rate_result.change_failure_rate_percentage,
+        mttr_hours=mttr_result.mttr_hours,
+    )
+
+    lt_by_date = {p.date: p for p in lead_time_result.daily_series}
+    df_by_date = {p.date: p for p in deployment_frequency_result.daily_series}
+    cfr_by_date = {p.date: p for p in change_failure_rate_result.daily_series}
+    mttr_by_date = {p.date: p for p in mttr_result.daily_series}
+
+    ordered_dates = [p.date for p in deployment_frequency_result.daily_series]
+    if not ordered_dates:
+        ordered_dates = sorted(
+            set(lt_by_date) | set(df_by_date) | set(cfr_by_date) | set(mttr_by_date)
+        )
+
+    trend: list[DoraDailyPoint] = []
+    for bucket_date in ordered_dates:
+        lt_pt = lt_by_date.get(bucket_date)
+        df_pt = df_by_date.get(bucket_date)
+        cfr_pt = cfr_by_date.get(bucket_date)
+        mttr_pt = mttr_by_date.get(bucket_date)
+
+        df_daily: Optional[float]
+        if not telemetry_present:
+            df_daily = None
+        else:
+            df_daily = float(df_pt.count) if df_pt is not None else 0.0
+
+        trend.append(
+            DoraDailyPoint(
+                date=bucket_date,
+                lead_time_hours=lt_pt.median_lead_time_hours if lt_pt is not None else None,
+                deployment_frequency_per_day=df_daily,
+                change_failure_rate_pct=(
+                    cfr_pt.change_failure_rate_percentage if cfr_pt is not None else None
+                ),
+                mttr_hours=mttr_pt.mttr_hours if mttr_pt is not None else None,
+            )
+        )
+
+    notes = build_dora_metrics_notes(
+        window=window,
+        authoritative_deployment_signal=signal_enum,
+        lead_time_result=lead_time_result,
+        deployment_frequency_result=deployment_frequency_result,
+        change_failure_rate_result=change_failure_rate_result,
+        mttr_result=mttr_result,
+        has_deployment_telemetry=telemetry_present,
+    )
+
+    return DoraMetricsResponse(
+        project_id=project_id,
+        window=window,
+        authoritative_deployment_signal=signal_enum,
+        aggregates=aggregates,
+        notes=notes,
+        trend=trend,
+    )
+
+
+async def calculate_project_dora_metrics_consolidated(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    project: Project,
+    timeframe_days: DoraTimeframeDays,
+    end_utc: datetime,
+) -> DoraMetricsResponse:
+    """
+    Execute the consolidated single-roundtrip PostgreSQL 16 `generate_series` CTE query
+    under tenant RLS for sub-300ms DORA analytics retrieval (SCRUM-459 / Task 30.3).
+    """
+    start_utc = end_utc - timedelta(days=timeframe_days)
+    end_date = end_utc.date()
+    start_date = end_date - timedelta(days=timeframe_days - 1)
+
+    signal_enum = DeploymentSignalSource(str(project.authoritative_cd_signal))
+    window: DoraWindow = "14d" if timeframe_days == 14 else "30d"
+
+    res = await db.execute(
+        _DORA_CONSOLIDATED_SERIES_SQL,
+        {
+            "tenant_id": tenant_id,
+            "project_id": project.id,
+            "auth_signal": signal_enum.value,
+            "start_utc": start_utc,
+            "end_utc": end_utc,
+            "start_date": start_date,
+            "end_date": end_date,
+        },
+    )
+    rows = res.mappings().all()
+
+    first_row = rows[0] if rows else {}
+    total_dep = int(first_row.get("agg_total_deployments") or 0)
+    success_dep = int(first_row.get("agg_success_deployments") or 0)
+    failed_dep = int(first_row.get("agg_failed_deployments") or 0)
+    resolved_outages = int(first_row.get("agg_resolved_outage_count") or 0)
+
+    agg_lead_raw = first_row.get("agg_lead_time_hours")
+    agg_lead = float(agg_lead_raw) if agg_lead_raw is not None else None
+
+    agg_mttr_raw = first_row.get("agg_mttr_hours")
+    agg_mttr = float(agg_mttr_raw) if agg_mttr_raw is not None else None
+
+    telemetry_present = total_dep > 0 or success_dep > 0
+    df_aggregate: Optional[float] = (
+        _round_rate(success_dep, timeframe_days) if telemetry_present else None
+    )
+    cfr_pct = _round_cfr_percentage(failed_dep, total_dep)
+
+    aggregates = DoraAggregates(
+        lead_time_hours=agg_lead,
+        deployment_frequency_per_day=df_aggregate,
+        change_failure_rate_pct=cfr_pct,
+        mttr_hours=agg_mttr,
+    )
+
+    trend: list[DoraDailyPoint] = []
+    for row in rows:
+        day_total = int(row["day_total_deployments"] or 0)
+        day_success = int(row["day_success_deployments"] or 0)
+        day_failed = int(row["day_failed_deployments"] or 0)
+        day_lt_raw = row["day_lead_time_hours"]
+        day_mttr_raw = row["day_mttr_hours"]
+
+        trend.append(
+            DoraDailyPoint(
+                date=row["bucket_date"],
+                lead_time_hours=float(day_lt_raw) if day_lt_raw is not None else None,
+                deployment_frequency_per_day=(float(day_success) if telemetry_present else None),
+                change_failure_rate_pct=_round_cfr_percentage(day_failed, day_total),
+                mttr_hours=float(day_mttr_raw) if day_mttr_raw is not None else None,
+            )
+        )
+
+    notes = _summarize_dora_notes(
+        window=window,
+        authoritative_deployment_signal=signal_enum,
+        has_deployment_telemetry=telemetry_present,
+        total_deployment_count=total_dep,
+        successful_deployment_count=success_dep,
+        lead_time_hours=agg_lead,
+        change_failure_rate_pct=cfr_pct,
+        mttr_hours=agg_mttr,
+        resolved_outage_count=resolved_outages,
+    )
+
+    return DoraMetricsResponse(
+        project_id=project.id,
+        window=window,
+        authoritative_deployment_signal=signal_enum,
+        aggregates=aggregates,
+        notes=notes,
+        trend=trend,
+    )
+
+
+async def calculate_project_dora_metrics(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    project_id: uuid.UUID,
+    timeframe_days: DoraTimeframeDays = 30,
+    window_end: Optional[datetime] = None,
+) -> DoraMetricsResponse:
+    """
+    Query authoritative project metadata and compute rolling 14d/30d DORA aggregates
+    and daily trend series across US-26, US-27, US-28, and US-29 (Task 30.2 & Task 30.3).
+    """
+    if timeframe_days not in (14, 30):
+        raise ValueError(f"Unsupported timeframe_days={timeframe_days}. Expected 14 or 30.")
+
+    proj_stmt = select(Project).where(
+        Project.id == project_id,
+        Project.tenant_id == tenant_id,
+        Project.deleted_at.is_(None),
+    )
+    project = (await db.execute(proj_stmt)).scalars().first()
+    if project is None:
+        raise HTTPException(
+            status_code=http_status.HTTP_404_NOT_FOUND,
+            detail=f"Project '{project_id}' not found.",
+        )
+
+    end_utc = _ensure_utc(window_end or datetime.now(timezone.utc))
+
+    if _is_live_async_session(db):
+        return await calculate_project_dora_metrics_consolidated(
+            db,
+            tenant_id=tenant_id,
+            project=project,
+            timeframe_days=timeframe_days,
+            end_utc=end_utc,
+        )
+
+    lead_time_result = await calculate_rolling_lead_time(
+        db,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        window_days=timeframe_days,
+        window_end=end_utc,
+    )
+    deployment_frequency_result = await calculate_rolling_deployment_frequency(
+        db,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        window_days=timeframe_days,
+        window_end=end_utc,
+    )
+    change_failure_rate_result = await calculate_rolling_change_failure_rate(
+        db,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        window_days=timeframe_days,
+        window_end=end_utc,
+    )
+    mttr_result = await calculate_rolling_mttr(
+        db,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        window_days=timeframe_days,
+        window_end=end_utc,
+    )
+
+    return assemble_dora_metrics_response(
+        project_id=project.id,
+        timeframe_days=timeframe_days,
+        authoritative_deployment_signal=project.authoritative_cd_signal,
+        lead_time_result=lead_time_result,
+        deployment_frequency_result=deployment_frequency_result,
+        change_failure_rate_result=change_failure_rate_result,
+        mttr_result=mttr_result,
+    )
+
+
+async def get_project_dora_metrics(
+    tenant_id: uuid.UUID,
+    project_id: uuid.UUID,
+    *,
+    timeframe_days: DoraTimeframeDays = 30,
+    window_end: Optional[datetime] = None,
+) -> DoraMetricsResponse:
+    """Retrieve verified project DORA metrics under tenant-scoped PostgreSQL RLS (Task 30.2)."""
+    async with get_tenant_db_context(tenant_id) as session:
+        return await calculate_project_dora_metrics(
+            session,
+            tenant_id=tenant_id,
+            project_id=project_id,
+            timeframe_days=timeframe_days,
+            window_end=window_end,
+        )

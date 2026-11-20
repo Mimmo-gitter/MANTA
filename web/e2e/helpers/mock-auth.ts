@@ -1,5 +1,10 @@
 import type { Page, Route } from "@playwright/test";
-import type { ProjectItem, RepositoryItem } from "../../src/types/project";
+import type {
+  HealthProbeConfig,
+  ProductionFailureSession,
+  ProjectItem,
+  RepositoryItem,
+} from "../../src/types/project";
 
 export interface MockMemberRow {
   id: string;
@@ -286,6 +291,23 @@ export async function mockAuthenticatedSession(
       await route.fallback();
     },
   );
+
+  await page.route(
+    (url) => url.pathname === "/api/v1/dead-letters",
+    async (route) => {
+      if (route.request().method() === "GET" || route.request().method() === "OPTIONS") {
+        await fulfillCorsJson(route, 200, {
+          items: [],
+          unresolved_count: 0,
+          total: 0,
+          limit: 50,
+          offset: 0,
+        });
+        return;
+      }
+      await route.fallback();
+    },
+  );
 }
 
 /**
@@ -388,12 +410,13 @@ export async function mockMembersEndpoints(
 
 export interface StatefulProjectsApiOptions {
   currentRoles?: string[];
+  healthConfigByProject?: Record<string, Partial<HealthProbeConfig>>;
+  healthSignalsByProject?: Record<string, ProductionFailureSession[]>;
 }
 
 /**
- * Stateful in-memory projects, repository linking, and deployment-signal API mock for Playwright E2E suites.
- * Supports project creation, unique slug resolution, repo linking/unlinking,
- * persistence across page reloads, and RBAC enforcement (403 for non-admin roles).
+ * Stateful in-memory projects, repository linking, deployment-signal, and health-sources API mock
+ * for Playwright E2E suites. Supports persistence across reloads and RBAC enforcement (403).
  */
 export async function setupStatefulProjectsApi(
   page: Page,
@@ -404,6 +427,31 @@ export async function setupStatefulProjectsApi(
     ...p,
     repositories: [...(p.repositories || [])],
   }));
+
+  const healthConfigs = new Map<string, HealthProbeConfig>();
+  const getOrInitHealthConfig = (project: ProjectItem): HealthProbeConfig => {
+    const existing = healthConfigs.get(project.id);
+    if (existing) return existing;
+    const override = options?.healthConfigByProject?.[project.id] ?? {};
+    const created: HealthProbeConfig = {
+      project_id: project.id,
+      tenant_id: project.tenant_id,
+      health_probe_enabled: project.health_probe_enabled ?? true,
+      health_probe_source: project.health_probe_source ?? "generic",
+      health_probe_url: project.health_probe_url ?? null,
+      health_probe_interval_seconds: project.health_probe_interval_seconds ?? 60,
+      health_status: project.health_status ?? "HEALTHY",
+      webhook_url: `http://localhost:8000/api/v1/webhooks/projects/${project.id}/health`,
+      project_health_signals_url: `http://localhost:8000/api/v1/projects/${project.id}/health-signals`,
+      webhook_secret_masked: "whsec_manta_••••8c41",
+      webhook_secret: null,
+      updated_at: project.updated_at,
+      ...override,
+    };
+    healthConfigs.set(project.id, created);
+    return created;
+  };
+  let secretSeq = 1;
 
   const isRoleAdmin = (options?.currentRoles ?? ["TENANT_ADMIN"]).includes(
     "TENANT_ADMIN",
@@ -691,6 +739,153 @@ export async function setupStatefulProjectsApi(
             project.authoritative_deployment_signal,
           updated_at: project.updated_at,
         });
+        return;
+      }
+      await route.fallback();
+    },
+  );
+
+  await page.route(
+    (url) => /^\/api\/v1\/projects\/[^/]+\/health-config$/.test(url.pathname),
+    async (route) => {
+      const method = route.request().method();
+      if (method === "OPTIONS") {
+        await fulfillCorsJson(route, 204);
+        return;
+      }
+      const match = new URL(route.request().url()).pathname.match(
+        /^\/api\/v1\/projects\/([^/]+)\/health-config$/,
+      );
+      const projectId = match?.[1] ?? "";
+      const project = projects.find(
+        (p) => p.id === projectId || p.slug === projectId,
+      );
+      if (!project) {
+        await fulfillCorsJson(route, 404, { detail: "Project not found" });
+        return;
+      }
+      const cfg = getOrInitHealthConfig(project);
+      if (method === "GET") {
+        await fulfillCorsJson(route, 200, {
+          ...cfg,
+          webhook_secret: null,
+        });
+        return;
+      }
+      if (method === "PATCH") {
+        if (!isRoleAdmin) {
+          await fulfillCorsJson(route, 403, {
+            detail: "Forbidden: insufficient permissions",
+          });
+          return;
+        }
+        const body = (route.request().postDataJSON() ?? {}) as Partial<{
+          health_probe_enabled: boolean;
+          health_probe_source: string;
+          health_probe_url: string | null;
+          health_probe_interval_seconds: number;
+          health_webhook_secret: string;
+        }>;
+        if (body.health_probe_enabled !== undefined) {
+          cfg.health_probe_enabled = body.health_probe_enabled;
+          project.health_probe_enabled = body.health_probe_enabled;
+        }
+        if (body.health_probe_source !== undefined) {
+          cfg.health_probe_source = body.health_probe_source;
+          project.health_probe_source = body.health_probe_source;
+        }
+        if (body.health_probe_url !== undefined) {
+          cfg.health_probe_url = body.health_probe_url;
+          project.health_probe_url = body.health_probe_url;
+        }
+        if (body.health_probe_interval_seconds !== undefined) {
+          cfg.health_probe_interval_seconds = body.health_probe_interval_seconds;
+          project.health_probe_interval_seconds = body.health_probe_interval_seconds;
+        }
+        let returnedPlaintext: string | null = null;
+        if (body.health_webhook_secret) {
+          returnedPlaintext = body.health_webhook_secret;
+          cfg.webhook_secret_masked = `whsec_••••${returnedPlaintext.slice(-4)}`;
+        }
+        cfg.updated_at = new Date().toISOString();
+        project.updated_at = cfg.updated_at;
+        await fulfillCorsJson(route, 200, {
+          ...cfg,
+          webhook_secret: returnedPlaintext,
+        });
+        return;
+      }
+      await route.fallback();
+    },
+  );
+
+  await page.route(
+    (url) =>
+      /^\/api\/v1\/projects\/[^/]+\/health-config\/rotate-secret$/.test(
+        url.pathname,
+      ),
+    async (route) => {
+      const method = route.request().method();
+      if (method === "OPTIONS") {
+        await fulfillCorsJson(route, 204);
+        return;
+      }
+      const match = new URL(route.request().url()).pathname.match(
+        /^\/api\/v1\/projects\/([^/]+)\/health-config\/rotate-secret$/,
+      );
+      const projectId = match?.[1] ?? "";
+      const project = projects.find(
+        (p) => p.id === projectId || p.slug === projectId,
+      );
+      if (!project) {
+        await fulfillCorsJson(route, 404, { detail: "Project not found" });
+        return;
+      }
+      if (method === "POST") {
+        if (!isRoleAdmin) {
+          await fulfillCorsJson(route, 403, {
+            detail: "Forbidden: insufficient permissions",
+          });
+          return;
+        }
+        const cfg = getOrInitHealthConfig(project);
+        const suffix = String(1000 + secretSeq).slice(-4);
+        secretSeq += 1;
+        const freshSecret = `whsec_manta_9f41e82b0c7d41a8e592d31b${suffix}`;
+        cfg.webhook_secret_masked = `whsec_manta_••••${suffix}`;
+        cfg.updated_at = new Date().toISOString();
+        await fulfillCorsJson(route, 200, {
+          ...cfg,
+          webhook_secret: freshSecret,
+        });
+        return;
+      }
+      await route.fallback();
+    },
+  );
+
+  await page.route(
+    (url) => /^\/api\/v1\/projects\/[^/]+\/health-signals$/.test(url.pathname),
+    async (route) => {
+      const method = route.request().method();
+      if (method === "OPTIONS") {
+        await fulfillCorsJson(route, 204);
+        return;
+      }
+      const match = new URL(route.request().url()).pathname.match(
+        /^\/api\/v1\/projects\/([^/]+)\/health-signals$/,
+      );
+      const projectId = match?.[1] ?? "";
+      const project = projects.find(
+        (p) => p.id === projectId || p.slug === projectId,
+      );
+      if (!project) {
+        await fulfillCorsJson(route, 404, { detail: "Project not found" });
+        return;
+      }
+      if (method === "GET") {
+        const list = options?.healthSignalsByProject?.[project.id] ?? [];
+        await fulfillCorsJson(route, 200, list);
         return;
       }
       await route.fallback();

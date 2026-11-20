@@ -22,6 +22,7 @@ logger = logging.getLogger("app.auth.middleware")
 PUBLIC_PATHS = frozenset(
     {
         "/health",
+        "/metrics",
         "/docs",
         "/docs/oauth2-redirect",
         "/redoc",
@@ -53,10 +54,33 @@ class JWTAuthMiddleware(BaseHTTPMiddleware):
                 return True
         return False
 
+    @staticmethod
+    def _is_health_signal_intake_request(request: Request) -> bool:
+        if request.method.upper() != "POST":
+            return False
+        match, route, _ = find_matched_route(request.app, request.scope)
+        if match != Match.FULL or route is None:
+            return False
+        return getattr(route, "path", None) == "/api/v1/projects/{project_id}/health-signals"
+
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         # Exempt CORS preflight and public health/documentation endpoints
         if request.method == "OPTIONS" or self.is_public(request.url.path):
             return await call_next(request)
+
+        # Dual-auth health signal intake endpoint accepts HMAC/token webhook auth
+        # in addition to OIDC RS256 Bearer JWT auth (Task 68.3).
+        if self._is_health_signal_intake_request(request):
+            auth_header = request.headers.get("Authorization")
+            has_jwt_bearer = False
+            if auth_header and auth_header.lower().startswith("bearer "):
+                bearer_val = auth_header[7:].strip()
+                parts = bearer_val.split(".")
+                has_jwt_bearer = (
+                    len(parts) == 3 and all(bool(p) for p in parts) and parts[0].startswith("ey")
+                )
+            if not has_jwt_bearer:
+                return await call_next(request)
 
         client: JWKSClient | None = getattr(request.app.state, "jwks_client", None)
         if client is None:

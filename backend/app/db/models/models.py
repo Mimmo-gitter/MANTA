@@ -245,6 +245,12 @@ class Project(Base):
     )
     wip_limit_per_dev: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
     pr_stale_threshold_hours: Mapped[int] = mapped_column(Integer, default=48, nullable=False)
+    health_probe_enabled: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    health_probe_source: Mapped[str] = mapped_column(String(64), default="webhook", nullable=False)
+    health_webhook_secret_hash: Mapped[Optional[str]] = mapped_column(Text)
+    health_probe_url: Mapped[Optional[str]] = mapped_column(String(1024))
+    health_probe_interval_seconds: Mapped[int] = mapped_column(Integer, default=60, nullable=False)
+    health_status: Mapped[str] = mapped_column(String(32), default="HEALTHY", nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
@@ -261,6 +267,9 @@ class Project(Base):
     deployments: Mapped[List["Deployment"]] = relationship(
         back_populates="project", cascade="all, delete-orphan"
     )
+    production_failures: Mapped[List["ProductionFailure"]] = relationship(
+        back_populates="project", cascade="all, delete-orphan"
+    )
 
     @property
     def authoritative_deployment_signal(self) -> str:
@@ -269,6 +278,30 @@ class Project(Base):
     @authoritative_deployment_signal.setter
     def authoritative_deployment_signal(self, value: str) -> None:
         self.authoritative_cd_signal = value
+
+    @property
+    def health_webhook_secret(self) -> Optional[str]:
+        """Return decrypted health webhook secret when configured."""
+        if not self.health_webhook_secret_hash:
+            return None
+        from app.integrations.crypto import encryption_service
+
+        if encryption_service.is_encrypted(self.health_webhook_secret_hash):
+            return encryption_service.decrypt(self.health_webhook_secret_hash)
+        return self.health_webhook_secret_hash
+
+    @health_webhook_secret.setter
+    def health_webhook_secret(self, value: Optional[str]) -> None:
+        """Encrypt and store the project's health webhook HMAC secret."""
+        if value is None:
+            self.health_webhook_secret_hash = None
+            return
+        from app.integrations.crypto import encryption_service
+
+        if encryption_service.is_encrypted(value):
+            self.health_webhook_secret_hash = value
+        else:
+            self.health_webhook_secret_hash = encryption_service.encrypt(value)
 
 
 class ProjectMember(Base):
@@ -392,6 +425,7 @@ class WebhookEvent(Base):
     attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     claimed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     error_message: Mapped[Optional[str]] = mapped_column(Text)
+    active_fencing_token: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow, nullable=False
     )
@@ -864,6 +898,7 @@ class CommunicationEvent(Base):
     first_response_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     response_delay_seconds: Mapped[Optional[int]] = mapped_column(Integer)
     is_resolved: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    entity_version: Mapped[int] = mapped_column(BigInteger, default=1, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow, nullable=False
     )
@@ -955,6 +990,14 @@ class Deployment(Base):
             postgresql_where=text("external_deployment_id IS NOT NULL"),
         ),
         Index("idx_deployments_tenant_commit_sha", "tenant_id", "commit_sha"),
+        Index(
+            "idx_deployments_dora_lookup",
+            "tenant_id",
+            "project_id",
+            "environment",
+            "authoritative_signal_source",
+            "deployed_at",
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
@@ -984,6 +1027,7 @@ class Deployment(Base):
     )
     deployed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     lead_time_seconds: Mapped[Optional[float]] = mapped_column(Numeric(12, 2))
+    active_fencing_token: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow, nullable=False
     )
@@ -999,6 +1043,12 @@ class DeploymentPullRequest(Base):
 
     __table_args__ = (
         Index("idx_deployment_pull_requests_tenant_id", "tenant_id"),
+        Index(
+            "idx_deployment_pull_requests_tenant_dep_pr",
+            "tenant_id",
+            "deployment_id",
+            "pull_request_id",
+        ),
         UniqueConstraint("deployment_id", "pull_request_id", name="uq_deployment_pr"),
     )
 
@@ -1039,6 +1089,79 @@ class Incident(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow, nullable=False
     )
+
+
+class ProductionFailure(Base):
+    """Production health failure session tracked under US-68 for MTTR calculation."""
+
+    __tablename__ = "production_failures"
+
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('OPEN', 'RESOLVED')",
+            name="ck_production_failures_status",
+        ),
+        CheckConstraint(
+            "resolved_at IS NULL OR resolved_at >= started_at",
+            name="ck_production_failures_recovery_non_negative",
+        ),
+        Index("idx_production_failures_tenant_id", "tenant_id"),
+        Index(
+            "idx_production_failures_project_status",
+            "tenant_id",
+            "project_id",
+            "status",
+        ),
+        Index(
+            "idx_production_failures_project_resolved_at",
+            "tenant_id",
+            "project_id",
+            "resolved_at",
+        ),
+        Index(
+            "uq_production_failures_one_open_per_project",
+            "tenant_id",
+            "project_id",
+            unique=True,
+            postgresql_where=text("status = 'OPEN'"),
+        ),
+        Index(
+            "idx_production_failures_dora_mttr",
+            "tenant_id",
+            "project_id",
+            "status",
+            "resolved_at",
+            "started_at",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    incident_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("incidents.id", ondelete="SET NULL")
+    )
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    resolved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    recovery_time_seconds: Mapped[Optional[float]] = mapped_column(Numeric(12, 2, asdecimal=False))
+    status: Mapped[str] = mapped_column(String(32), default="OPEN", nullable=False)
+    probe_source: Mapped[str] = mapped_column(String(64), default="webhook", nullable=False)
+    severity: Mapped[str] = mapped_column(String(16), default="SEV-1", nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(timezone.utc),
+        onupdate=lambda: datetime.now(timezone.utc),
+        nullable=False,
+    )
+
+    project: Mapped["Project"] = relationship(back_populates="production_failures")
 
 
 class DeploymentIncident(Base):
@@ -1404,4 +1527,38 @@ class AuditLog(Base):
     payload_after: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB)
     occurred_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow, nullable=False
+    )
+
+
+# ============================================================================
+# DOMAIN 11: Mobile FCM registration
+# ============================================================================
+class MobileDevice(Base):
+    __tablename__ = "mobile_devices"
+    __table_args__ = (
+        Index("idx_mobile_devices_tenant_id", "tenant_id"),
+        UniqueConstraint("tenant_id", "user_id", "fcm_token", name="uq_tenant_user_fcm_token"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False
+    )
+
+    fcm_token: Mapped[str] = mapped_column(String(512), nullable=False)
+    platform: Mapped[str] = mapped_column(String(32), default="android", nullable=False)
+    device_name: Mapped[Optional[str]] = mapped_column(String(128))
+    app_version: Mapped[Optional[str]] = mapped_column(String(32))
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False
     )

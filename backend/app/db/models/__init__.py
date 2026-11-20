@@ -30,6 +30,7 @@ from .models import (
     Deployment,
     DeploymentPullRequest,
     Incident,
+    ProductionFailure,
     DeploymentIncident,
     MetricSnapshot,
     AnonymizedADR,
@@ -45,6 +46,7 @@ from .models import (
     ContributorPseudonymSalt,
     AuditLog,
     Invitation,
+    MobileDevice,
 )
 
 __all__ = [
@@ -80,6 +82,7 @@ __all__ = [
     "Deployment",
     "DeploymentPullRequest",
     "Incident",
+    "ProductionFailure",
     "DeploymentIncident",
     "MetricSnapshot",
     "AnonymizedADR",
@@ -94,4 +97,5 @@ __all__ = [
     "ProcessedOutboxEvent",
     "ContributorPseudonymSalt",
     "AuditLog",
+    "MobileDevice",
 ]

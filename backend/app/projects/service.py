@@ -19,6 +19,8 @@ from sqlalchemy.orm import selectinload
 from app.auth.schemas import TokenClaims
 from app.db.models.models import Incident, Integration, Project, ProjectLink, Repository, User
 from app.db.session import get_tenant_db_context
+from app.integrations.crypto import encryption_service
+from app.integrations.service import generate_webhook_secret
 from app.projects.schemas import (
     DeploymentSignalResponse,
     DeploymentSignalUpdateRequest,
@@ -76,6 +78,14 @@ async def create_project(
         )
         now = datetime.now(timezone.utc)
         clean_desc = data.description.strip() if data.description else None
+        raw_health_secret = (
+            data.health_webhook_secret.strip()
+            if data.health_webhook_secret and data.health_webhook_secret.strip()
+            else generate_webhook_secret()
+        )
+        encrypted_health_secret = encryption_service.encrypt(raw_health_secret)
+        clean_probe_source = (data.health_probe_source or "webhook").strip()[:64] or "webhook"
+        clean_probe_url = data.health_probe_url.strip() if data.health_probe_url else None
         project = Project(
             id=uuid.uuid4(),
             tenant_id=tenant_id,
@@ -88,6 +98,12 @@ async def create_project(
             lead_time_first_commit_strategy=data.lead_time_first_commit_strategy,
             wip_limit_per_dev=data.wip_limit_per_dev,
             pr_stale_threshold_hours=data.pr_stale_threshold_hours,
+            health_probe_enabled=data.health_probe_enabled,
+            health_probe_source=clean_probe_source,
+            health_webhook_secret_hash=encrypted_health_secret,
+            health_probe_url=clean_probe_url or None,
+            health_probe_interval_seconds=data.health_probe_interval_seconds,
+            health_status="HEALTHY",
             is_active=True,
             created_at=now,
             updated_at=now,
@@ -430,6 +446,23 @@ async def update_project(
             and data.lead_time_first_commit_strategy is not None
         ):
             project.lead_time_first_commit_strategy = data.lead_time_first_commit_strategy
+        if "health_probe_enabled" in fields and data.health_probe_enabled is not None:
+            project.health_probe_enabled = data.health_probe_enabled
+        if "health_probe_source" in fields and data.health_probe_source is not None:
+            project.health_probe_source = data.health_probe_source.strip()[:64] or "webhook"
+        if "health_probe_url" in fields:
+            project.health_probe_url = (
+                data.health_probe_url.strip() if data.health_probe_url else None
+            )
+        if (
+            "health_probe_interval_seconds" in fields
+            and data.health_probe_interval_seconds is not None
+        ):
+            project.health_probe_interval_seconds = data.health_probe_interval_seconds
+        if "health_webhook_secret" in fields and data.health_webhook_secret is not None:
+            project.health_webhook_secret_hash = encryption_service.encrypt(
+                data.health_webhook_secret.strip()
+            )
         if "is_active" in fields and data.is_active is not None:
             project.is_active = data.is_active
 

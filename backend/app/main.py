@@ -1,5 +1,6 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from app.auth.members_router import router as members_router
 from app.notifications.router import router as invitations_router
 
@@ -16,6 +17,7 @@ from app.refactoring import refactoring_router
 from app.search import search_router
 from app.tenants import router as tenants_router
 from app.webhooks import webhooks_router
+from app.mobile import mobile_router
 
 app = FastAPI(
     title="Engineering Intelligence Platform",
@@ -74,7 +76,15 @@ app.include_router(refactoring_router)
 app.include_router(search_router)
 app.include_router(adr_router)
 
+# Mobile FCM token registration endpoints (SCRUM-494)
+app.include_router(mobile_router)
+
 
 @app.get("/health")
 async def health_check():
     return {"status": "ok"}
+
+
+@app.get("/metrics", include_in_schema=False)
+async def prometheus_metrics() -> Response:
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)

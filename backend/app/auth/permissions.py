@@ -35,7 +35,7 @@ class Role(StrEnum):
 
 
 class Permission(StrEnum):
-    """The fourteen platform actions defined in the role-permission matrix."""
+    """The fifteen platform actions defined in the role-permission matrix."""
 
     VIEW_PROJECT_DORA = "VIEW_PROJECT_DORA"
     VIEW_PORTFOLIO_OVERVIEW = "VIEW_PORTFOLIO_OVERVIEW"
@@ -51,6 +51,7 @@ class Permission(StrEnum):
     PUBLISH_GLOBAL_ADR = "PUBLISH_GLOBAL_ADR"
     MANAGE_WEBHOOK_INTEGRATIONS = "MANAGE_WEBHOOK_INTEGRATIONS"
     MANAGE_TENANT_USERS_AND_ROLES = "MANAGE_TENANT_USERS_AND_ROLES"
+    MANAGE_OWN_MOBILE_DEVICES = "MANAGE_OWN_MOBILE_DEVICES"
 
 
 class PermissionMatrix:

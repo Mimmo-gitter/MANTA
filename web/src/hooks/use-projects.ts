@@ -1,20 +1,26 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { invalidateProjectDoraMetrics } from "@/hooks/use-project-dora-metrics";
 import {
   createProject,
   deleteProject,
   getDeploymentSignal,
   getProject,
+  getProjectHealthConfig,
   linkRepository,
+  listProjectHealthSignals,
   listProjectIncidents,
   listProjects,
+  rotateProjectHealthSecret,
   unlinkRepository,
   updateDeploymentSignal,
   updateProject,
+  updateProjectHealthConfig,
 } from "@/lib/projects-api";
 import type {
   DeploymentSignalUpdatePayload,
+  HealthProbeConfigUpdatePayload,
   ProjectCreatePayload,
   ProjectUpdatePayload,
   RepositoryLinkPayload,
@@ -27,6 +33,10 @@ export const projectQueryKeys = {
     ["projects", projectId, "deployment-signal"] as const,
   incidents: (projectId: string) =>
     ["projects", projectId, "incidents"] as const,
+  healthConfig: (projectId: string) =>
+    ["projects", projectId, "health-config"] as const,
+  healthSignals: (projectId: string) =>
+    ["projects", projectId, "health-signals"] as const,
 };
 
 export function useProjectsQuery(enabled = true) {
@@ -67,8 +77,11 @@ export function useCreateProjectMutation() {
 
   return useMutation({
     mutationFn: (payload: ProjectCreatePayload) => createProject(payload),
-    onSuccess: (created) => {
-      queryClient.invalidateQueries({ queryKey: projectQueryKeys.all });
+    onSuccess: async (created) => {
+      await queryClient.invalidateQueries({
+        queryKey: projectQueryKeys.all,
+      });
+
       queryClient.setQueryData(projectQueryKeys.detail(created.id), created);
     },
   });
@@ -80,11 +93,13 @@ export function useLinkRepositoryMutation(projectId: string) {
   return useMutation({
     mutationFn: (payload: RepositoryLinkPayload) =>
       linkRepository(projectId, payload),
-    onSuccess: () => {
+    onSuccess: async () => {
       queryClient.invalidateQueries({ queryKey: projectQueryKeys.all });
       queryClient.invalidateQueries({
         queryKey: projectQueryKeys.detail(projectId),
       });
+
+      await invalidateProjectDoraMetrics(queryClient, projectId);
     },
   });
 }
@@ -94,11 +109,16 @@ export function useUnlinkRepositoryMutation(projectId: string) {
 
   return useMutation({
     mutationFn: (repoId: string) => unlinkRepository(projectId, repoId),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: projectQueryKeys.all });
-      queryClient.invalidateQueries({
-        queryKey: projectQueryKeys.detail(projectId),
-      });
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({
+          queryKey: projectQueryKeys.all,
+        }),
+        queryClient.invalidateQueries({
+          queryKey: projectQueryKeys.detail(projectId),
+        }),
+        invalidateProjectDoraMetrics(queryClient, projectId),
+      ]);
     },
   });
 }
@@ -109,15 +129,18 @@ export function useUpdateDeploymentSignalMutation(projectId: string) {
   return useMutation({
     mutationFn: (payload: DeploymentSignalUpdatePayload) =>
       updateDeploymentSignal(projectId, payload),
-    onSuccess: (updated) => {
+    onSuccess: async (updated) => {
       queryClient.setQueryData(
         projectQueryKeys.deploymentSignal(projectId),
         updated,
       );
+
       queryClient.invalidateQueries({ queryKey: projectQueryKeys.all });
       queryClient.invalidateQueries({
         queryKey: projectQueryKeys.detail(projectId),
       });
+
+      await invalidateProjectDoraMetrics(queryClient, projectId);
     },
   });
 }
@@ -128,12 +151,15 @@ export function useUpdateProjectMutation(projectId: string) {
   return useMutation({
     mutationFn: (payload: ProjectUpdatePayload) =>
       updateProject(projectId, payload),
-    onSuccess: (updated) => {
+    onSuccess: async (updated) => {
       queryClient.setQueryData(projectQueryKeys.detail(projectId), updated);
+
       queryClient.invalidateQueries({ queryKey: projectQueryKeys.all });
       queryClient.invalidateQueries({
         queryKey: projectQueryKeys.detail(projectId),
       });
+
+      await invalidateProjectDoraMetrics(queryClient, projectId);
     },
   });
 }
@@ -162,5 +188,74 @@ export function useProjectIncidentsQuery(
     enabled: Boolean(projectId) && enabled,
     staleTime: 30_000,
     retry: 1,
+  });
+}
+
+export function useProjectHealthConfigQuery(
+  projectId: string | undefined,
+  enabled = true,
+  refetchInterval: number | false = false,
+) {
+  return useQuery({
+    queryKey: projectQueryKeys.healthConfig(projectId ?? ""),
+    queryFn: () => getProjectHealthConfig(projectId!),
+    enabled: Boolean(projectId) && enabled,
+    staleTime: 10_000,
+    retry: 1,
+    refetchInterval,
+    refetchIntervalInBackground: false,
+  });
+}
+
+export function useProjectHealthSignalsQuery(
+  projectId: string | undefined,
+  enabled = true,
+  refetchInterval: number | false = false,
+) {
+  return useQuery({
+    queryKey: projectQueryKeys.healthSignals(projectId ?? ""),
+    queryFn: () => listProjectHealthSignals(projectId!),
+    enabled: Boolean(projectId) && enabled,
+    staleTime: 10_000,
+    retry: 1,
+    refetchInterval,
+    refetchIntervalInBackground: false,
+  });
+}
+
+export function useUpdateProjectHealthConfigMutation(projectId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: (payload: HealthProbeConfigUpdatePayload) =>
+      updateProjectHealthConfig(projectId, payload),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(
+        projectQueryKeys.healthConfig(projectId),
+        updated,
+      );
+      queryClient.invalidateQueries({ queryKey: projectQueryKeys.all });
+      queryClient.invalidateQueries({
+        queryKey: projectQueryKeys.detail(projectId),
+      });
+    },
+  });
+}
+
+export function useRotateProjectHealthSecretMutation(projectId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => rotateProjectHealthSecret(projectId),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(
+        projectQueryKeys.healthConfig(projectId),
+        updated,
+      );
+      queryClient.invalidateQueries({ queryKey: projectQueryKeys.all });
+      queryClient.invalidateQueries({
+        queryKey: projectQueryKeys.detail(projectId),
+      });
+    },
   });
 }

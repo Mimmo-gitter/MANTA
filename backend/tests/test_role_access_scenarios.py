@@ -157,16 +157,20 @@ async def test_scrum_master_allowed_view_sprint_burndown(auth_fixture):
     pk = auth_fixture["private_key"]
     token = make_token(pk, roles=["SCRUM_MASTER"], sub="alpha_scrum")
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        resp = await ac.get(
-            f"/api/v1/projects/{TENANT_ID}/sprints/burndown",
-            headers={"Authorization": f"Bearer {token}"},
-        )
+    # Task 76.2: the endpoint is real now, so mock the service layer (no DB needed).
+    fake_response = {"sprint_id": None, "sprint_name": None, "series": []}
+    with mock.patch(
+        "app.projects.router.get_burndown_response",
+        mock.AsyncMock(return_value=fake_response),
+    ):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            resp = await ac.get(
+                f"/api/v1/projects/{TENANT_ID}/sprints/burndown",
+                headers={"Authorization": f"Bearer {token}"},
+            )
 
-    assert resp.status_code == 501
-    body = resp.json()
-    assert body["status"] == "not_implemented"
-    assert body["action"] == "VIEW_SPRINT_BURNDOWN_WIP"
+    assert resp.status_code == 200
+    assert resp.json() == fake_response
 
 
 @pytest.mark.asyncio

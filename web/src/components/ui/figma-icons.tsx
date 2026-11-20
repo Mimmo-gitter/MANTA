@@ -262,7 +262,30 @@ export function FigmaIntegrationsIcon({ className, ...props }: IconProps) {
   );
 }
 
-// 12. Access & Roles / Members (Users)
+// 12. Dead Letters (Inbox Tray with Down Arrow — Figma 787:15252)
+export function FigmaDeadLettersIcon({ className, ...props }: IconProps) {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 14 14"
+      fill="none"
+      xmlns="http://www.w3.org/2000/svg"
+      className={className}
+      {...props}
+    >
+      <path
+        d="M2.33301 7.58333V10.5C2.33301 11.1439 2.85577 11.6667 3.49967 11.6667H10.4997C11.1436 11.6667 11.6663 11.1439 11.6663 10.5V7.58333M2.33301 7.58333H4.66634L5.54134 9.04167H8.45801L9.33301 7.58333H11.6663M2.33301 7.58333L3.39412 3.33889C3.52459 2.81702 3.99357 2.45 4.53151 2.45H9.46784C10.0058 2.45 10.4748 2.81702 10.6052 3.33889L11.6663 7.58333M6.99967 4.08333V7.0M6.99967 7.0L5.54134 5.54167M6.99967 7.0L8.45801 5.54167"
+        stroke="currentColor"
+        strokeWidth="1.05"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+// 13. Access & Roles / Members (Users)
 export function FigmaMembersIcon({ className, ...props }: IconProps) {
   return (
     <svg

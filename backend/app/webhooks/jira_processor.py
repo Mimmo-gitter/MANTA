@@ -45,6 +45,7 @@ from app.db.models.models import (
     IssueTransition,
     Project,
 )
+from app.webhooks.metrics import record_dropped_stale_event
 from app.webhooks.sweeper import complete_webhook_event
 
 logger = logging.getLogger("app.webhooks.jira_processor")
@@ -519,6 +520,7 @@ async def ingest_jira_event_in_session(
             and existing_issue.changelog_id is not None
             and changelog_id <= existing_issue.changelog_id
         ):
+            record_dropped_stale_event("jira")
             logger.warning(
                 "Stale out-of-order Jira webhook received for %s: changelog_id=%s <= %s; discarding event.",
                 external_key,

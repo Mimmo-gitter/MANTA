@@ -1,7 +1,7 @@
 /**
  * Pure helpers and constants for the Delivery Analytics (DORA) dashboard:
  * formatting, chart-series helpers, metric metadata, deployment-signal helpers,
- * empty view-model builder, and mock-mode resolution. No React in this file.
+ * empty view-model builder. No React in this file.
  */
 import {
   DORA_METRIC_IDS,
@@ -9,7 +9,6 @@ import {
   type DoraDataSource,
   type DoraMetricId,
   type DoraMetricViewModel,
-  type DoraMockScenario,
   type DoraTimeframe,
   type DoraTrendPoint,
   type DoraTrendViewModel,
@@ -344,38 +343,4 @@ export function buildEmptyDashboard(params: {
     trends,
     signal: null,
   };
-}
-
-// ==========================================================================
-// Mock mode resolution (development only)
-// ==========================================================================
-
-const MOCK_SCENARIOS: readonly DoraMockScenario[] = [
-  "populated",
-  "partial",
-  "empty",
-  "signal_not_configured",
-  "unavailable",
-  "error",
-  "loading",
-];
-
-/**
- * Mock mode requires BOTH a non-production build AND an explicit opt-in env flag.
- * In production builds this is statically false, so mock code is never reachable.
- */
-export function isMockModeEnabled(): boolean {
-  return (
-    process.env.NODE_ENV !== "production" &&
-    process.env.NEXT_PUBLIC_DORA_USE_MOCKS === "true"
-  );
-}
-
-/** Returns null whenever mock mode is off (always the case in production). */
-export function resolveMockScenario(raw: string | null): DoraMockScenario | null {
-  if (!isMockModeEnabled()) return null;
-  if (raw && (MOCK_SCENARIOS as readonly string[]).includes(raw)) {
-    return raw as DoraMockScenario;
-  }
-  return "populated";
 }
