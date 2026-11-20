@@ -1,0 +1,11 @@
+root = true
+
+[*.{kt,kts}]
+# Replaces android.set(true)
+ktlint_code_style = android_studio
+
+# Ignore function naming for @Composable functions
+ktlint_function_naming_ignore_when_annotated_with = Composable
+# Disable specific standard rules
+ktlint_standard_final-newline = disabled
+ktlint_standard_no-wildcard-imports = disabled
