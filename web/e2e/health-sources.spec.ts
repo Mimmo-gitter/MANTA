@@ -29,7 +29,7 @@ function buildResolvedSession(
   };
 }
 
-test.describe("Project Settings — Health Sources UI (SCRUM-451 / Task 68.2)", () => {
+test.describe("Project Settings — Health Sources UI (SCRUM-455 / Task 68.6 & SCRUM-451)", () => {
   test("6A: renders first-time setup and generates & reveals initial HMAC signing secret", async ({
     page,
   }) => {
@@ -164,6 +164,129 @@ test.describe("Project Settings — Health Sources UI (SCRUM-451 / Task 68.2)", 
     await page.getByTestId("secret-reveal-button").click();
     await expect(page.getByTestId("health-secret-hint")).toContainText(
       "Rotate Secret",
+    );
+  });
+
+  test("Task 68.6 / SCRUM-455: configuring health source renders configuration UI, saves provider selection, and persists across reload & navigation", async ({
+    page,
+  }) => {
+    const project = makeMockProject({
+      id: PROJECT_ID,
+      name: "Core Payment Gateway",
+      slug: "core-payment-gateway",
+    });
+
+    await mockAuthenticatedSession(page, { roles: ["TENANT_ADMIN"] });
+    await setupStatefulProjectsApi(page, [project], {
+      healthConfigByProject: {
+        [PROJECT_ID]: {
+          health_probe_source: "generic",
+          health_probe_enabled: true,
+          webhook_secret_masked: "whsec_manta_••••8c41",
+        },
+      },
+      healthSignalsByProject: {
+        [PROJECT_ID]: [buildResolvedSession()],
+      },
+    });
+
+    // 1. UI Rendering: Navigate to project settings and switch to Health Sources tab via UI
+    await page.goto("/projects/core-payment-gateway/settings");
+    await page.getByTestId("project-tab-health-sources").click();
+    await expect(page).toHaveURL(
+      /\/projects\/core-payment-gateway\/settings\?tab=health-sources/,
+    );
+
+    // Verify initial UI elements
+    await expect(page.getByTestId("health-status-pill")).toHaveText("Healthy");
+    await expect(page.getByTestId("health-probe-source-trigger")).toContainText(
+      "Generic Custom Probe",
+    );
+    await expect(page.getByTestId("health-webhook-url")).toContainText(
+      `/api/v1/webhooks/projects/${PROJECT_ID}/health`,
+    );
+    await expect(page.getByTestId("health-webhook-card")).toContainText(
+      '"probe_source": "generic"',
+    );
+
+    // 2. Select Datadog Monitor and verify saving & UI updates
+    await page.getByTestId("health-probe-source-trigger").click();
+    await expect(page.getByTestId("health-probe-source-menu")).toBeVisible();
+    await page.getByTestId("health-probe-option-datadog").click();
+
+    await expect(page.getByTestId("health-probe-source-trigger")).toContainText(
+      "Datadog Monitor",
+    );
+    await expect(page.getByTestId("health-webhook-card")).toContainText(
+      '"probe_source": "datadog"',
+    );
+    await expect(page.getByTestId("health-sources-toast")).toContainText(
+      "Probe source updated",
+    );
+
+    // 3. Select PagerDuty Webhook and verify saving & UI updates
+    await page.getByTestId("health-probe-source-trigger").click();
+    await expect(page.getByTestId("health-probe-source-menu")).toBeVisible();
+    await page.getByTestId("health-probe-option-pagerduty").click();
+
+    await expect(page.getByTestId("health-probe-source-trigger")).toContainText(
+      "PagerDuty Webhook",
+    );
+    await expect(page.getByTestId("health-webhook-card")).toContainText(
+      '"probe_source": "pagerduty"',
+    );
+    await expect(page.getByTestId("health-sources-toast")).toContainText(
+      "Probe source updated",
+    );
+
+    // 4. Persistence across full browser reload
+    await page.reload();
+    await expect(page).toHaveURL(
+      /\/projects\/core-payment-gateway\/settings\?tab=health-sources/,
+    );
+    await expect(page.getByTestId("health-probe-source-trigger")).toContainText(
+      "PagerDuty Webhook",
+    );
+    await expect(page.getByTestId("health-webhook-card")).toContainText(
+      '"probe_source": "pagerduty"',
+    );
+
+    // 5. Select Prometheus / Alertmanager, toggle probe switch, and verify persistence
+    await page.getByTestId("health-probe-source-trigger").click();
+    await page.getByTestId("health-probe-option-prometheus").click();
+    await expect(page.getByTestId("health-probe-source-trigger")).toContainText(
+      "Prometheus / Alertmanager",
+    );
+
+    const probeSwitch = page.getByTestId("health-probe-enabled-toggle");
+    await expect(probeSwitch).toHaveAttribute("aria-checked", "true");
+    await probeSwitch.click();
+    await expect(probeSwitch).toHaveAttribute("aria-checked", "false");
+    await expect(page.getByTestId("health-status-pill")).toHaveText("Paused");
+
+    await page.reload();
+    await expect(page.getByTestId("health-probe-source-trigger")).toContainText(
+      "Prometheus / Alertmanager",
+    );
+    await expect(page.getByTestId("health-probe-enabled-toggle")).toHaveAttribute(
+      "aria-checked",
+      "false",
+    );
+    await expect(page.getByTestId("health-status-pill")).toHaveText("Paused");
+
+    // 6. Persistence across in-app navigation
+    await page.goto("/projects");
+    await expect(
+      page.getByTestId("project-card-core-payment-gateway"),
+    ).toBeVisible();
+
+    await page.goto("/projects/core-payment-gateway/settings?tab=health-sources");
+    await expect(page.getByTestId("health-probe-source-trigger")).toContainText(
+      "Prometheus / Alertmanager",
+    );
+    await expect(page.getByTestId("health-probe-enabled-toggle")).toHaveAttribute(
+      "aria-checked",
+      "false",
     );
   });
 
