@@ -1075,6 +1075,7 @@ async def test_live_pg_all_three_providers_out_of_order_pipeline() -> None:
                 slug=f"ooo-426-{proj_id.hex[:6]}",
             )
         )
+        await db.flush()
         db.add(
             Repository(
                 id=repo_id,
@@ -1106,6 +1107,7 @@ async def test_live_pg_all_three_providers_out_of_order_pipeline() -> None:
                 is_active=True,
             )
         )
+        await db.flush()
 
     async def _stage_and_process(
         *,
