@@ -1,7 +1,8 @@
 # Canonical Provider Version Extraction & Out-of-Order Guard Specification
 
-> **Jira Reference:** `US-24` / `SCRUM-422` (`Task 24.1`) & `SCRUM-423` (`Task 24.2`)  
+> **Jira Reference:** `US-24` / `SCRUM-422` (`Task 24.1`), `SCRUM-423` (`Task 24.2`) & `SCRUM-425` (`Task 24.4`)  
 > **Target Module:** `backend/app/webhooks/versioning.py`  
+> **Test Scenarios Specification:** [`docs/out-of-order-webhook-test-scenarios.md`](out-of-order-webhook-test-scenarios.md)  
 > **Domain Entities Protected:** `pull_requests`, `issues`, `communication_events`
 
 ---
