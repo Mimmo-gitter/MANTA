@@ -155,6 +155,10 @@ class AuthRepositoryTest {
     @Test
     fun signOut_whenFcmUnregistrationFails_abortsAndRetainsLocalTokens() = runTest {
         val failingDeviceApi = object : DeviceApiService {
+            override suspend fun registerDevice(
+                request: com.manta.mobile.core.network.RegisterMobileDeviceRequest
+            ): Response<Unit> = Response.success(Unit)
+
             override suspend fun unregisterDevice(token: String): Response<Unit> =
                 Response.error(500, "Internal Server Error".toResponseBody(null))
         }
