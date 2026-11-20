@@ -318,7 +318,9 @@ class MockJobLeaseRow:
 
 
 class MockQueryResult:
-    def __init__(self, value: Any = None, row: Any = None, rows: list[Any] | None = None, rowcount: int = 0) -> None:
+    def __init__(
+        self, value: Any = None, row: Any = None, rows: list[Any] | None = None, rowcount: int = 0
+    ) -> None:
         self._value = value
         self._row = row
         self._rows = rows or []
@@ -378,9 +380,7 @@ class FencingMockDatabaseSession:
         self.committed_job_leases = {
             k: MockJobLeaseRow(**v.__dict__) for k, v in self.job_leases.items()
         }
-        self.committed_domain_rows = {
-            k: dict(v) for k, v in self.domain_rows.items()
-        }
+        self.committed_domain_rows = {k: dict(v) for k, v in self.domain_rows.items()}
 
     async def commit(self) -> None:
         self.committed = True
@@ -391,9 +391,7 @@ class FencingMockDatabaseSession:
         self.job_leases = {
             k: MockJobLeaseRow(**v.__dict__) for k, v in self.committed_job_leases.items()
         }
-        self.domain_rows = {
-            k: dict(v) for k, v in self.committed_domain_rows.items()
-        }
+        self.domain_rows = {k: dict(v) for k, v in self.committed_domain_rows.items()}
 
     def seed_row(
         self,
@@ -418,7 +416,9 @@ class FencingMockDatabaseSession:
     def get_row(self, table_name: str, record_id: uuid.UUID) -> dict[str, Any] | None:
         return self.domain_rows.get((table_name, record_id))
 
-    async def execute(self, statement: Any, params: dict[str, Any] | None = None) -> MockQueryResult:
+    async def execute(
+        self, statement: Any, params: dict[str, Any] | None = None
+    ) -> MockQueryResult:
         sql = str(statement).strip()
         params = params or {}
 
@@ -907,14 +907,12 @@ async def test_direct_sql_optimistic_fencing_updates_zero_rows_on_stale_token(
     # Worker 1 attempts direct SQL execution with stale token = 1
     # WHERE active_fencing_token <= 1 is FALSE (since 2 <= 1 is FALSE)
     stale_token = 1
-    stmt = (
-        text(
-            """
+    stmt = text(
+        """
             UPDATE pull_requests
             SET state = :state, active_fencing_token = :worker_claimed_token
             WHERE id = :pr_id AND tenant_id = :tenant_id AND active_fencing_token <= :worker_claimed_token
             """
-        )
     )
     res = await db.execute(
         stmt,
