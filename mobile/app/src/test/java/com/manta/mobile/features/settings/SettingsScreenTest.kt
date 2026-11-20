@@ -6,6 +6,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import com.manta.mobile.core.theme.ui.MobileTheme
+import com.manta.mobile.data.auth.UserSession
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -31,10 +32,10 @@ class SettingsScreenTest {
         composeTestRule.onNodeWithText(
             "Manage session access and platform preferences."
         ).assertIsDisplayed()
-        composeTestRule.onNodeWithText("Alex Mercer").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Lead").assertIsDisplayed()
-        composeTestRule.onNodeWithText("alex.vance@manta-labs.io").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Core Infrastructure Squad").assertIsDisplayed()
+        composeTestRule.onNodeWithText(UserSession.DEFAULT.displayName).assertIsDisplayed()
+        composeTestRule.onNodeWithText(UserSession.DEFAULT.primaryRole).assertIsDisplayed()
+        composeTestRule.onNodeWithText(UserSession.DEFAULT.displayEmail).assertIsDisplayed()
+        composeTestRule.onNodeWithText(UserSession.DEFAULT.squadName).assertIsDisplayed()
         composeTestRule.onNodeWithText("Hardware Token Authenticated").assertIsDisplayed()
         composeTestRule.onNodeWithText("Sign Out").performScrollTo().assertIsDisplayed()
     }
