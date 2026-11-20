@@ -69,6 +69,7 @@ class NormalizedIssue:
     created_at: Optional[datetime]
     event_at: Optional[datetime]
     incoming_version: Optional[int] = None
+    resolved_at: Optional[datetime] = None
 
 
 @dataclass
@@ -242,5 +243,6 @@ def normalize_jira_event(
         created_at=parse_dt(fields.get("created")),
         event_at=event_at,
         incoming_version=extract_entity_version("jira", payload),
+        resolved_at=parse_dt(fields.get("resolutiondate")),
     )
     return NormalizedJiraEvent(kind="issue", event_name=name, issue=issue)
