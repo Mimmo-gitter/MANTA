@@ -3,8 +3,6 @@
 import { useCallback, useMemo, useState } from "react";
 import { SprintBurndownChart } from "@/components/sprint-wip/sprint-burndown-chart";
 import { WipCongestion } from "@/components/sprint-wip/wip-congestion";
-import { SprintHealthRecommendation } from "@/components/sprint-wip/sprint-health-recommendation";
-import { SprintSummary } from "@/components/sprint-wip/sprint-summary";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
@@ -29,10 +27,13 @@ import { usePermissions } from "@/hooks/use-permissions";
 import { useProjectsQuery } from "@/hooks/use-projects";
 import type { ProjectItem } from "@/types/project";
 import { useSprintWip } from "@/hooks/use-sprint-wip";
-
-import { PREVIEW_SCENARIOS } from "@/lib/sprint-wip/mocks/sprint-wip-mock-data";
-
-import type { PreviewScenario, SprintWipData } from "@/types/sprint-wip";
+import type {
+  FlowMetricsResponse,
+  SprintWipStatus,
+  BurndownPoint,
+  WipItem,
+  WipTone,
+} from "@/types/sprint-wip";
 
 const PANEL = "rounded-[10px] border border-[#202738] bg-[#151b27]";
 const LABEL =
@@ -258,50 +259,79 @@ function UpcomingEmpty({ projectName }: { projectName: string }) {
   );
 }
 
-function ActiveDashboard({ data }: { data: SprintWipData }) {
-  const isHealthy = data.status === "healthy";
-  const isCritical = data.status === "critical";
+function ActiveDashboard({ data }: { data: FlowMetricsResponse }) {
+  const hasCriticalWip = data.wip.some((item) => item.over_limit);
 
-  const accent = isHealthy ? "#00d9a0" : isCritical ? "#fb7185" : "#f6b94b";
+  const hasWipAtLimit = data.wip.some(
+    (item) => item.limit > 0 && item.count >= item.limit,
+  );
+
+  const status: SprintWipStatus = hasCriticalWip
+    ? "critical"
+    : hasWipAtLimit
+      ? "warning"
+      : "healthy";
+
+  const accent =
+    status === "healthy"
+      ? "#00d9a0"
+      : status === "critical"
+        ? "#fb7185"
+        : "#f6b94b";
+
+  // Map backend burndown response to chart component format
+  const chart: BurndownPoint[] = data.burndown.map((point) => ({
+    day: point.date,
+    actual: point.remaining_sp,
+    ideal: point.ideal_sp,
+  }));
+
+  // Map backend WIP response to component format
+  const wip: WipItem[] = data.wip.map((item) => {
+    const normalizedStatus = item.status.toLowerCase();
+
+    let tone: WipTone = "blue";
+
+    if (item.over_limit || normalizedStatus.includes("blocked")) {
+      tone = "red";
+    } else if (normalizedStatus.includes("progress")) {
+      tone = "cyan";
+    } else if (
+      normalizedStatus.includes("done") ||
+      normalizedStatus.includes("complete")
+    ) {
+      tone = "green";
+    }
+
+    return {
+      name: item.status,
+      count: item.count,
+      limit: item.limit,
+      tone,
+    };
+  });
 
   return (
-    <>
-      <div className="grid gap-3 xl:grid-cols-[minmax(0,1.7fr)_minmax(280px,.9fr)]">
-        {/* Sprint Burndown */}
-        <section className={`${PANEL} min-w-0 p-4`}>
-          <PanelTitle title="Sprint Burndown" meta="STORY POINTS" />
+    <div className="grid gap-3 xl:grid-cols-[minmax(0,1.7fr)_minmax(280px,.9fr)]">
+      <section className={`${PANEL} min-w-0 p-4`}>
+        <PanelTitle title="Sprint Burndown" meta="STORY POINTS" />
 
-          <p className="mb-4 text-xs leading-relaxed text-[#94a1b5]">
-            Actual remaining story points compared with the ideal sprint
-            trajectory.
-          </p>
+        <p className="mb-4 text-xs leading-relaxed text-[#94a1b5]">
+          Actual remaining story points compared with the ideal sprint
+          trajectory.
+        </p>
 
-          <SprintBurndownChart
-            data={data.chart}
-            accent={accent}
-            scenario={data.status}
-          />
+        {chart.length > 0 ? (
+          <SprintBurndownChart data={chart} accent={accent} scenario={status} />
+        ) : (
+          <div className="grid min-h-[250px] place-items-center text-center text-xs text-[#8290a6]">
+            No burndown data available yet.
+          </div>
+        )}
+      </section>
 
-          <SprintSummary
-            variance={data.variance}
-            blocked={data.blocked}
-            completion={data.completion}
-            completionNote={data.completionNote}
-            status={data.status}
-          />
-        </section>
-
-        {/* WIP Congestion */}
-        <WipCongestion items={data.wip} status={data.status} />
-      </div>
-
-      {/* Sprint Health Recommendation */}
-      <SprintHealthRecommendation
-        status={data.status}
-        recommendation={data.recommendation}
-        recommendationDetail={data.recommendationDetail}
-      />
-    </>
+      <WipCongestion items={wip} status={status} />
+    </div>
   );
 }
 
@@ -313,14 +343,6 @@ export default function SprintWipPage() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-
-  const requestedPreview = searchParams.get("preview");
-
-  const previewEnabled =
-    process.env.NODE_ENV !== "production" &&
-    PREVIEW_SCENARIOS.some((s) => s.id === requestedPreview);
-
-  const preview = previewEnabled ? (requestedPreview as PreviewScenario) : null;
 
   const projectsQuery = useProjectsQuery(isAuthenticated && canView);
   const projects = projectsQuery.data ?? [];
@@ -334,10 +356,12 @@ export default function SprintWipPage() {
 
   const [isProjectDropdownOpen, setIsProjectDropdownOpen] = useState(false);
 
+  const requestedSprintId = searchParams.get("sprint");
+
   const sprintQuery = useSprintWip({
     projectId: selectedProject?.id ?? null,
+    sprintId: requestedSprintId,
     enabled: Boolean(selectedProject?.id && isAuthenticated && canView),
-    mockScenario: preview,
   });
 
   const updateParams = useCallback(
@@ -357,23 +381,30 @@ export default function SprintWipPage() {
     [pathname, router, searchParams],
   );
 
-  const sprintData =
-    sprintQuery.data?.kind === "ok" ? sprintQuery.data.data : null;
+  const flowMetrics = sprintQuery.data ?? null;
 
-  const unavailableReason =
-    sprintQuery.data?.kind === "unavailable" ? sprintQuery.data.reason : null;
+  const sprint = flowMetrics?.sprint ?? null;
 
-  const unexpectedError = sprintQuery.isError;
+  const hasCriticalWip = flowMetrics?.wip.some((item) => item.over_limit);
 
-  const status = sprintData?.status ?? "upcoming";
+  const hasWipAtLimit = flowMetrics?.wip.some(
+    (item) => item.limit > 0 && item.count >= item.limit,
+  );
 
-  const sprint = sprintData;
+  const status: SprintWipStatus | "upcoming" = !sprint
+    ? "upcoming"
+    : hasCriticalWip
+      ? "critical"
+      : hasWipAtLimit
+        ? "warning"
+        : "healthy";
 
   const projectOptions = useMemo(
     () =>
       projects.map((project: ProjectItem) => ({
         id: project.id,
         name: project.name,
+        repositoryCount: project.repositories.length,
       })),
     [projects],
   );
@@ -462,11 +493,6 @@ export default function SprintWipPage() {
             <h1 className="text-2xl font-semibold tracking-[-.5px] text-[#e5ebf4]">
               Sprint &amp; WIP Monitoring
             </h1>
-            {preview && (
-              <span className="rounded border border-[#70551e] bg-[#332a17] px-2 py-1 font-mono text-[8px] font-bold tracking-wider text-[#f6c453]">
-                DEMO PREVIEW
-              </span>
-            )}
           </div>
           <p className="max-w-2xl text-[13px] leading-6 text-[#94a1b5]">
             Monitor sprint delivery progress and identify workflow congestion
@@ -492,7 +518,7 @@ export default function SprintWipPage() {
               </span>
 
               <span className="rounded-md bg-[#1c2b38] px-1.5 py-0.5 font-mono text-[10px] font-semibold text-[#22d3ee]">
-                0 repos
+                {selectedProject.repositories?.length ?? 0} repos
               </span>
 
               <ChevronDown
@@ -526,7 +552,7 @@ export default function SprintWipPage() {
                       </span>
 
                       <span className="font-mono text-[10px] font-semibold text-[#22d3ee]">
-                        0 repos
+                        {project.repositoryCount} repos
                       </span>
 
                       {isSelected && (
@@ -541,38 +567,6 @@ export default function SprintWipPage() {
         </div>
       </header>
 
-      {process.env.NODE_ENV !== "production" && (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[#263448] bg-[#111a27] px-3 py-2">
-          <span className="mr-1 flex items-center gap-1.5 text-[9px] font-semibold uppercase tracking-wider text-[#8290a6]">
-            <Sparkles className="size-3 text-[#f6c453]" />
-            UI state preview
-          </span>
-
-          {PREVIEW_SCENARIOS.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => updateParams({ preview: item.id })}
-              className={`rounded px-2.5 py-1.5 text-[9px] font-semibold transition ${
-                preview === item.id
-                  ? "bg-[#00d9a0] text-[#061b16]"
-                  : "border border-[#293448] bg-[#182232] text-[#aab6c8] hover:border-[#00d9a0]/60"
-              }`}
-            >
-              {item.label}
-            </button>
-          ))}
-
-          <button
-            type="button"
-            onClick={() => updateParams({ preview: null })}
-            className="ml-auto text-[9px] text-[#8290a6] hover:text-white"
-          >
-            Use API data
-          </button>
-        </div>
-      )}
-
       <section className="flex flex-col gap-3 rounded-[10px] border border-[#202a3b] bg-[#151c28] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex min-w-0 items-center gap-3">
           <button
@@ -586,7 +580,7 @@ export default function SprintWipPage() {
                 Active sprint
               </p>
               <p className="truncate text-sm font-medium text-[#e0e4ed]">
-                {sprint?.sprint ?? "No active sprint"}
+                {sprint?.name ?? "No active sprint"}
               </p>
             </div>
 
@@ -597,52 +591,48 @@ export default function SprintWipPage() {
         <div className="flex flex-wrap items-center gap-3 sm:justify-end">
           <span className="flex items-center gap-2 text-xs text-[#aab7c9]">
             <CalendarDays className="size-3" />
-            {sprint?.dates ?? "Sprint dates not available"}
+            {sprint ? `State: ${sprint.state}` : "Sprint dates not available"}
           </span>
 
           <span className="flex items-center gap-2 text-xs text-[#aab7c9]">
             <Clock3 className="size-3" />
-            {sprint
-              ? `${sprint.day} · ${sprint.dayCount}`
-              : "Waiting for sprint data"}
+            {sprint?.state ?? "Waiting for sprint data"}
           </span>
 
           <StatusPill status={status} />
         </div>
       </section>
 
-      {preview === "upcoming" || !preview ? (
+      {sprintQuery.isLoading && (
+        <div className={`${PANEL} grid min-h-[300px] place-items-center`}>
+          <div className="text-center">
+            <RefreshCw className="mx-auto mb-3 size-5 animate-spin text-[#00d9a0]" />
+            <p className="text-xs text-[#94a1b5]">Loading sprint metrics...</p>
+          </div>
+        </div>
+      )}
+
+      {sprintQuery.isError && (
+        <div className="flex items-start gap-2 rounded-lg border border-[#71333a] bg-[#321e27] p-3 text-[10px] text-[#ff9aa1]">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+
+          <div>
+            <b>Unable to retrieve sprint data.</b>
+
+            <p className="mt-1 text-[#c18b93]">{sprintQuery.error.message}</p>
+
+            <button
+              className="mt-2 underline"
+              onClick={() => void sprintQuery.refetch()}
+            >
+              Try again
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!sprintQuery.isLoading && !sprintQuery.isError && !sprint && (
         <>
-          {unexpectedError && (
-            <div className="flex items-start gap-2 rounded-lg border border-[#71333a] bg-[#321e27] p-3 text-[10px] text-[#ff9aa1]">
-              <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-              <div>
-                <b>Unable to retrieve sprint data.</b>
-                <p className="mt-0.5 text-[#c18b93]">
-                  {sprintQuery.error instanceof Error
-                    ? sprintQuery.error.message
-                    : "The sprint endpoint returned an error."}
-                </p>
-                <button
-                  className="mt-2 underline"
-                  onClick={() => void sprintQuery.refetch()}
-                >
-                  Try again
-                </button>
-              </div>
-            </div>
-          )}
-
-          {sprintQuery.data?.kind === "unavailable" && !preview && (
-            <div className="flex items-start gap-2 rounded-lg border border-[#70551e] bg-[#2b2519] p-3 text-[10px] text-[#f6c453]">
-              <Info className="mt-0.5 size-4 shrink-0" />
-              <div>
-                <b>Sprint data is currently unavailable.</b>
-                <p className="mt-0.5 text-[#c5ae7c]">{unavailableReason}</p>
-              </div>
-            </div>
-          )}
-
           <UpcomingEmpty projectName={selectedProject.name} />
 
           <section className="flex flex-col gap-3 rounded-[10px] border border-[#263448] bg-[#131d2a] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
@@ -655,6 +645,7 @@ export default function SprintWipPage() {
                 <p className="text-[11px] font-semibold text-[#dce5f0]">
                   Sprint initialization guide
                 </p>
+
                 <p className="text-[9px] text-[#8290a6]">
                   Connect Jira and establish sprint scope to start tracking
                   delivery.
@@ -677,15 +668,12 @@ export default function SprintWipPage() {
             </div>
           </section>
         </>
-      ) : (
-        <>
-          {sprintData && <ActiveDashboard data={sprintData} />}
-
-          <p className="text-right font-mono text-[8px] text-[#66758c]">
-            Illustrative preview values · Not retrieved from the backend
-          </p>
-        </>
       )}
+
+      {!sprintQuery.isLoading &&
+        !sprintQuery.isError &&
+        sprint &&
+        flowMetrics && <ActiveDashboard data={flowMetrics} />}
     </main>
   );
 }

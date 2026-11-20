@@ -1,9 +1,33 @@
-
 export type SprintWipStatus = "healthy" | "warning" | "critical";
 
-export type PreviewScenario = SprintWipStatus | "upcoming";
-
 export type WipTone = "green" | "cyan" | "blue" | "red";
+
+export interface FlowMetricsSprint {
+  id: string;
+  name: string;
+  state: string;
+}
+
+export interface FlowMetricsBurndownPoint {
+  date: string;
+  remaining_sp: number | null;
+  ideal_sp: number;
+}
+
+export interface FlowMetricsWipItem {
+  status: string;
+  count: number;
+  limit: number;
+  over_limit: boolean;
+}
+
+export interface FlowMetricsResponse {
+  sprint: FlowMetricsSprint | null;
+  burndown: FlowMetricsBurndownPoint[];
+  wip: FlowMetricsWipItem[];
+}
+
+// Types used by existing UI components
 
 export interface BurndownPoint {
   day: string;
@@ -17,40 +41,3 @@ export interface WipItem {
   limit: number;
   tone: WipTone;
 }
-
-export interface SprintWipData {
-  sprint: string;
-  dates: string;
-  day: string;
-  dayCount: string;
-  status: SprintWipStatus;
-
-  remaining: number;
-  ideal: number;
-  variance: string;
-  blocked: number;
-
-  completion: string;
-  completionNote: string;
-
-  recommendation: string;
-  recommendationDetail: string;
-
-  wip: WipItem[];
-  chart: BurndownPoint[];
-}
-
-export interface PreviewScenarioOption {
-  id: PreviewScenario;
-  label: string;
-}
-
-export type SprintWipFetchResult =
-  | {
-      kind: "ok";
-      data: SprintWipData;
-    }
-  | {
-      kind: "unavailable";
-      reason: string;
-    };

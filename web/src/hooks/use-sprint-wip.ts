@@ -1,85 +1,40 @@
-
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+
 import { fetchSprintWipFromApi } from "@/lib/sprint-wip/sprint-wip-api";
 
-import type {
-  PreviewScenario,
-  SprintWipFetchResult,
-} from "@/types/sprint-wip";
+import type { FlowMetricsResponse } from "@/types/sprint-wip";
 
-// ==========================================================================
-// Source switch: mock (development only) or production API
-// ==========================================================================
-
-async function fetchSprintWip(params: {
-  projectId: string;
-  mockScenario: PreviewScenario | null;
-}): Promise<SprintWipFetchResult> {
-  const { projectId, mockScenario } = params;
-
-  if (mockScenario !== null) {
-    if (process.env.NODE_ENV !== "production") {
-      const {
-        SPRINT_WIP_MOCK_DATA,
-      } = await import(
-        "@/lib/sprint-wip/mocks/sprint-wip-mock-data"
-      );
-
-      if (mockScenario === "upcoming") {
-        return {
-          kind: "unavailable",
-          reason: "There is no active sprint for this project.",
-        };
-      }
-
-      return {
-        kind: "ok",
-        data: SPRINT_WIP_MOCK_DATA[mockScenario],
-      };
-    }
-
-    throw new Error(
-      "Sprint & WIP mock data is not available in production.",
-    );
-  }
-
-  return fetchSprintWipFromApi({ projectId });
-}
-
-// ==========================================================================
 // Query keys
-// ==========================================================================
 
 export const sprintWipQueryKeys = {
-  dashboard: (
-    projectId: string,
-    mockScenario: PreviewScenario | null,
-  ) =>
+  dashboard: (projectId: string, sprintId: string | null) =>
     [
       "projects",
       projectId,
-      "sprint-wip",
-      mockScenario ?? "api",
+      "flow-metrics",
+      sprintId ?? "active",
     ] as const,
 };
 
-// ==========================================================================
-// Sprint & WIP dashboard query
-// ==========================================================================
+// Sprint & WIP query
 
-export function useSprintWip(params: {
+interface UseSprintWipParams {
   projectId: string | null;
+  sprintId: string | null;
   enabled: boolean;
-  mockScenario: PreviewScenario | null;
-}) {
-  const { projectId, enabled, mockScenario } = params;
+}
 
-  return useQuery<SprintWipFetchResult, Error>({
+export function useSprintWip({
+  projectId,
+  sprintId,
+  enabled,
+}: UseSprintWipParams) {
+  return useQuery<FlowMetricsResponse, Error>({
     queryKey: sprintWipQueryKeys.dashboard(
       projectId ?? "",
-      mockScenario,
+      sprintId,
     ),
 
     queryFn: () => {
@@ -87,14 +42,16 @@ export function useSprintWip(params: {
         throw new Error("Project ID is required.");
       }
 
-      return fetchSprintWip({
+      return fetchSprintWipFromApi({
         projectId,
-        mockScenario,
+        sprintId,
       });
     },
 
-    enabled: enabled && projectId !== null,
+    enabled: enabled && Boolean(projectId),
+
     staleTime: 30_000,
-    retry: mockScenario === null ? 1 : false,
+
+    retry: 1,
   });
 }
