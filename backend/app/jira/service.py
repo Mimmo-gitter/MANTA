@@ -246,7 +246,7 @@ async def upsert_issue(
             assignee_pseudonym_id=assignee_id,
             issue_links=n.links,
             changelog_id=incoming,
-            entity_version=incoming if incoming is not None else 1,
+            entity_version=initial_version,
             resolved_at=n.resolved_at,
         )
         created = n.created_at or n.event_at
