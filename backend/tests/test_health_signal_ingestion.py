@@ -1793,4 +1793,3 @@ async def test_task_68_7_zero_second_failover_recovery_and_skew_rejection(in_mem
     assert store.failures[1].started_at == t_outage2
     assert store.failures[1].resolved_at is None
     assert proj.health_status == "FAILING"
-
