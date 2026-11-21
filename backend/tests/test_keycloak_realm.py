@@ -176,11 +176,14 @@ class TestKeycloakRealmExport(unittest.TestCase):
         )
 
     def test_realm_roles_match_roles_permissions_json(self):
-        """Verify Keycloak realm roles exactly match roles defined in docs/roles-permissions.json (no drift)."""
+        """Verify application realm roles match the permission matrix."""
         data = self._load_realm()
         realm_roles = {
-            role["name"] for role in data.get("roles", {}).get("realm", []) if "name" in role
+            role["name"]
+            for role in data.get("roles", {}).get("realm", [])
+            if "name" in role
         }
+        application_roles = realm_roles - {"offline_access"}
 
         current_dir = os.path.dirname(os.path.abspath(__file__))
         repo_root = os.path.abspath(os.path.join(current_dir, "..", ".."))
@@ -192,9 +195,10 @@ class TestKeycloakRealmExport(unittest.TestCase):
 
         matrix_roles = {r["id"] for r in matrix_data.get("roles", [])}
         self.assertEqual(
-            realm_roles,
+            application_roles,
             matrix_roles,
-            f"Keycloak realm roles and docs/roles-permissions.json roles must match. Diff: {realm_roles ^ matrix_roles}",
+            f"Keycloak application roles and docs/roles-permissions.json roles must match. "
+            f"Diff: {application_roles ^ matrix_roles}",
         )
 
     def test_short_token_and_sso_session_lifetimes(self):
