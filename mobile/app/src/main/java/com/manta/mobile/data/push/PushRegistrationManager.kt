@@ -33,8 +33,14 @@ class PushRegistrationManager(
                 Log.d(TAG, "Successfully registered FCM token with backend: $trimmedToken")
                 Result.success(Unit)
             } else {
-                Log.e(TAG, "Failed to register FCM token with backend (${response.code()})")
-                Result.failure(Exception("FCM token registration failed (${response.code()})"))
+                val errorBody = response.errorBody()?.string()
+                Log.e(
+                    TAG,
+                    "Failed to register FCM token with backend (${response.code()}): $errorBody"
+                )
+                Result.failure(
+                    Exception("FCM token registration failed (${response.code()}): $errorBody")
+                )
             }
         } catch (e: Exception) {
             Log.e(TAG, "Network error registering FCM token: ${e.message}", e)
