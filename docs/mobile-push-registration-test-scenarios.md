@@ -362,9 +362,7 @@ Verify that `mobile_devices` records are completely invisible and unreachable ac
 2. Tenant B opens a database session with `app.current_tenant_id = tenant_b_id`:
    ```python
    async with get_tenant_db_context(tenant_b_id) as session:
-       visible_device = await session.scalar(
-           select(MobileDevice).where(MobileDevice.id == device_id)
-       )
+       visible_device = await session.scalar(select(MobileDevice).where(MobileDevice.id == device_id))
    ```
 
 #### 5.2.4 Verification Assertions
@@ -446,8 +444,14 @@ assert "user_id" not in response_body
 
 # Assert allowed non-sensitive fields match exact schema contract
 expected_keys = {
-    "id", "platform", "device_name", "app_version",
-    "is_active", "last_seen_at", "created_at", "updated_at"
+    "id",
+    "platform",
+    "device_name",
+    "app_version",
+    "is_active",
+    "last_seen_at",
+    "created_at",
+    "updated_at",
 }
 assert set(response_body.keys()) == expected_keys
 ```
@@ -466,10 +470,7 @@ Verify that access to `POST /api/v1/mobile/devices` and `DELETE /api/v1/mobile/d
 ```python
 async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
     # 1. Unauthenticated POST
-    unauth_post = await client.post(
-        "/api/v1/mobile/devices",
-        json={"fcm_token": "some-token"}
-    )
+    unauth_post = await client.post("/api/v1/mobile/devices", json={"fcm_token": "some-token"})
     # 2. Unauthenticated DELETE
     unauth_delete = await client.delete("/api/v1/mobile/devices/some-token")
 ```
@@ -499,14 +500,12 @@ fcm_token = "fcm-token-idempotent-001"
 
 # 1. First registration call
 first_resp = await post_mobile_device(
-    client, token, fcm_token,
-    platform="android", device_name="Pixel 7", app_version="1.0.0"
+    client, token, fcm_token, platform="android", device_name="Pixel 7", app_version="1.0.0"
 )
 
 # 2. Second registration call with identical token and updated metadata
 second_resp = await post_mobile_device(
-    client, token, fcm_token,
-    platform="android", device_name="Pixel 8 Pro", app_version="1.1.0"
+    client, token, fcm_token, platform="android", device_name="Pixel 8 Pro", app_version="1.1.0"
 )
 ```
 
@@ -524,7 +523,9 @@ assert second_data["device_name"] == "Pixel 8 Pro"
 assert second_data["app_version"] == "1.1.0"
 
 # Assert last_seen_at refreshed
-assert datetime.fromisoformat(second_data["last_seen_at"]) >= datetime.fromisoformat(first_data["last_seen_at"])
+assert datetime.fromisoformat(second_data["last_seen_at"]) >= datetime.fromisoformat(
+    first_data["last_seen_at"]
+)
 
 # Assert database row count strictly equals 1
 async with get_tenant_db_context(tenant_id) as session:
@@ -557,9 +558,7 @@ fcm_token = "reactivation-token-001"
 # Manually set is_active = False in DB
 async with get_tenant_db_context(tenant_id) as session:
     await session.execute(
-        update(MobileDevice)
-        .where(MobileDevice.fcm_token == fcm_token)
-        .values(is_active=False)
+        update(MobileDevice).where(MobileDevice.fcm_token == fcm_token).values(is_active=False)
     )
     await session.commit()
 
@@ -574,9 +573,7 @@ assert response.json()["is_active"] is True
 
 # Verify database state
 async with get_tenant_db_context(tenant_id) as session:
-    device = await session.scalar(
-        select(MobileDevice).where(MobileDevice.fcm_token == fcm_token)
-    )
+    device = await session.scalar(select(MobileDevice).where(MobileDevice.fcm_token == fcm_token))
     assert device is not None
     assert device.is_active is True
 ```
@@ -594,8 +591,7 @@ Verify that when an application is upgraded (e.g. from version `1.0.0` to `2.1.0
 #### 5.8.3 Execution Sequence
 ```python
 response = await post_mobile_device(
-    client, token, "fcm-token-upgrade",
-    app_version="2.1.0", device_name="Upgraded Tablet"
+    client, token, "fcm-token-upgrade", app_version="2.1.0", device_name="Upgraded Tablet"
 )
 ```
 
@@ -621,9 +617,7 @@ Verify that a single user can register multiple distinct mobile devices (e.g. an
 #### 5.9.3 Execution Sequence
 ```python
 # Register Phone
-phone_resp = await post_mobile_device(
-    client, token, "fcm-token-phone", device_name="Pixel Phone"
-)
+phone_resp = await post_mobile_device(client, token, "fcm-token-phone", device_name="Pixel Phone")
 # Register Tablet
 tablet_resp = await post_mobile_device(
     client, token, "fcm-token-tablet", device_name="Samsung Tablet"
@@ -641,12 +635,14 @@ assert phone_id != tablet_id
 
 # Verify both exist as active rows in DB
 async with get_tenant_db_context(tenant_id) as session:
-    devices = (await session.scalars(
-        select(MobileDevice).where(
-            MobileDevice.tenant_id == tenant_id,
-            MobileDevice.user_id == user_id,
+    devices = (
+        await session.scalars(
+            select(MobileDevice).where(
+                MobileDevice.tenant_id == tenant_id,
+                MobileDevice.user_id == user_id,
+            )
         )
-    )).all()
+    ).all()
     assert len(devices) == 2
     assert all(d.is_active for d in devices)
 ```
@@ -800,12 +796,14 @@ Verify that once a device registration is deleted upon sign-out, backend notific
 ```python
 # Query active devices eligible for alert dispatch
 async with get_tenant_db_context(tenant_id) as session:
-    active_tokens = (await session.scalars(
-        select(MobileDevice.fcm_token).where(
-            MobileDevice.tenant_id == tenant_id,
-            MobileDevice.is_active.is_(True),
+    active_tokens = (
+        await session.scalars(
+            select(MobileDevice.fcm_token).where(
+                MobileDevice.tenant_id == tenant_id,
+                MobileDevice.is_active.is_(True),
+            )
         )
-    )).all()
+    ).all()
 ```
 
 #### 5.14.4 Verification Assertions
