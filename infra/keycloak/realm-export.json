@@ -500,7 +500,7 @@
           "temporary": false
         }
       ],
-      "realmRoles": ["SCRUM_MASTER", "DELIVERY_EXEC", "offline_access"]
+      "realmRoles": ["SCRUM_MASTER", "DELIVERY_DIRECTOR", "offline_access"]
     }
   ],
   "components": {

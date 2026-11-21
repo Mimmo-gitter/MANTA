@@ -5,7 +5,11 @@ from app.auth.permissions import Permission, require_permission
 from app.auth.schemas import TokenClaims
 from app.db.session import get_tenant_db
 from .schemas import RegisterMobileDeviceRequest, RegisterMobileDeviceResponse
-from .service import resolve_or_create_mobile_device, delete_mobile_device
+from .service import (
+    MobileUserNotFoundError,
+    delete_mobile_device,
+    resolve_or_create_mobile_device,
+)
 
 mobile_router = APIRouter(prefix="/api/v1/mobile", tags=["Mobile & FCM"])
 require_mobile_device_management = require_permission(Permission.MANAGE_OWN_MOBILE_DEVICES)
@@ -29,18 +33,26 @@ async def register_mobile_device(
     db: AsyncSession = Depends(get_tenant_db),
 ) -> RegisterMobileDeviceResponse:
     """Registers a new mobile client."""
-    if user.user_id is None:
+    if user.user_id is None and not user.sub and not user.email:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="User ID claim is required to register a new mobile device.",
+            detail="User identity claim is required to register a new mobile device.",
         )
 
-    return await resolve_or_create_mobile_device(
-        db,
-        user.tenant_uuid,
-        user.user_id,
-        payload,
-    )
+    try:
+        return await resolve_or_create_mobile_device(
+            db,
+            user.tenant_uuid,
+            user.user_id,
+            payload,
+            user_sub=user.sub,
+            user_email=user.email,
+        )
+    except MobileUserNotFoundError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=str(exc),
+        ) from exc
 
 
 @mobile_router.delete(
@@ -59,10 +71,10 @@ async def remove_mobile_device(
     db: AsyncSession = Depends(get_tenant_db),
 ):
     """Removes existing mobile client by its FCM token."""
-    if user.user_id is None:
+    if user.user_id is None and not user.sub and not user.email:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="User ID claim is required to remove a mobile device.",
+            detail="User identity claim is required to remove a mobile device.",
         )
     if len(token.strip()) == 0:
         raise HTTPException(
@@ -70,4 +82,11 @@ async def remove_mobile_device(
             detail="FCM token must not be blank.",
         )
 
-    await delete_mobile_device(db, user.tenant_uuid, user.user_id, token)
+    await delete_mobile_device(
+        db,
+        user.tenant_uuid,
+        user.user_id,
+        token,
+        user_sub=user.sub,
+        user_email=user.email,
+    )
