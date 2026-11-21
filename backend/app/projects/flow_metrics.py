@@ -138,9 +138,7 @@ async def compute_burndown(
     transitions_by_issue: dict[uuid.UUID, list[Any]] = {}
 
     for transition in transition_rows:
-        transitions_by_issue.setdefault(
-            transition.issue_id, []
-        ).append(transition)
+        transitions_by_issue.setdefault(transition.issue_id, []).append(transition)
 
     def is_done_status(status: Optional[str]) -> bool:
         normalized = (status or "").strip().casefold()
@@ -211,9 +209,7 @@ async def compute_burndown(
 
         remaining_sp: Optional[float] = None
         if day <= today_date:
-            remaining_sp = round(
-                max(0.0, total_sp - done_sp), 2
-            )
+            remaining_sp = round(max(0.0, total_sp - done_sp), 2)
 
         series.append(
             {
@@ -276,6 +272,7 @@ async def compute_wip(
         )
     return result
 
+
 async def compute_wip_by_developer(
     db: AsyncSession,
     tenant_id: uuid.UUID,
@@ -321,22 +318,19 @@ async def compute_wip_by_developer(
         current = int(issue_count)
 
         developer_label = (
-            "Developer "
-            + hashlib.sha256(pseudonym_id.encode("utf-8")).hexdigest()[:10].upper()
+            "Developer " + hashlib.sha256(pseudonym_id.encode("utf-8")).hexdigest()[:10].upper()
         )
 
         developers.append(
-        {
-            "developer_label": developer_label,
-            "count": current,
-            "limit": wip_limit,
-            "over_limit": current > wip_limit,
-        }
-    )
+            {
+                "developer_label": developer_label,
+                "count": current,
+                "limit": wip_limit,
+                "over_limit": current > wip_limit,
+            }
+        )
 
-    developers.sort(
-        key=lambda item: (-item["count"], item["developer_label"])
-    )
+    developers.sort(key=lambda item: (-item["count"], item["developer_label"]))
 
     return {
         "limit_per_developer": wip_limit,

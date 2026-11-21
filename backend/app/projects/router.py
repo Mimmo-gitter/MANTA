@@ -374,6 +374,7 @@ async def rotate_project_health_secret(
 # EXISTING STUB ENDPOINTS (PRESERVED)
 # ==============================================================================
 
+
 @router.get(
     "/{project_id}/sprints",
     summary="List project sprints",
@@ -381,9 +382,7 @@ async def rotate_project_health_secret(
 )
 async def list_project_sprints(
     project_id: uuid.UUID,
-    user: TokenClaims = Depends(
-        require_permission(Permission.VIEW_SPRINT_BURNDOWN_WIP)
-    ),
+    user: TokenClaims = Depends(require_permission(Permission.VIEW_SPRINT_BURNDOWN_WIP)),
 ) -> list[dict]:
     """Lists all stored sprints for a project under tenant isolation."""
     return await list_project_sprints_response(
