@@ -209,9 +209,9 @@ async def upsert_issue(
 
     prev_status = issue.status if issue is not None else None
 
-    assignee_id: Optional[str] = None
+    assignee_pseudonym_id: Optional[str] = None
     if n.assignee and n.assignee.get("id"):
-        assignee_id = await resolve_or_create_contributor_pseudonym(
+        assignee_pseudonym_id = await resolve_or_create_contributor_pseudonym(
             db,
             tenant_id,
             "jira",
@@ -243,7 +243,7 @@ async def upsert_issue(
             title=n.title or "",
             status=n.status or "Unknown",
             story_points=n.story_points,
-            assignee_pseudonym_id=assignee_id,
+            assignee_pseudonym_id=assignee_pseudonym_id,
             issue_links=n.links,
             changelog_id=incoming,
             entity_version=initial_version,
@@ -274,8 +274,8 @@ async def upsert_issue(
             update_values["story_points"] = n.story_points
         if sprint_id is not None:
             update_values["sprint_id"] = sprint_id
-        if assignee_id is not None:
-            issue.assignee_pseudonym_id = assignee_id
+        if assignee_pseudonym_id is not None:
+            update_values["assignee_pseudonym_id"] = assignee_pseudonym_id
         issue.issue_links = n.links
         issue.resolved_at = n.resolved_at
         if incoming is not None:

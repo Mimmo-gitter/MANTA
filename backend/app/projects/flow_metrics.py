@@ -7,8 +7,15 @@ import uuid
 from fastapi import HTTPException
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+import hashlib
 
-from app.db.models.models import Issue, Project, Sprint, WIPLimit
+from app.db.models.models import (
+    Issue,
+    IssueTransition,
+    Project,
+    Sprint,
+    WIPLimit,
+)
 from app.db.session import get_tenant_db_context
 
 
@@ -48,17 +55,64 @@ async def compute_burndown(
 
     rows = (
         await db.execute(
-            select(Issue.story_points, Issue.resolved_at).where(
-                Issue.tenant_id == tenant_id, Issue.sprint_id == sprint.id
+            select(
+                Issue.id,
+                Issue.story_points,
+                Issue.status,
+                Issue.resolved_at,
+            ).where(
+                Issue.tenant_id == tenant_id,
+                Issue.sprint_id == sprint.id,
             )
         )
     ).all()
 
-    total_sp = 0.0
-    for row in rows:
-        total_sp += float(row.story_points or 0)
+    if not rows:
+        return []
 
-    first_day = sprint.start_date.astimezone(timezone.utc).date()
+    issue_ids = [row.id for row in rows]
+
+    # Load the complete available status-transition history.
+    transition_rows = (
+        await db.execute(
+            select(
+                IssueTransition.issue_id,
+                IssueTransition.from_status,
+                IssueTransition.to_status,
+                IssueTransition.transitioned_at,
+            )
+            .where(
+                IssueTransition.tenant_id == tenant_id,
+                IssueTransition.issue_id.in_(issue_ids),
+            )
+            .order_by(
+                IssueTransition.issue_id,
+                IssueTransition.transitioned_at,
+            )
+        )
+    ).all()
+
+    transitions_by_issue: dict[uuid.UUID, list[Any]] = {}
+
+    for transition in transition_rows:
+        transitions_by_issue.setdefault(
+            transition.issue_id, []
+        ).append(transition)
+
+    def is_done_status(status: Optional[str]) -> bool:
+        normalized = (status or "").strip().casefold()
+        return normalized in {
+            "done",
+            "closed",
+            "resolved",
+            "complete",
+            "completed",
+        }
+
+    total_sp = sum(float(row.story_points or 0) for row in rows)
+
+    start_utc = sprint.start_date.astimezone(timezone.utc)
+    first_day = start_utc.date()
     last_day = sprint.end_date.astimezone(timezone.utc).date()
     if last_day < first_day:
         last_day = first_day
@@ -68,11 +122,43 @@ async def compute_burndown(
     series: list[dict[str, Any]] = []
     for index in range(day_count):
         day = first_day + timedelta(days=index)
-        day_end = datetime.combine(day + timedelta(days=1), time.min, tzinfo=timezone.utc)
+
+        # The first point is the sprint-start baseline.
+        # Subsequent points represent the end of each calendar day.
+        if index == 0:
+            cutoff = start_utc
+        else:
+            cutoff = datetime.combine(
+                day + timedelta(days=1),
+                time.min,
+                tzinfo=timezone.utc,
+            )
 
         done_sp = 0.0
         for row in rows:
-            if row.resolved_at is not None and row.resolved_at < day_end:
+            issue_transitions = transitions_by_issue.get(row.id, [])
+
+            if issue_transitions:
+                # Reconstruct the issue status at the selected cutoff.
+                current_status = issue_transitions[0].from_status
+
+                for transition in issue_transitions:
+                    if transition.transitioned_at >= cutoff:
+                        break
+
+                    current_status = transition.to_status
+
+                is_done = is_done_status(current_status)
+
+            elif row.resolved_at is not None:
+                # Fallback for issues without transition history.
+                is_done = row.resolved_at < cutoff
+
+            else:
+                # Last available fallback: current Jira issue status.
+                is_done = is_done_status(row.status)
+
+            if is_done:
                 done_sp += float(row.story_points or 0)
 
         if day_count > 1:
@@ -82,7 +168,9 @@ async def compute_burndown(
 
         remaining_sp: Optional[float] = None
         if day <= today_date:
-            remaining_sp = round(total_sp - done_sp, 2)
+            remaining_sp = round(
+                max(0.0, total_sp - done_sp), 2
+            )
 
         series.append(
             {
@@ -105,7 +193,9 @@ async def compute_wip(
         .where(
             Issue.tenant_id == tenant_id,
             Issue.project_id == project_id,
-            Issue.resolved_at.is_(None),
+            func.lower(func.trim(Issue.status)).notin_(
+                ("done", "closed", "resolved", "complete", "completed")
+            ),
         )
         .group_by(Issue.status)
     )
@@ -143,6 +233,74 @@ async def compute_wip(
         )
     return result
 
+async def compute_wip_by_developer(
+    db: AsyncSession,
+    tenant_id: uuid.UUID,
+    project_id: uuid.UUID,
+    sprint: Optional[Sprint],
+) -> dict[str, Any]:
+    # Get the project's WIP limit per developer.
+    limit_query = select(Project.wip_limit_per_dev).where(
+        Project.tenant_id == tenant_id,
+        Project.id == project_id,
+    )
+    wip_limit = (await db.execute(limit_query)).scalar_one()
+
+    # Count unfinished issues grouped by Jira contributor pseudonym.
+    count_query = (
+        select(
+            Issue.assignee_pseudonym_id,
+            func.count(Issue.id),
+        )
+        .where(
+            Issue.tenant_id == tenant_id,
+            Issue.project_id == project_id,
+            func.lower(func.trim(Issue.status)).notin_(
+                ("done", "closed", "resolved", "complete", "completed")
+            ),
+        )
+        .group_by(Issue.assignee_pseudonym_id)
+    )
+
+    if sprint is not None:
+        count_query = count_query.where(Issue.sprint_id == sprint.id)
+
+    rows = (await db.execute(count_query)).all()
+
+    developers: list[dict[str, Any]] = []
+    unassigned_count = 0
+
+    for pseudonym_id, issue_count in rows:
+        if pseudonym_id is None:
+            unassigned_count = int(issue_count)
+            continue
+
+        current = int(issue_count)
+
+        developer_label = (
+            "Developer "
+            + hashlib.sha256(pseudonym_id.encode("utf-8")).hexdigest()[:10].upper()
+        )
+
+        developers.append(
+        {
+            "developer_label": developer_label,
+            "count": current,
+            "limit": wip_limit,
+            "over_limit": current > wip_limit,
+        }
+    )
+
+    developers.sort(
+        key=lambda item: (-item["count"], item["developer_label"])
+    )
+
+    return {
+        "limit_per_developer": wip_limit,
+        "developers": developers,
+        "unassigned_count": unassigned_count,
+    }
+
 
 async def get_burndown_response(
     tenant_id: uuid.UUID,
@@ -174,4 +332,17 @@ async def get_flow_metrics_response(
             series = await compute_burndown(db, tenant_id, sprint)
             sprint_info = {"id": str(sprint.id), "name": sprint.name, "state": sprint.state}
         wip = await compute_wip(db, tenant_id, project_id, sprint)
-        return {"sprint": sprint_info, "burndown": series, "wip": wip}
+
+        wip_by_developer = await compute_wip_by_developer(
+            db,
+            tenant_id,
+            project_id,
+            sprint,
+        )
+
+        return {
+            "sprint": sprint_info,
+            "burndown": series,
+            "wip": wip,
+            "wip_by_developer": wip_by_developer,
+        }
