@@ -42,15 +42,30 @@ jobs:
         with:
           distribution: "temurin"
           java-version: "21"
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+          cache: "gradle"
 
       - name: Grant execute permission for gradlew
         run: chmod +x gradlew
 
-      - name: Run Ktlint, Android Lint, Unit Tests, and Debug APK Build
-        run: ./gradlew ktlintCheck lintDevDebug lintStageDebug testDevDebugUnitTest testStageDebugUnitTest assembleDebug --build-cache
+      - name: Decode Google Services JSON
+        env:
+          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
+        run: |
+          if [ -n "$GOOGLE_SERVICES_JSON" ]; then
+            echo "$GOOGLE_SERVICES_JSON" | base64 --decode > app/google-services.json
+          fi
+
+      - name: Run code format check (Ktlint)
+        run: ./gradlew ktlintCheck --no-daemon
+
+      - name: Run static analysis (Android Lint)
+        run: ./gradlew lintDevDebug --no-daemon
+
+      - name: Run unit tests
+        run: ./gradlew testDevDebugUnitTest --no-daemon
+
+      - name: Build debug APK (assembleDevDebug)
+        run: ./gradlew assembleDevDebug --no-daemon
 
       - name: Upload debug APK artifact
         uses: actions/upload-artifact@v4

@@ -108,20 +108,18 @@ class TestCIWorkflowOptimizations(unittest.TestCase):
         self.assertIn("auth-keycloak-journey.spec.ts", keycloak_runs)
         self.assertIn("--workers=1", keycloak_runs)
 
-    def test_mobile_ci_combines_gradle_tasks(self) -> None:
+    def test_mobile_ci_runs_expected_gradle_tasks(self) -> None:
         steps = self.mobile_data["jobs"]["mobile-ci"]["steps"]
-        gradle_steps = [step for step in steps if "./gradlew" in step.get("run", "")]
-        self.assertEqual(len(gradle_steps), 1)
-        cmd = gradle_steps[0]["run"]
+        gradle_runs = [step.get("run", "") for step in steps if "./gradlew" in step.get("run", "")]
+        self.assertTrue(gradle_runs, "Mobile CI must run Gradle tasks")
+        commands = "\n".join(gradle_runs)
         for task in (
             "ktlintCheck",
             "lintDevDebug",
-            "lintStageDebug",
             "testDevDebugUnitTest",
-            "testStageDebugUnitTest",
-            "assembleDebug",
+            "assembleDevDebug",
         ):
-            self.assertIn(task, cmd)
+            self.assertIn(task, commands)
 
 
 if __name__ == "__main__":

@@ -1,8 +1,12 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
+    alias(libs.plugins.google.services)
     alias(libs.plugins.ktlint)
 }
+
+val robolectricAndroidAll: Configuration = configurations.create("robolectricAndroidAll")
 
 android {
     namespace = "com.manta.mobile"
@@ -16,7 +20,6 @@ android {
         targetSdk = 37
         versionCode = 1
         versionName = "1.0"
-
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -42,7 +45,8 @@ android {
             dimension = "environment"
             applicationIdSuffix = ".dev"
             versionNameSuffix = "-dev"
-            buildConfigField("String", "API_URL", "\"http://localhost:8000/api\"")
+            buildConfigField("String", "API_URL", "\"http://localhost:8000/api/v1/\"")
+            buildConfigField("String", "KEYCLOAK_URL", "\"http://localhost:8080\"")
         }
         create("stage") {
             dimension = "environment"
@@ -51,20 +55,25 @@ android {
             buildConfigField("String", "API_URL", "\"https://stage-api.yourorg.com/api/v1/\"")
         }
     }
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+            all { test ->
+                test.systemProperty(
+                    "robolectric.dependency.dir",
+                    robolectricAndroidAll.singleFile.parentFile.absolutePath
+                )
+            }
+        }
+    }
 }
 
 tasks.getByPath("preBuild").dependsOn("ktlintFormat")
 
-tasks.register("lintDebug") {
-    group = "verification"
-    description = "Runs Android Lint on all debug variants (dev and stage)."
-    dependsOn("lintDevDebug", "lintStageDebug")
-}
-
-tasks.register("testDebugUnitTest") {
-    group = "verification"
-    description = "Runs unit tests on all debug variants (dev and stage)."
-    dependsOn("testDevDebugUnitTest", "testStageDebugUnitTest")
+tasks.withType<Test>().configureEach {
+    if (System.getProperty("os.name").contains("Windows", ignoreCase = true)) {
+        jvmArgs("-Djavax.net.ssl.trustStoreType=WINDOWS-ROOT")
+    }
 }
 
 ktlint {
@@ -78,6 +87,8 @@ ktlint {
 
 dependencies {
     implementation(platform(libs.androidx.compose.bom))
+    implementation(platform(libs.firebase.bom))
+
     implementation(libs.androidx.activity.compose)
     implementation(libs.androidx.compose.material3)
     implementation(libs.androidx.compose.material.icons.extended)
@@ -88,7 +99,32 @@ dependencies {
     implementation(libs.androidx.compose.ui.tooling.preview)
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
+
+    // Networking (Retrofit + OkHttp + Serialization)
+    implementation(libs.retrofit)
+    implementation(libs.retrofit.converter.kotlinx.serialization)
+    implementation(libs.okhttp)
+    implementation(libs.okhttp.logging.interceptor)
+    implementation(libs.kotlinx.serialization.json)
+    // Encrypted DataStore + Tink
+    implementation(libs.androidx.datastore.preferences)
+    implementation(libs.tink.android)
+    // Biometrics
+    implementation(libs.androidx.biometric)
+    // Firebase
+    implementation(libs.firebase.messaging)
+    // Vico
+    implementation(libs.vico.compose)
+    implementation(libs.vico.compose.m2)
+    implementation(libs.vico.compose.m3)
+    implementation(libs.vico.compose.glance)
+
     testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(platform(libs.androidx.compose.bom))
+    testImplementation(libs.androidx.compose.ui.test.junit4)
+    testImplementation(libs.robolectric)
+    robolectricAndroidAll(libs.robolectric.androidall)
     androidTestImplementation(platform(libs.androidx.compose.bom))
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     androidTestImplementation(libs.androidx.espresso.core)
