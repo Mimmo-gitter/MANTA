@@ -17,14 +17,28 @@ export interface FlowMetricsBurndownPoint {
 export interface FlowMetricsWipItem {
   status: string;
   count: number;
+  limit: number | null;
+  over_limit: boolean;
+}
+
+export interface FlowMetricsDeveloperItem {
+  developer_label: string;
+  count: number;
   limit: number;
   over_limit: boolean;
+}
+
+export interface FlowMetricsWipByDeveloper {
+  limit_per_developer: number;
+  developers: FlowMetricsDeveloperItem[];
+  unassigned_count: number;
 }
 
 export interface FlowMetricsResponse {
   sprint: FlowMetricsSprint | null;
   burndown: FlowMetricsBurndownPoint[];
   wip: FlowMetricsWipItem[];
+  wip_by_developer: FlowMetricsWipByDeveloper;
 }
 
 // Types used by existing UI components

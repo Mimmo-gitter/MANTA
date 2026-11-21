@@ -5,6 +5,8 @@ import { SprintBurndownChart } from "@/components/sprint-wip/sprint-burndown-cha
 import { WipCongestion } from "@/components/sprint-wip/wip-congestion";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { WipByDeveloper } from "@/components/sprint-wip/wip-by-developer";
+import { buildWipItems, getWipStatus } from "@/lib/sprint-wip";
 import {
   Activity,
   AlertTriangle,
@@ -259,78 +261,69 @@ function UpcomingEmpty({ projectName }: { projectName: string }) {
   );
 }
 
-function ActiveDashboard({ data }: { data: FlowMetricsResponse }) {
-  const hasCriticalWip = data.wip.some((item) => item.over_limit);
+function formatSprintDate(value: string): string {
+  const date = new Date(`${value.slice(0, 10)}T12:00:00`);
 
-  const hasWipAtLimit = data.wip.some(
-    (item) => item.limit > 0 && item.count >= item.limit,
-  );
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
 
-  const status: SprintWipStatus = hasCriticalWip
-    ? "critical"
-    : hasWipAtLimit
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(date);
+}
+
+function ActiveDashboard({
+  data,
+  wipItems,
+}: {
+  data: FlowMetricsResponse;
+  wipItems: WipItem[];
+}) {
+  const wipStatus = getWipStatus(wipItems);
+
+  const latestActualPoint = [...data.burndown]
+    .reverse()
+    .find((point) => point.remaining_sp !== null);
+
+  const burndownStatus: SprintWipStatus =
+    latestActualPoint &&
+    latestActualPoint.remaining_sp !== null &&
+    latestActualPoint.remaining_sp > latestActualPoint.ideal_sp
       ? "warning"
       : "healthy";
 
-  const accent =
-    status === "healthy"
-      ? "#00d9a0"
-      : status === "critical"
-        ? "#fb7185"
-        : "#f6b94b";
+  const accent = burndownStatus === "healthy" ? "#00d9a0" : "#f6b94b";
 
-  // Map backend burndown response to chart component format
   const chart: BurndownPoint[] = data.burndown.map((point) => ({
     day: point.date,
     actual: point.remaining_sp,
     ideal: point.ideal_sp,
   }));
 
-  // Map backend WIP response to component format
-  const wip: WipItem[] = data.wip.map((item) => {
-    const normalizedStatus = item.status.toLowerCase();
-
-    let tone: WipTone = "blue";
-
-    if (item.over_limit || normalizedStatus.includes("blocked")) {
-      tone = "red";
-    } else if (normalizedStatus.includes("progress")) {
-      tone = "cyan";
-    } else if (
-      normalizedStatus.includes("done") ||
-      normalizedStatus.includes("complete")
-    ) {
-      tone = "green";
-    }
-
-    return {
-      name: item.status,
-      count: item.count,
-      limit: item.limit,
-      tone,
-    };
-  });
-
   return (
-    <div className="grid gap-3 xl:grid-cols-[minmax(0,1.7fr)_minmax(280px,.9fr)]">
-      <section className={`${PANEL} min-w-0 p-4`}>
-        <PanelTitle title="Sprint Burndown" meta="STORY POINTS" />
+    <div className="space-y-3">
+      <div className="grid gap-3 xl:grid-cols-[minmax(0,1.7fr)_minmax(280px,.9fr)]">
+        <section className={`${PANEL} min-w-0 p-4`}>
+          {chart.length > 0 ? (
+            <SprintBurndownChart
+              data={chart}
+              accent={accent}
+              scenario={burndownStatus}
+            />
+          ) : (
+            <div className="grid min-h-[250px] place-items-center text-center text-xs text-[#8290a6]">
+              No burndown data available yet.
+            </div>
+          )}
+        </section>
 
-        <p className="mb-4 text-xs leading-relaxed text-[#94a1b5]">
-          Actual remaining story points compared with the ideal sprint
-          trajectory.
-        </p>
+        <WipCongestion items={wipItems} status={wipStatus} />
+      </div>
 
-        {chart.length > 0 ? (
-          <SprintBurndownChart data={chart} accent={accent} scenario={status} />
-        ) : (
-          <div className="grid min-h-[250px] place-items-center text-center text-xs text-[#8290a6]">
-            No burndown data available yet.
-          </div>
-        )}
-      </section>
-
-      <WipCongestion items={wip} status={status} />
+      <WipByDeveloper data={data.wip_by_developer} />
     </div>
   );
 }
@@ -385,19 +378,57 @@ export default function SprintWipPage() {
 
   const sprint = flowMetrics?.sprint ?? null;
 
-  const hasCriticalWip = flowMetrics?.wip.some((item) => item.over_limit);
+  const burndownPoints = flowMetrics?.burndown ?? [];
 
-  const hasWipAtLimit = flowMetrics?.wip.some(
-    (item) => item.limit > 0 && item.count >= item.limit,
+  const firstSprintDay = burndownPoints[0]?.date ?? null;
+
+  const lastSprintDay = burndownPoints[burndownPoints.length - 1]?.date ?? null;
+
+  const lastActualIndex = burndownPoints.reduce(
+    (latestIndex, point, index) =>
+      point.remaining_sp !== null ? index : latestIndex,
+    -1,
   );
+
+  const currentSprintDay = lastActualIndex >= 0 ? lastActualIndex + 1 : 0;
+
+  const totalSprintDays = burndownPoints.length;
+
+  const elapsedPercent =
+    totalSprintDays > 0
+      ? Math.round((currentSprintDay / totalSprintDays) * 100)
+      : 0;
+
+  const latestActualPoint =
+    lastActualIndex >= 0 ? burndownPoints[lastActualIndex] : null;
+
+  const isOnTrack =
+    latestActualPoint !== null &&
+    latestActualPoint.remaining_sp !== null &&
+    latestActualPoint.remaining_sp <= latestActualPoint.ideal_sp;
+
+  const sprintDatesLabel =
+    firstSprintDay && lastSprintDay
+      ? `${formatSprintDate(firstSprintDay)} — ${formatSprintDate(lastSprintDay)}`
+      : "Sprint dates unavailable";
+
+  const sprintProgressLabel =
+    currentSprintDay > 0
+      ? `Day ${currentSprintDay} of ${totalSprintDays} (${elapsedPercent}% elapsed)`
+      : "Sprint progress unavailable";
+
+  const sprintStateLabel = sprint?.state?.toUpperCase() ?? "UNKNOWN";
+
+  const wipItems = useMemo(
+    () => (flowMetrics ? buildWipItems(flowMetrics) : []),
+    [flowMetrics],
+  );
+
+  const calculatedWipStatus = getWipStatus(wipItems);
 
   const status: SprintWipStatus | "upcoming" = !sprint
     ? "upcoming"
-    : hasCriticalWip
-      ? "critical"
-      : hasWipAtLimit
-        ? "warning"
-        : "healthy";
+    : calculatedWipStatus;
 
   const projectOptions = useMemo(
     () =>
@@ -567,39 +598,71 @@ export default function SprintWipPage() {
         </div>
       </header>
 
-      <section className="flex flex-col gap-3 rounded-[10px] border border-[#202a3b] bg-[#151c28] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex min-w-0 items-center gap-3">
-          <button
-            type="button"
-            className="flex h-[52px] w-full items-center gap-2 rounded-md bg-[#191e29] px-2.5 text-left transition hover:bg-[#202633]"
-          >
-            <Rocket className="size-3.5 shrink-0 text-[#38d9a7]" />
+      <section className="grid grid-cols-1 gap-3 rounded-[10px] border border-[#202a3b] bg-[#151c28] px-4 py-3 lg:grid-cols-[292px_minmax(0,1fr)_auto] lg:items-center">
+        {/* TODO: Implement sprint selection when the backend provides
+        an endpoint to retrieve all sprints for a project.
+        The endpoint should return sprint IDs, names, states,
+        start dates, and end dates.
+        Fetch the sprint list here and pass the selected sprint_id
+        to the existing flow-metrics API request.
+        */}
 
-            <div className="min-w-0 flex-1">
-              <p className="font-mono text-[8px] font-medium uppercase tracking-[0.12em] text-[#84958d]">
-                Active sprint
-              </p>
-              <p className="truncate text-sm font-medium text-[#e0e4ed]">
-                {sprint?.name ?? "No active sprint"}
-              </p>
-            </div>
+        {/* Active Sprint */}
+        <div className="flex h-[64px] items-center gap-3 rounded-md bg-[#191e29] px-3">
+          <Rocket className="size-4 shrink-0 text-[#38d9a7]" />
 
-            <ChevronsUpDown className="size-3.5 shrink-0 text-[#82908b]" />
-          </button>
+          <div className="min-w-0 flex-1">
+            <p className="font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-[#84958d]">
+              Active Sprint
+            </p>
+
+            <p className="truncate text-sm font-semibold text-[#e0e4ed]">
+              {sprint?.name ?? "No active sprint"}
+            </p>
+          </div>
+
+          <ChevronsUpDown className="size-3.5 shrink-0 text-[#82908b]" />
         </div>
 
-        <div className="flex flex-wrap items-center gap-3 sm:justify-end">
-          <span className="flex items-center gap-2 text-xs text-[#aab7c9]">
-            <CalendarDays className="size-3" />
-            {sprint ? `State: ${sprint.state}` : "Sprint dates not available"}
+        {/* Sprint Dates and Progress */}
+        <div className="flex min-w-0 flex-wrap items-center gap-2 font-mono text-[11px] text-[#cbd5e1]">
+          <CalendarDays className="size-4 shrink-0 text-[#9aa9bd]" />
+
+          <span>{sprintDatesLabel}</span>
+
+          <span className="text-[#536175]">•</span>
+
+          <span className="text-[#a7bbaa]">{sprintProgressLabel}</span>
+        </div>
+
+        {/* Sprint Status */}
+        <div className="flex flex-wrap items-center gap-2 lg:justify-self-end">
+          <span className="inline-flex h-7 items-center gap-2 rounded-full bg-[#203a37] px-3 font-mono text-[10px] font-semibold tracking-wider text-[#42e6b2]">
+            <span className="size-2 rounded-full bg-[#42e6b2]" />
+            {sprintStateLabel}
           </span>
 
-          <span className="flex items-center gap-2 text-xs text-[#aab7c9]">
-            <Clock3 className="size-3" />
-            {sprint?.state ?? "Waiting for sprint data"}
-          </span>
+          <span
+            className={`inline-flex h-7 items-center gap-2 rounded-full px-3 font-mono text-[10px] font-semibold tracking-wider ${
+              !latestActualPoint
+                ? "bg-[#263244] text-[#aab7c9]"
+                : isOnTrack
+                  ? "bg-[#203a37] text-[#42e6b2]"
+                  : "bg-[#3b3020] text-[#f6c453]"
+            }`}
+          >
+            <span
+              className={`size-2 rounded-full ${
+                !latestActualPoint
+                  ? "bg-[#aab7c9]"
+                  : isOnTrack
+                    ? "bg-[#42e6b2]"
+                    : "bg-[#f6c453]"
+              }`}
+            />
 
-          <StatusPill status={status} />
+            {!latestActualPoint ? "NO DATA" : isOnTrack ? "ON TRACK" : "BEHIND"}
+          </span>
         </div>
       </section>
 
@@ -673,7 +736,9 @@ export default function SprintWipPage() {
       {!sprintQuery.isLoading &&
         !sprintQuery.isError &&
         sprint &&
-        flowMetrics && <ActiveDashboard data={flowMetrics} />}
+        flowMetrics && (
+          <ActiveDashboard data={flowMetrics} wipItems={wipItems} />
+        )}
     </main>
   );
 }
