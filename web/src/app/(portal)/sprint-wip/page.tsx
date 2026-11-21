@@ -8,6 +8,8 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { WipByDeveloper } from "@/components/sprint-wip/wip-by-developer";
 import { buildWipItems, getWipStatus } from "@/lib/sprint-wip";
 import { useProjectSprints } from "@/hooks/use-project-sprints";
+import { SprintSummary } from "@/components/sprint-wip/sprint-summary";
+import { SprintHealthRecommendation } from "@/components/sprint-wip/sprint-health-recommendation";
 import {
   Activity,
   AlertTriangle,
@@ -279,24 +281,146 @@ function formatSprintDate(value: string): string {
 function ActiveDashboard({
   data,
   wipItems,
+  sprintEndDate,
 }: {
   data: FlowMetricsResponse;
   wipItems: WipItem[];
+  sprintEndDate: string | null;
 }) {
   const wipStatus = getWipStatus(wipItems);
 
-  const latestActualPoint = [...data.burndown]
-    .reverse()
-    .find((point) => point.remaining_sp !== null);
+  const actualPoints = data.burndown.filter(
+    (point) => point.remaining_sp !== null,
+  );
 
-  const burndownStatus: SprintWipStatus =
+  const firstActualPoint = actualPoints[0] ?? null;
+  const latestActualPoint = actualPoints[actualPoints.length - 1] ?? null;
+
+  // Backlog Delta: actual remaining SP minus ideal remaining SP.
+  const variance =
+    latestActualPoint?.remaining_sp !== null && latestActualPoint !== null
+      ? Number(
+          (
+            latestActualPoint.remaining_sp! - latestActualPoint.ideal_sp
+          ).toFixed(1),
+        )
+      : null;
+
+  const varianceLabel =
+    variance === null ? "—" : `${variance > 0 ? "+" : ""}${variance} SP`;
+
+  // Overall status combines burndown variance and WIP congestion.
+  const outsideTolerance = variance !== null && Math.abs(variance) > 8;
+
+  const summaryStatus: SprintWipStatus =
+    wipStatus === "critical"
+      ? "critical"
+      : wipStatus === "warning" || outsideTolerance
+        ? "warning"
+        : "healthy";
+
+  // Count unfinished issues in statuses containing "blocked".
+  const blockedCount = data.wip
+    .filter((item) => item.status.toLowerCase().includes("blocked"))
+    .reduce((total, item) => total + item.count, 0);
+
+  // Estimate completion from observed story-point throughput.
+  let velocity: number | null = null;
+  let estimatedCompletionDate: Date | null = null;
+
+  if (
+    firstActualPoint &&
     latestActualPoint &&
-    latestActualPoint.remaining_sp !== null &&
-    latestActualPoint.remaining_sp > latestActualPoint.ideal_sp
-      ? "warning"
-      : "healthy";
+    firstActualPoint.remaining_sp !== null &&
+    latestActualPoint.remaining_sp !== null
+  ) {
+    const firstTime = new Date(
+      `${firstActualPoint.date.slice(0, 10)}T00:00:00Z`,
+    ).getTime();
 
-  const accent = burndownStatus === "healthy" ? "#00d9a0" : "#f6b94b";
+    const latestTime = new Date(
+      `${latestActualPoint.date.slice(0, 10)}T00:00:00Z`,
+    ).getTime();
+
+    const elapsedDays = Math.round((latestTime - firstTime) / 86_400_000);
+
+    const completedSP =
+      firstActualPoint.remaining_sp - latestActualPoint.remaining_sp;
+
+    if (elapsedDays > 0 && completedSP > 0) {
+      velocity = completedSP / elapsedDays;
+    }
+
+    if (latestActualPoint.remaining_sp <= 0) {
+      estimatedCompletionDate = new Date(latestTime);
+    } else if (velocity !== null && velocity > 0) {
+      const daysRemaining = Math.ceil(
+        latestActualPoint.remaining_sp / velocity,
+      );
+
+      estimatedCompletionDate = new Date(latestTime);
+      estimatedCompletionDate.setUTCDate(
+        estimatedCompletionDate.getUTCDate() + daysRemaining,
+      );
+    }
+  }
+
+  const deadline = sprintEndDate?.slice(0, 10) ?? null;
+
+  const estimatedDateLabel = estimatedCompletionDate
+    ? new Intl.DateTimeFormat("en-US", {
+        month: "short",
+        day: "numeric",
+        timeZone: "UTC",
+      }).format(estimatedCompletionDate)
+    : "—";
+
+  const estimatedDateISO = estimatedCompletionDate?.toISOString().slice(0, 10);
+
+  const isOnTarget =
+    estimatedDateISO && deadline ? estimatedDateISO <= deadline : null;
+
+  const completionNote = !estimatedCompletionDate
+    ? "Insufficient data"
+    : isOnTarget === null
+      ? "Forecast"
+      : isOnTarget
+        ? "On Target"
+        : "Behind Deadline";
+
+  const completionDetail =
+    velocity !== null
+      ? `Velocity ${velocity.toFixed(1)} SP/day ${
+          isOnTarget === true
+            ? "meets"
+            : isOnTarget === false
+              ? "may miss"
+              : "projects"
+        } the sprint deadline.`
+      : "Not enough completed work to estimate a reliable finish date.";
+
+  const recommendationDetail = [
+    variance !== null
+      ? `Current burndown variance is ${varianceLabel}.`
+      : "Burndown variance is not available yet.",
+    wipStatus === "critical"
+      ? "One or more workflow stages exceed their estimated WIP limits."
+      : wipStatus === "warning"
+        ? "One or more workflow stages have reached their estimated WIP limits."
+        : "All active workflow stages remain within their automatically estimated WIP limits.",
+    blockedCount > 0
+      ? `${blockedCount} blocked issue(s) require attention.`
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const accent =
+    summaryStatus === "healthy"
+      ? "#00d9a0"
+      : summaryStatus === "critical"
+        ? "#fb7185"
+        : "#f6b94b";
 
   const chart: BurndownPoint[] = data.burndown.map((point) => ({
     day: point.date,
@@ -312,7 +436,7 @@ function ActiveDashboard({
             <SprintBurndownChart
               data={chart}
               accent={accent}
-              scenario={burndownStatus}
+              scenario={summaryStatus}
             />
           ) : (
             <div className="grid min-h-[250px] place-items-center text-center text-xs text-[#8290a6]">
@@ -325,6 +449,21 @@ function ActiveDashboard({
       </div>
 
       <WipByDeveloper data={data.wip_by_developer} />
+
+      <SprintSummary
+        variance={varianceLabel}
+        blocked={blockedCount}
+        completion={estimatedDateLabel}
+        completionNote={completionNote}
+        completionDetail={completionDetail}
+        status={summaryStatus}
+      />
+
+      <SprintHealthRecommendation
+        status={summaryStatus}
+        recommendation="Sprint Health Recommendation"
+        recommendationDetail={recommendationDetail}
+      />
     </div>
   );
 }
@@ -835,7 +974,11 @@ export default function SprintWipPage() {
         !sprintQuery.isError &&
         sprint &&
         flowMetrics && (
-          <ActiveDashboard data={flowMetrics} wipItems={wipItems} />
+          <ActiveDashboard
+            data={flowMetrics}
+            wipItems={wipItems}
+            sprintEndDate={selectedSprint?.end_date ?? null}
+          />
         )}
     </main>
   );
