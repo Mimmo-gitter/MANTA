@@ -78,10 +78,21 @@ To make silent token renewal and session expiration testable in seconds rather t
 > **Security Note:** Short lifetimes are applied **strictly to the test realm** (`infra/keycloak/realm-export.json`) for automated testing and local developer workflows. They must never be applied to staging or production environments. Full renewal test scenarios are documented in [`docs/session-renewal-test-scenarios.md`](../session-renewal-test-scenarios.md).
 
 ## Running Keycloak via Docker Compose
-To start the entire local stack including Keycloak:
+To start the entire local stack including Keycloak, automatic Alembic migrations, and idempotent local database seeding:
 ```bash
 cd backend
 docker compose up -d
+```
+
+The `db-init` service runs `alembic upgrade head` and `python -m scripts.seed_dev_db --respect-env` before `app`, `sweeper`, and `worker` start, synchronizing all tenants, users, and role assignments declared in `infra/keycloak/realm-export.json` into PostgreSQL (`manta_db`).
+
+To re-run seeding manually against an already running stack (idempotent) or disable automatic seeding:
+```bash
+# Re-seed manually from infra/keycloak/realm-export.json
+docker compose exec app python -m scripts.seed_dev_db
+
+# Disable automatic dev seeding (e.g. staging/production)
+SEED_DEV_DATA=false docker compose up -d
 ```
 
 Verify service status:

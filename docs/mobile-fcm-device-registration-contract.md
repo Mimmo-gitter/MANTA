@@ -64,9 +64,10 @@
 
 | Status | Condition |
 | :---: | :--- |
-| `400 Bad Request` | Valid JWT lacks a UUID `user_id` / `sub` claim (`TokenClaims.user_id is None`). |
+| `400 Bad Request` | Valid JWT lacks any usable user identity claim (`sub`, `email`, `user_id`). |
 | `401 Unauthorized` | Missing, expired, or invalid Bearer JWT (`{"detail": "Not authenticated"}`). |
 | `403 Forbidden` | Caller holds no recognized role or lacks `MANAGE_OWN_MOBILE_DEVICES`. |
+| `404 Not Found` | Authenticated user has no active provisioned row in the tenant's `users` table. |
 | `422 Unprocessable Entity` | Extra/unknown fields (e.g. client-supplied `tenant_id`), blank strings, leading/trailing whitespace on `fcm_token`, or length bounds exceeded. |
 
 ---
@@ -81,7 +82,7 @@
 
 | Status | Condition |
 | :---: | :--- |
-| `400 Bad Request` | `TokenClaims.user_id is None`, or `token` path parameter is blank after trimming. |
+| `400 Bad Request` | Valid JWT lacks any usable user identity claim (`sub`, `email`, `user_id`), or `token` path parameter is blank after trimming. |
 | `401 Unauthorized` | Missing, expired, or invalid Bearer JWT. |
 | `403 Forbidden` | Caller lacks `MANAGE_OWN_MOBILE_DEVICES`. |
 

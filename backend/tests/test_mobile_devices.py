@@ -78,20 +78,22 @@ async def register_test_tenant() -> tuple[uuid.UUID, uuid.UUID, str]:
 def create_mobile_auth_token(
     private_key: rsa.RSAPrivateKey,
     tenant_id: uuid.UUID,
-    user_id: uuid.UUID,
-    email: str,
+    user_id: uuid.UUID | str,
+    email: str | None,
 ) -> str:
     now = int(time.time())
+    claims: dict[str, object] = {
+        "sub": str(user_id),
+        "tenant_id": str(tenant_id),
+        "aud": settings.OIDC_AUDIENCE,
+        "iss": f"{settings.KEYCLOAK_URL}/realms/{settings.KEYCLOAK_REALM}",
+        "exp": now + 3600,
+        "realm_access": {"roles": ["TENANT_ADMIN"]},
+    }
+    if email is not None:
+        claims["email"] = email
     return jwt.encode(
-        {
-            "sub": str(user_id),
-            "email": email,
-            "tenant_id": str(tenant_id),
-            "aud": settings.OIDC_AUDIENCE,
-            "iss": f"{settings.KEYCLOAK_URL}/realms/{settings.KEYCLOAK_REALM}",
-            "exp": now + 3600,
-            "realm_access": {"roles": ["TENANT_ADMIN"]},
-        },
+        claims,
         private_key,
         algorithm="RS256",
         headers={"kid": "mobile-test-key", "alg": "RS256"},
@@ -314,3 +316,113 @@ async def test_delete_mobile_device_removes_registration(mobile_auth_fixture) ->
             )
         )
     assert device is None
+
+
+@pytest.mark.asyncio
+async def test_mobile_device_resolves_non_uuid_keycloak_sub_and_distinct_google_sub(
+    mobile_auth_fixture,
+) -> None:
+    """Keycloak subjects (non-UUID strings like `user-mobile-test` or IdP UUIDs different from
+    `users.id`) must resolve to the provisioned `users.id` row instead of failing with 400 or
+    violating the `mobile_devices.user_id` foreign key."""
+    from app.db.models.models import User
+
+    private_key = mobile_auth_fixture
+    tenant_id, _, _ = await register_test_tenant()
+
+    # 1. Seed a user mimicking realm-export.json (non-UUID google_sub)
+    string_sub_user_id = uuid.uuid4()
+    string_sub = f"user-mobile-test-{uuid.uuid4().hex[:6]}"
+    string_sub_email = f"{string_sub}@manta.local"
+
+    # 2. Seed a user mimicking /tenants/register or /invitations/accept (UUID google_sub != users.id)
+    uuid_sub_user_id = uuid.uuid4()
+    distinct_kc_sub = str(uuid.uuid4())
+    uuid_sub_email = f"kc-user-{uuid.uuid4().hex[:6]}@manta.local"
+
+    async with get_tenant_db_context(tenant_id) as session:
+        session.add_all(
+            [
+                User(
+                    id=string_sub_user_id,
+                    tenant_id=tenant_id,
+                    email=string_sub_email,
+                    full_name="Mobile Test User",
+                    google_sub=string_sub,
+                    role="SCRUM_MASTER",
+                    is_active=True,
+                ),
+                User(
+                    id=uuid_sub_user_id,
+                    tenant_id=tenant_id,
+                    email=uuid_sub_email,
+                    full_name="Invited Mobile User",
+                    google_sub=distinct_kc_sub,
+                    role="DEVELOPER",
+                    is_active=True,
+                ),
+            ]
+        )
+
+    token_string_sub = create_mobile_auth_token(
+        private_key, tenant_id, string_sub, string_sub_email
+    )
+    token_uuid_sub = create_mobile_auth_token(
+        private_key, tenant_id, distinct_kc_sub, uuid_sub_email
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        resp_str = await post_mobile_device(client, token_string_sub, "fcm-non-uuid-sub")
+        resp_uuid = await post_mobile_device(client, token_uuid_sub, "fcm-distinct-uuid-sub")
+        del_str = await client.delete(
+            "/api/v1/mobile/devices/fcm-non-uuid-sub",
+            headers={"Authorization": f"Bearer {token_string_sub}"},
+        )
+
+    assert resp_str.status_code == 200, resp_str.text
+    assert resp_uuid.status_code == 200, resp_uuid.text
+    assert del_str.status_code == 204
+
+    async with get_tenant_db_context(tenant_id) as session:
+        deleted_row = await session.scalar(
+            select(MobileDevice).where(
+                MobileDevice.tenant_id == tenant_id,
+                MobileDevice.user_id == string_sub_user_id,
+                MobileDevice.fcm_token == "fcm-non-uuid-sub",
+            )
+        )
+        saved_row = await session.scalar(
+            select(MobileDevice).where(
+                MobileDevice.tenant_id == tenant_id,
+                MobileDevice.user_id == uuid_sub_user_id,
+                MobileDevice.fcm_token == "fcm-distinct-uuid-sub",
+            )
+        )
+
+    assert deleted_row is None
+    assert saved_row is not None
+    assert saved_row.user_id == uuid_sub_user_id
+
+
+@pytest.mark.asyncio
+async def test_mobile_device_returns_404_on_post_and_204_on_delete_for_unprovisioned_user(
+    mobile_auth_fixture,
+) -> None:
+    private_key = mobile_auth_fixture
+    tenant_id, _, _ = await register_test_tenant()
+    missing_token = create_mobile_auth_token(
+        private_key,
+        tenant_id,
+        f"missing-user-{uuid.uuid4().hex[:6]}",
+        f"missing-{uuid.uuid4().hex[:6]}@manta.local",
+    )
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        post_resp = await post_mobile_device(client, missing_token, "fcm-unprovisioned-user")
+        del_resp = await client.delete(
+            "/api/v1/mobile/devices/fcm-unprovisioned-user",
+            headers={"Authorization": f"Bearer {missing_token}"},
+        )
+
+    assert post_resp.status_code == 404
+    assert del_resp.status_code == 204

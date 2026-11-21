@@ -80,6 +80,32 @@ services:
     networks:
       - manta_net
 
+  # 1b. Database Schema Migrations & Idempotent Local Dev Seeding
+  # Runs once after Postgres is healthy so `tenants`, `users`, and `user_roles` match
+  # infra/keycloak/realm-export.json before `app`, `sweeper`, and `worker` start.
+  db-init:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: manta_db_init
+    command:
+      - "sh"
+      - "-c"
+      - "alembic upgrade head && python -m scripts.seed_dev_db --respect-env"
+    environment:
+      - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://eng_app_user:eng_app_pass_change_in_prod@pgbouncer:5432/manta_db}
+      - MIGRATION_DATABASE_URL=${MIGRATION_DATABASE_URL:-postgresql+asyncpg://manta_user:manta_password@postgres:5432/manta_db}
+      - SEED_DEV_DATA=${SEED_DEV_DATA:-true}
+      - KEYCLOAK_REALM_EXPORT_PATH=/infra/keycloak/realm-export.json
+    volumes:
+      - ../infra/keycloak/realm-export.json:/infra/keycloak/realm-export.json:ro
+    networks:
+      - manta_net
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
   # 4. FastAPI Backend Application
   app:
     build:
@@ -92,6 +118,8 @@ services:
       - REDIS_URL=${REDIS_URL:-redis://valkey:6379/0}
       - KEYCLOAK_URL=${KEYCLOAK_INTERNAL_URL:-http://keycloak:8080}
       - KEYCLOAK_REALM=${KEYCLOAK_REALM:-manta}
+      - KEYCLOAK_REALM_EXPORT_PATH=/infra/keycloak/realm-export.json
+      - SEED_DEV_DATA=${SEED_DEV_DATA:-true}
       - WEBHOOK_BASE_URL=${WEBHOOK_BASE_URL:-}
       - OIDC_AUDIENCE=${OIDC_AUDIENCE:-manta-backend}
       - OIDC_ISSUER=${OIDC_ISSUER:-}
@@ -109,11 +137,14 @@ services:
       - WEB_BASE_URL=${WEB_BASE_URL:-http://localhost:3000}
     volumes:
       - ../docs/roles-permissions.json:/docs/roles-permissions.json:ro
+      - ../infra/keycloak/realm-export.json:/infra/keycloak/realm-export.json:ro
     ports:
       - "${APP_PORT:-8000}:8000"
     networks:
       - manta_net
     depends_on:
+      db-init:
+        condition: service_completed_successfully
       pgbouncer:
         condition: service_healthy
       valkey:
@@ -144,6 +175,8 @@ services:
     networks:
       - manta_net
     depends_on:
+      db-init:
+        condition: service_completed_successfully
       pgbouncer:
         condition: service_healthy
       valkey:
@@ -177,6 +210,8 @@ services:
     networks:
       - manta_net
     depends_on:
+      db-init:
+        condition: service_completed_successfully
       pgbouncer:
         condition: service_healthy
       valkey:
