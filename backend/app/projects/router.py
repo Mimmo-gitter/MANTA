@@ -15,7 +15,11 @@ from app.dora.service import (
     get_project_dora_metrics as get_project_dora_metrics_service,
     resolve_dora_timeframe_days,
 )
-from app.projects.flow_metrics import get_burndown_response, get_flow_metrics_response
+from app.projects.flow_metrics import (
+    get_burndown_response,
+    get_flow_metrics_response,
+    list_project_sprints_response,
+)
 from app.projects.health_service import (
     get_project_health_config as get_project_health_config_service,
     handle_project_health_signal_http,
@@ -369,6 +373,23 @@ async def rotate_project_health_secret(
 # ==============================================================================
 # EXISTING STUB ENDPOINTS (PRESERVED)
 # ==============================================================================
+
+@router.get(
+    "/{project_id}/sprints",
+    summary="List project sprints",
+    description="Returns all sprints stored for the specified project.",
+)
+async def list_project_sprints(
+    project_id: uuid.UUID,
+    user: TokenClaims = Depends(
+        require_permission(Permission.VIEW_SPRINT_BURNDOWN_WIP)
+    ),
+) -> list[dict]:
+    """Lists all stored sprints for a project under tenant isolation."""
+    return await list_project_sprints_response(
+        user.tenant_uuid,
+        project_id,
+    )
 
 
 @router.get(

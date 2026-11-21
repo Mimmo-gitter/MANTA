@@ -44,6 +44,49 @@ async def find_sprint(
     return (await db.execute(query.limit(1))).scalar_one_or_none()
 
 
+async def list_project_sprints_response(
+    tenant_id: uuid.UUID,
+    project_id: uuid.UUID,
+) -> list[dict[str, Any]]:
+    """
+    Returns all sprints stored for a project under tenant isolation.
+    Active sprints are listed first, followed by the most recent ones.
+    """
+    async with get_tenant_db_context(tenant_id) as db:
+        if not await project_exists(db, tenant_id, project_id):
+            raise HTTPException(status_code=404, detail="Project not found")
+
+        query = (
+            select(Sprint)
+            .where(
+                Sprint.tenant_id == tenant_id,
+                Sprint.project_id == project_id,
+            )
+            .order_by(
+                (Sprint.state == "active").desc(),
+                Sprint.start_date.desc().nullslast(),
+                Sprint.created_at.desc(),
+            )
+        )
+
+        result = await db.execute(query)
+        sprints = result.scalars().all()
+
+        return [
+            {
+                "id": str(sprint.id),
+                "external_sprint_id": sprint.external_sprint_id,
+                "name": sprint.name,
+                "state": sprint.state,
+                "start_date": sprint.start_date,
+                "end_date": sprint.end_date,
+                "complete_date": sprint.complete_date,
+                "goal": sprint.goal,
+            }
+            for sprint in sprints
+        ]
+
+
 async def compute_burndown(
     db: AsyncSession,
     tenant_id: uuid.UUID,
