@@ -11,10 +11,8 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.testTag
 import androidx.navigation.NavDestination.Companion.hierarchy
 import androidx.navigation.NavGraph.Companion.findStartDestination
-import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
@@ -25,19 +23,16 @@ import com.manta.mobile.core.theme.ui.SecondaryTransparent
 import com.manta.mobile.core.theme.ui.TextLight
 import com.manta.mobile.features.actions.ActionsScreen
 import com.manta.mobile.features.alerts.AlertsScreen
+import com.manta.mobile.features.auth.AuthRepository
 import com.manta.mobile.features.projects.ProjectScreen
 import com.manta.mobile.features.settings.SettingsScreen
 
 @Composable
-fun NavShell(
-    modifier: Modifier = Modifier,
-    navController: NavHostController = rememberNavController()
-) {
+fun NavShell(authRepository: AuthRepository? = null, fcmToken: String? = null) {
+    val navController = rememberNavController()
     Scaffold(
-        modifier = modifier,
         bottomBar = {
             NavigationBar(
-                modifier = Modifier.testTag("bottom_nav_bar"),
                 containerColor = AppBackground,
                 contentColor = TextLight
             ) {
@@ -48,7 +43,6 @@ fun NavShell(
                     val selected =
                         currentDestination?.hierarchy?.any { it.route == item.route } == true
                     NavigationBarItem(
-                        modifier = Modifier.testTag("tab_${item.route}"),
                         selected = selected,
                         onClick = {
                             navController.navigate(item.route) {
@@ -88,7 +82,12 @@ fun NavShell(
             composable(NavItem.Alerts.route) { AlertsScreen() }
             composable(NavItem.Project.route) { ProjectScreen() }
             composable(NavItem.Actions.route) { ActionsScreen() }
-            composable(NavItem.Settings.route) { SettingsScreen() }
+            composable(NavItem.Settings.route) {
+                SettingsScreen(
+                    authRepository = authRepository,
+                    fcmToken = fcmToken
+                )
+            }
         }
     }
 }

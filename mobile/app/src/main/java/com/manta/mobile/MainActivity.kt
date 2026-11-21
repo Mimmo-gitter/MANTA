@@ -1,20 +1,207 @@
 package com.manta.mobile
 
+import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
-import androidx.activity.ComponentActivity
+import android.util.Log
+import android.widget.Toast
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.biometric.BiometricPrompt
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.fragment.app.FragmentActivity
+import androidx.lifecycle.lifecycleScope
+import com.google.firebase.messaging.FirebaseMessaging
+import com.manta.mobile.core.security.BiometricPromptManager
+import com.manta.mobile.core.security.EncryptedStorage
 import com.manta.mobile.core.theme.ui.MobileTheme
+import com.manta.mobile.data.auth.AuthState
+import com.manta.mobile.data.auth.BiometricUnlockSubState
+import com.manta.mobile.data.auth.PkceAuthManager
+import com.manta.mobile.features.auth.AuthRepository
+import com.manta.mobile.features.auth.BiometricUnlockScreen
+import com.manta.mobile.features.auth.SignInScreen
 import com.manta.mobile.ui.navigation.NavShell
+import kotlin.time.Duration.Companion.milliseconds
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
+
+    private lateinit var encryptedStorage: EncryptedStorage
+    private lateinit var authRepository: AuthRepository
+    private lateinit var biometricPromptManager: BiometricPromptManager
+
+    private var failedAttemptCount = 0
+    private var currentFcmToken: String? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        setContent {
-            MobileTheme {
-                NavShell()
+
+        encryptedStorage = EncryptedStorage(applicationContext)
+        authRepository = AuthRepository(encryptedStorage)
+        biometricPromptManager = BiometricPromptManager(this)
+
+        val isDeepLink = intent?.data?.scheme == "manta" && intent?.data?.host == "auth"
+        if (!isDeepLink && savedInstanceState == null) {
+            lifecycleScope.launch {
+                authRepository.checkInitialAuthState()
             }
+        }
+
+        handleDeepLinkIntent(intent)
+
+        FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+            if (task.isSuccessful) {
+                currentFcmToken = task.result
+                Log.d("MainActivity", "FCM Registration Token: ${task.result}")
+            } else {
+                Log.w("MainActivity", "Fetching FCM registration token failed", task.exception)
+            }
+        }
+
+        lifecycleScope.launch {
+            biometricPromptManager.promptResults.collect { result ->
+                when (result) {
+                    is BiometricPromptManager.BiometricResult.AuthenticationSuccess -> {
+                        failedAttemptCount = 0
+                        authRepository.updateBiometricSubState(BiometricUnlockSubState.Success)
+                        delay(1000.milliseconds)
+                        authRepository.unlockSession()
+                    }
+                    is BiometricPromptManager.BiometricResult.AuthenticationError -> {
+                        when (result.errorCode) {
+                            BiometricPrompt.ERROR_USER_CANCELED,
+                            BiometricPrompt.ERROR_CANCELED,
+                            BiometricPrompt.ERROR_NEGATIVE_BUTTON -> {
+                                failedAttemptCount++
+                                val attemptsLeft = (3 - failedAttemptCount).coerceAtLeast(0)
+                                if (attemptsLeft == 0) {
+                                    authRepository.updateBiometricSubState(
+                                        BiometricUnlockSubState.Unavailable
+                                    )
+                                } else {
+                                    authRepository.updateBiometricSubState(
+                                        BiometricUnlockSubState.Failed(attemptsLeft)
+                                    )
+                                }
+                            }
+                            else -> {
+                                authRepository.updateBiometricSubState(
+                                    BiometricUnlockSubState.Unavailable
+                                )
+                            }
+                        }
+                    }
+                    BiometricPromptManager.BiometricResult.AuthenticationFailed -> {
+                        failedAttemptCount++
+                        val attemptsLeft = (3 - failedAttemptCount).coerceAtLeast(0)
+                        if (attemptsLeft == 0) {
+                            authRepository.updateBiometricSubState(
+                                BiometricUnlockSubState.Unavailable
+                            )
+                        } else {
+                            authRepository.updateBiometricSubState(
+                                BiometricUnlockSubState.Failed(attemptsLeft)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        setContent {
+            val authState by authRepository.authState.collectAsState()
+
+            MobileTheme {
+                when (val state = authState) {
+                    is AuthState.Unauthenticated, is AuthState.ReauthRequired -> {
+                        SignInScreen(
+                            onBiometricUnlockClick = { triggerBiometricUnlock() }
+                        )
+                    }
+                    is AuthState.LockedRequiresBiometric -> {
+                        LaunchedEffect(Unit) {
+                            if (state.subState == BiometricUnlockSubState.Ready) {
+                                triggerBiometricUnlock()
+                            }
+                        }
+                        BiometricUnlockScreen(
+                            userName = state.userName,
+                            userEmail = state.userEmail,
+                            primaryRole = state.primaryRole,
+                            subState = state.subState,
+                            onRetryClick = {
+                                authRepository.updateBiometricSubState(
+                                    BiometricUnlockSubState.Ready
+                                )
+                                triggerBiometricUnlock()
+                            },
+                            onSwitchClick = {
+                                failedAttemptCount = 0
+                                lifecycleScope.launch {
+                                    authRepository.signOut(fcmToken = currentFcmToken)
+                                }
+                            },
+                            onSsoClick = {
+                                failedAttemptCount = 0
+                                lifecycleScope.launch {
+                                    authRepository.signOut(fcmToken = currentFcmToken)
+                                    PkceAuthManager.launchOidcFlow(this@MainActivity)
+                                }
+                            }
+                        )
+                    }
+                    is AuthState.Authenticated -> {
+                        NavShell(
+                            authRepository = authRepository,
+                            fcmToken = currentFcmToken
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleDeepLinkIntent(intent)
+    }
+
+    private fun handleDeepLinkIntent(intent: Intent?) {
+        val uri: Uri? = intent?.data
+        if (uri != null && uri.scheme == "manta" && uri.host == "auth") {
+            lifecycleScope.launch {
+                val success = PkceAuthManager.handleAuthorizationResponse(
+                    uri,
+                    authRepository
+                )
+                if (!success) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        "Sign-In failed. Please try again.",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
+        }
+    }
+
+    private fun triggerBiometricUnlock() {
+        val status = biometricPromptManager.canAuthenticate()
+        if (status is BiometricPromptManager.BiometricStatus.Ready) {
+            biometricPromptManager.showBiometricPrompt(
+                title = "M.A.N.T.A. Security Gate",
+                description = "Scan biometrics to unlock workspace."
+            )
+        } else {
+            authRepository.updateBiometricSubState(
+                BiometricUnlockSubState.Unavailable
+            )
         }
     }
 }
