@@ -55,3 +55,14 @@ export interface WipItem {
   limit: number;
   tone: WipTone;
 }
+
+export interface ProjectSprint {
+  id: string;
+  external_sprint_id: string;
+  name: string;
+  state: string;
+  start_date: string | null;
+  end_date: string | null;
+  complete_date: string | null;
+  goal: string | null;
+}

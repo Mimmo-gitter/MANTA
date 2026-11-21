@@ -7,6 +7,7 @@ import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { WipByDeveloper } from "@/components/sprint-wip/wip-by-developer";
 import { buildWipItems, getWipStatus } from "@/lib/sprint-wip";
+import { useProjectSprints } from "@/hooks/use-project-sprints";
 import {
   Activity,
   AlertTriangle,
@@ -348,12 +349,18 @@ export default function SprintWipPage() {
     null;
 
   const [isProjectDropdownOpen, setIsProjectDropdownOpen] = useState(false);
+  const [isSprintDropdownOpen, setIsSprintDropdownOpen] = useState(false);
 
   const requestedSprintId = searchParams.get("sprint");
 
   const sprintQuery = useSprintWip({
     projectId: selectedProject?.id ?? null,
     sprintId: requestedSprintId,
+    enabled: Boolean(selectedProject?.id && isAuthenticated && canView),
+  });
+
+  const sprintsQuery = useProjectSprints({
+    projectId: selectedProject?.id ?? null,
     enabled: Boolean(selectedProject?.id && isAuthenticated && canView),
   });
 
@@ -377,6 +384,13 @@ export default function SprintWipPage() {
   const flowMetrics = sprintQuery.data ?? null;
 
   const sprint = flowMetrics?.sprint ?? null;
+
+  const availableSprints = sprintsQuery.data ?? [];
+
+  const selectedSprintId = requestedSprintId ?? sprint?.id ?? null;
+
+  const selectedSprint =
+    availableSprints.find((item) => item.id === selectedSprintId) ?? null;
 
   const burndownPoints = flowMetrics?.burndown ?? [];
 
@@ -569,8 +583,16 @@ export default function SprintWipPage() {
                       key={project.id}
                       type="button"
                       onClick={() => {
-                        updateParams({ project: project.id });
+                        updateParams({
+                          project: project.id,
+                          sprint:
+                            project.id === selectedProject.id
+                              ? requestedSprintId
+                              : null,
+                        });
+
                         setIsProjectDropdownOpen(false);
+                        setIsSprintDropdownOpen(false);
                       }}
                       className={`flex h-10 w-full items-center gap-3 rounded-lg px-3 text-left transition ${
                         isSelected
@@ -599,29 +621,105 @@ export default function SprintWipPage() {
       </header>
 
       <section className="grid grid-cols-1 gap-3 rounded-[10px] border border-[#202a3b] bg-[#151c28] px-4 py-3 lg:grid-cols-[292px_minmax(0,1fr)_auto] lg:items-center">
-        {/* TODO: Implement sprint selection when the backend provides
-        an endpoint to retrieve all sprints for a project.
-        The endpoint should return sprint IDs, names, states,
-        start dates, and end dates.
-        Fetch the sprint list here and pass the selected sprint_id
-        to the existing flow-metrics API request.
-        */}
+        {/* Sprint Selector */}
+        <div className="relative flex min-w-0 items-center gap-3 sm:w-[292px]">
+          <button
+            type="button"
+            onClick={() => setIsSprintDropdownOpen((previous) => !previous)}
+            aria-expanded={isSprintDropdownOpen}
+            aria-haspopup="listbox"
+            className="flex h-[64px] w-full items-center gap-3 rounded-md bg-[#191e29] px-3 text-left transition hover:bg-[#202633]"
+          >
+            <Rocket className="size-4 shrink-0 text-[#38d9a7]" />
 
-        {/* Active Sprint */}
-        <div className="flex h-[64px] items-center gap-3 rounded-md bg-[#191e29] px-3">
-          <Rocket className="size-4 shrink-0 text-[#38d9a7]" />
+            <div className="min-w-0 flex-1">
+              <p className="font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-[#84958d]">
+                Active Sprint
+              </p>
 
-          <div className="min-w-0 flex-1">
-            <p className="font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-[#84958d]">
-              Active Sprint
-            </p>
+              <p className="truncate text-sm font-semibold text-[#e0e4ed]">
+                {selectedSprint?.name ?? sprint?.name ?? "No sprint selected"}
+              </p>
+            </div>
 
-            <p className="truncate text-sm font-semibold text-[#e0e4ed]">
-              {sprint?.name ?? "No active sprint"}
-            </p>
-          </div>
+            <ChevronsUpDown className="size-3.5 shrink-0 text-[#82908b]" />
+          </button>
 
-          <ChevronsUpDown className="size-3.5 shrink-0 text-[#82908b]" />
+          {isSprintDropdownOpen && (
+            <div
+              role="listbox"
+              aria-label="Available sprints"
+              className="absolute left-0 top-[calc(100%+8px)] z-50 max-h-72 w-full overflow-y-auto rounded-xl border border-[#293448] bg-[#111925] p-1.5 shadow-[0_12px_35px_rgba(0,0,0,0.45)]"
+            >
+              <p className="px-3 py-2 font-mono text-[9px] font-semibold uppercase tracking-wider text-[#8290a6]">
+                Select Sprint
+              </p>
+
+              {sprintsQuery.isLoading && (
+                <p className="px-3 py-4 text-xs text-[#8290a6]">
+                  Loading sprints...
+                </p>
+              )}
+
+              {sprintsQuery.isError && (
+                <div className="px-3 py-3">
+                  <p className="text-xs text-[#ff9aa1]">
+                    Unable to load sprints.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => void sprintsQuery.refetch()}
+                    className="mt-2 text-xs text-[#42e6b2] hover:underline"
+                  >
+                    Try again
+                  </button>
+                </div>
+              )}
+
+              {!sprintsQuery.isLoading &&
+                !sprintsQuery.isError &&
+                availableSprints.length === 0 && (
+                  <p className="px-3 py-4 text-xs text-[#8290a6]">
+                    No saved sprints found for this project.
+                  </p>
+                )}
+
+              {availableSprints.map((item) => {
+                const isSelected = item.id === selectedSprintId;
+
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    role="option"
+                    aria-selected={isSelected}
+                    onClick={() => {
+                      updateParams({ sprint: item.id });
+                      setIsSprintDropdownOpen(false);
+                    }}
+                    className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition ${
+                      isSelected
+                        ? "bg-[#1d303c] text-[#e2eaf4]"
+                        : "text-[#aab7c9] hover:bg-[#1a2735] hover:text-white"
+                    }`}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs font-medium">
+                        {item.name}
+                      </p>
+                      <p className="mt-1 font-mono text-[9px] uppercase text-[#8290a6]">
+                        {item.state}
+                      </p>
+                    </div>
+
+                    {isSelected && (
+                      <span className="size-2 shrink-0 rounded-full bg-[#42e6b2]" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
 
         {/* Sprint Dates and Progress */}
