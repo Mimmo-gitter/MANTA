@@ -39,6 +39,9 @@ class AuthRepository(
     private val activeAuthApiService: AuthApiService by lazy {
         authApiService ?: RetrofitClientFactory.createAuthenticatedService(this)
     }
+    private val activePushRegistrationManager: PushRegistrationManager by lazy {
+        pushRegistrationManager ?: PushRegistrationManager(activeDeviceApiService, this)
+    }
 
     suspend fun getAccessToken(): String? = encryptedStorage.readString(KEY_ACCESS_TOKEN)
     suspend fun getRefreshToken(): String? = encryptedStorage.readString(KEY_REFRESH_TOKEN)
@@ -136,7 +139,7 @@ class AuthRepository(
         _authState.value = AuthState.Authenticated(session)
 
         try {
-            pushRegistrationManager?.registerCurrentTokenIfAuthenticated()
+            activePushRegistrationManager.registerCurrentTokenIfAuthenticated()
         } catch (e: Exception) {
             Log.w(TAG, "Unlock session FCM registration failed: ${e.message}")
         }
@@ -198,7 +201,7 @@ class AuthRepository(
         _authState.value = AuthState.Authenticated(session)
 
         try {
-            pushRegistrationManager?.registerCurrentTokenIfAuthenticated()
+            activePushRegistrationManager.registerCurrentTokenIfAuthenticated()
         } catch (e: Exception) {
             Log.w(TAG, "Post-signin FCM registration failed: ${e.message}")
         }
