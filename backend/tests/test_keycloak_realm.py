@@ -179,9 +179,7 @@ class TestKeycloakRealmExport(unittest.TestCase):
         """Verify application realm roles match the permission matrix."""
         data = self._load_realm()
         realm_roles = {
-            role["name"]
-            for role in data.get("roles", {}).get("realm", [])
-            if "name" in role
+            role["name"] for role in data.get("roles", {}).get("realm", []) if "name" in role
         }
         application_roles = realm_roles - {"offline_access"}
 

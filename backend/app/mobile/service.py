@@ -10,6 +10,7 @@ from sqlalchemy import delete
 from app.db.models.models import MobileDevice
 from app.mobile.schemas import RegisterMobileDeviceRequest, RegisterMobileDeviceResponse
 
+
 async def resolve_or_create_mobile_device(
     db: AsyncSession,
     tenant_id: uuid.UUID,
@@ -48,6 +49,7 @@ async def resolve_or_create_mobile_device(
     result = await db.execute(statement)
     mobile_device = result.scalar_one()
     return RegisterMobileDeviceResponse.model_validate(mobile_device)
+
 
 async def delete_mobile_device(
     db: AsyncSession, tenant_id: uuid.UUID, user_id: uuid.UUID, fcm_token: str
