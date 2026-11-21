@@ -3,10 +3,13 @@
 import { useCallback, useMemo, useState } from "react";
 import { SprintBurndownChart } from "@/components/sprint-wip/sprint-burndown-chart";
 import { WipCongestion } from "@/components/sprint-wip/wip-congestion";
-import { SprintHealthRecommendation } from "@/components/sprint-wip/sprint-health-recommendation";
-import { SprintSummary } from "@/components/sprint-wip/sprint-summary";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { WipByDeveloper } from "@/components/sprint-wip/wip-by-developer";
+import { buildWipItems, getWipStatus } from "@/lib/sprint-wip";
+import { useProjectSprints } from "@/hooks/use-project-sprints";
+import { SprintSummary } from "@/components/sprint-wip/sprint-summary";
+import { SprintHealthRecommendation } from "@/components/sprint-wip/sprint-health-recommendation";
 import {
   Activity,
   AlertTriangle,
@@ -29,10 +32,13 @@ import { usePermissions } from "@/hooks/use-permissions";
 import { useProjectsQuery } from "@/hooks/use-projects";
 import type { ProjectItem } from "@/types/project";
 import { useSprintWip } from "@/hooks/use-sprint-wip";
-
-import { PREVIEW_SCENARIOS } from "@/lib/sprint-wip/mocks/sprint-wip-mock-data";
-
-import type { PreviewScenario, SprintWipData } from "@/types/sprint-wip";
+import type {
+  FlowMetricsResponse,
+  SprintWipStatus,
+  BurndownPoint,
+  WipItem,
+  WipTone,
+} from "@/types/sprint-wip";
 
 const PANEL = "rounded-[10px] border border-[#202738] bg-[#151b27]";
 const LABEL =
@@ -258,50 +264,207 @@ function UpcomingEmpty({ projectName }: { projectName: string }) {
   );
 }
 
-function ActiveDashboard({ data }: { data: SprintWipData }) {
-  const isHealthy = data.status === "healthy";
-  const isCritical = data.status === "critical";
+function formatSprintDate(value: string): string {
+  const date = new Date(`${value.slice(0, 10)}T12:00:00`);
 
-  const accent = isHealthy ? "#00d9a0" : isCritical ? "#fb7185" : "#f6b94b";
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  }).format(date);
+}
+
+function ActiveDashboard({
+  data,
+  wipItems,
+  sprintEndDate,
+}: {
+  data: FlowMetricsResponse;
+  wipItems: WipItem[];
+  sprintEndDate: string | null;
+}) {
+  const wipStatus = getWipStatus(wipItems);
+
+  const actualPoints = data.burndown.filter(
+    (point) => point.remaining_sp !== null,
+  );
+
+  const firstActualPoint = actualPoints[0] ?? null;
+  const latestActualPoint = actualPoints[actualPoints.length - 1] ?? null;
+
+  // Backlog Delta: actual remaining SP minus ideal remaining SP.
+  const variance =
+    latestActualPoint?.remaining_sp !== null && latestActualPoint !== null
+      ? Number(
+          (
+            latestActualPoint.remaining_sp! - latestActualPoint.ideal_sp
+          ).toFixed(1),
+        )
+      : null;
+
+  const varianceLabel =
+    variance === null ? "—" : `${variance > 0 ? "+" : ""}${variance} SP`;
+
+  // Overall status combines burndown variance and WIP congestion.
+  const outsideTolerance = variance !== null && Math.abs(variance) > 8;
+
+  const summaryStatus: SprintWipStatus =
+    wipStatus === "critical"
+      ? "critical"
+      : wipStatus === "warning" || outsideTolerance
+        ? "warning"
+        : "healthy";
+
+  // Count unfinished issues in statuses containing "blocked".
+  const blockedCount = data.wip
+    .filter((item) => item.status.toLowerCase().includes("blocked"))
+    .reduce((total, item) => total + item.count, 0);
+
+  // Estimate completion from observed story-point throughput.
+  let velocity: number | null = null;
+  let estimatedCompletionDate: Date | null = null;
+
+  if (
+    firstActualPoint &&
+    latestActualPoint &&
+    firstActualPoint.remaining_sp !== null &&
+    latestActualPoint.remaining_sp !== null
+  ) {
+    const firstTime = new Date(
+      `${firstActualPoint.date.slice(0, 10)}T00:00:00Z`,
+    ).getTime();
+
+    const latestTime = new Date(
+      `${latestActualPoint.date.slice(0, 10)}T00:00:00Z`,
+    ).getTime();
+
+    const elapsedDays = Math.round((latestTime - firstTime) / 86_400_000);
+
+    const completedSP =
+      firstActualPoint.remaining_sp - latestActualPoint.remaining_sp;
+
+    if (elapsedDays > 0 && completedSP > 0) {
+      velocity = completedSP / elapsedDays;
+    }
+
+    if (latestActualPoint.remaining_sp <= 0) {
+      estimatedCompletionDate = new Date(latestTime);
+    } else if (velocity !== null && velocity > 0) {
+      const daysRemaining = Math.ceil(
+        latestActualPoint.remaining_sp / velocity,
+      );
+
+      estimatedCompletionDate = new Date(latestTime);
+      estimatedCompletionDate.setUTCDate(
+        estimatedCompletionDate.getUTCDate() + daysRemaining,
+      );
+    }
+  }
+
+  const deadline = sprintEndDate?.slice(0, 10) ?? null;
+
+  const estimatedDateLabel = estimatedCompletionDate
+    ? new Intl.DateTimeFormat("en-US", {
+        month: "short",
+        day: "numeric",
+        timeZone: "UTC",
+      }).format(estimatedCompletionDate)
+    : "—";
+
+  const estimatedDateISO = estimatedCompletionDate?.toISOString().slice(0, 10);
+
+  const isOnTarget =
+    estimatedDateISO && deadline ? estimatedDateISO <= deadline : null;
+
+  const completionNote = !estimatedCompletionDate
+    ? "Insufficient data"
+    : isOnTarget === null
+      ? "Forecast"
+      : isOnTarget
+        ? "On Target"
+        : "Behind Deadline";
+
+  const completionDetail =
+    velocity !== null
+      ? `Velocity ${velocity.toFixed(1)} SP/day ${
+          isOnTarget === true
+            ? "meets"
+            : isOnTarget === false
+              ? "may miss"
+              : "projects"
+        } the sprint deadline.`
+      : "Not enough completed work to estimate a reliable finish date.";
+
+  const recommendationDetail = [
+    variance !== null
+      ? `Current burndown variance is ${varianceLabel}.`
+      : "Burndown variance is not available yet.",
+    wipStatus === "critical"
+      ? "One or more workflow stages exceed their estimated WIP limits."
+      : wipStatus === "warning"
+        ? "One or more workflow stages have reached their estimated WIP limits."
+        : "All active workflow stages remain within their automatically estimated WIP limits.",
+    blockedCount > 0
+      ? `${blockedCount} blocked issue(s) require attention.`
+      : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+
+  const accent =
+    summaryStatus === "healthy"
+      ? "#00d9a0"
+      : summaryStatus === "critical"
+        ? "#fb7185"
+        : "#f6b94b";
+
+  const chart: BurndownPoint[] = data.burndown.map((point) => ({
+    day: point.date,
+    actual: point.remaining_sp,
+    ideal: point.ideal_sp,
+  }));
 
   return (
-    <>
+    <div className="space-y-3">
       <div className="grid gap-3 xl:grid-cols-[minmax(0,1.7fr)_minmax(280px,.9fr)]">
-        {/* Sprint Burndown */}
         <section className={`${PANEL} min-w-0 p-4`}>
-          <PanelTitle title="Sprint Burndown" meta="STORY POINTS" />
-
-          <p className="mb-4 text-xs leading-relaxed text-[#94a1b5]">
-            Actual remaining story points compared with the ideal sprint
-            trajectory.
-          </p>
-
-          <SprintBurndownChart
-            data={data.chart}
-            accent={accent}
-            scenario={data.status}
-          />
-
-          <SprintSummary
-            variance={data.variance}
-            blocked={data.blocked}
-            completion={data.completion}
-            completionNote={data.completionNote}
-            status={data.status}
-          />
+          {chart.length > 0 ? (
+            <SprintBurndownChart
+              data={chart}
+              accent={accent}
+              scenario={summaryStatus}
+            />
+          ) : (
+            <div className="grid min-h-[250px] place-items-center text-center text-xs text-[#8290a6]">
+              No burndown data available yet.
+            </div>
+          )}
         </section>
 
-        {/* WIP Congestion */}
-        <WipCongestion items={data.wip} status={data.status} />
+        <WipCongestion items={wipItems} status={wipStatus} />
       </div>
 
-      {/* Sprint Health Recommendation */}
-      <SprintHealthRecommendation
-        status={data.status}
-        recommendation={data.recommendation}
-        recommendationDetail={data.recommendationDetail}
+      <WipByDeveloper data={data.wip_by_developer} />
+
+      <SprintSummary
+        variance={varianceLabel}
+        blocked={blockedCount}
+        completion={estimatedDateLabel}
+        completionNote={completionNote}
+        completionDetail={completionDetail}
+        status={summaryStatus}
       />
-    </>
+
+      <SprintHealthRecommendation
+        status={summaryStatus}
+        recommendation="Sprint Health Recommendation"
+        recommendationDetail={recommendationDetail}
+      />
+    </div>
   );
 }
 
@@ -314,14 +477,6 @@ export default function SprintWipPage() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  const requestedPreview = searchParams.get("preview");
-
-  const previewEnabled =
-    process.env.NODE_ENV !== "production" &&
-    PREVIEW_SCENARIOS.some((s) => s.id === requestedPreview);
-
-  const preview = previewEnabled ? (requestedPreview as PreviewScenario) : null;
-
   const projectsQuery = useProjectsQuery(isAuthenticated && canView);
   const projects = projectsQuery.data ?? [];
 
@@ -333,11 +488,19 @@ export default function SprintWipPage() {
     null;
 
   const [isProjectDropdownOpen, setIsProjectDropdownOpen] = useState(false);
+  const [isSprintDropdownOpen, setIsSprintDropdownOpen] = useState(false);
+
+  const requestedSprintId = searchParams.get("sprint");
 
   const sprintQuery = useSprintWip({
     projectId: selectedProject?.id ?? null,
+    sprintId: requestedSprintId,
     enabled: Boolean(selectedProject?.id && isAuthenticated && canView),
-    mockScenario: preview,
+  });
+
+  const sprintsQuery = useProjectSprints({
+    projectId: selectedProject?.id ?? null,
+    enabled: Boolean(selectedProject?.id && isAuthenticated && canView),
   });
 
   const updateParams = useCallback(
@@ -357,23 +520,75 @@ export default function SprintWipPage() {
     [pathname, router, searchParams],
   );
 
-  const sprintData =
-    sprintQuery.data?.kind === "ok" ? sprintQuery.data.data : null;
+  const flowMetrics = sprintQuery.data ?? null;
 
-  const unavailableReason =
-    sprintQuery.data?.kind === "unavailable" ? sprintQuery.data.reason : null;
+  const sprint = flowMetrics?.sprint ?? null;
 
-  const unexpectedError = sprintQuery.isError;
+  const availableSprints = sprintsQuery.data ?? [];
 
-  const status = sprintData?.status ?? "upcoming";
+  const selectedSprintId = requestedSprintId ?? sprint?.id ?? null;
 
-  const sprint = sprintData;
+  const selectedSprint =
+    availableSprints.find((item) => item.id === selectedSprintId) ?? null;
+
+  const burndownPoints = flowMetrics?.burndown ?? [];
+
+  const firstSprintDay = burndownPoints[0]?.date ?? null;
+
+  const lastSprintDay = burndownPoints[burndownPoints.length - 1]?.date ?? null;
+
+  const lastActualIndex = burndownPoints.reduce(
+    (latestIndex, point, index) =>
+      point.remaining_sp !== null ? index : latestIndex,
+    -1,
+  );
+
+  const currentSprintDay = lastActualIndex >= 0 ? lastActualIndex + 1 : 0;
+
+  const totalSprintDays = burndownPoints.length;
+
+  const elapsedPercent =
+    totalSprintDays > 0
+      ? Math.round((currentSprintDay / totalSprintDays) * 100)
+      : 0;
+
+  const latestActualPoint =
+    lastActualIndex >= 0 ? burndownPoints[lastActualIndex] : null;
+
+  const isOnTrack =
+    latestActualPoint !== null &&
+    latestActualPoint.remaining_sp !== null &&
+    latestActualPoint.remaining_sp <= latestActualPoint.ideal_sp;
+
+  const sprintDatesLabel =
+    firstSprintDay && lastSprintDay
+      ? `${formatSprintDate(firstSprintDay)} — ${formatSprintDate(lastSprintDay)}`
+      : "Sprint dates unavailable";
+
+  const sprintProgressLabel =
+    currentSprintDay > 0
+      ? `Day ${currentSprintDay} of ${totalSprintDays} (${elapsedPercent}% elapsed)`
+      : "Sprint progress unavailable";
+
+  const sprintStateLabel = sprint?.state?.toUpperCase() ?? "UNKNOWN";
+
+  const wipItems = useMemo(
+    () => (flowMetrics ? buildWipItems(flowMetrics) : []),
+    [flowMetrics],
+  );
+
+  const calculatedWipStatus = getWipStatus(wipItems);
+
+  const status: SprintWipStatus | "upcoming" = !sprint
+    ? "upcoming"
+    : calculatedWipStatus;
 
   const projectOptions = useMemo(
     () =>
       projects.map((project: ProjectItem) => ({
         id: project.id,
         name: project.name,
+        repositoryCount: project.repositories.length,
       })),
     [projects],
   );
@@ -462,11 +677,6 @@ export default function SprintWipPage() {
             <h1 className="text-2xl font-semibold tracking-[-.5px] text-[#e5ebf4]">
               Sprint &amp; WIP Monitoring
             </h1>
-            {preview && (
-              <span className="rounded border border-[#70551e] bg-[#332a17] px-2 py-1 font-mono text-[8px] font-bold tracking-wider text-[#f6c453]">
-                DEMO PREVIEW
-              </span>
-            )}
           </div>
           <p className="max-w-2xl text-[13px] leading-6 text-[#94a1b5]">
             Monitor sprint delivery progress and identify workflow congestion
@@ -492,7 +702,7 @@ export default function SprintWipPage() {
               </span>
 
               <span className="rounded-md bg-[#1c2b38] px-1.5 py-0.5 font-mono text-[10px] font-semibold text-[#22d3ee]">
-                0 repos
+                {selectedProject.repositories?.length ?? 0} repos
               </span>
 
               <ChevronDown
@@ -512,8 +722,16 @@ export default function SprintWipPage() {
                       key={project.id}
                       type="button"
                       onClick={() => {
-                        updateParams({ project: project.id });
+                        updateParams({
+                          project: project.id,
+                          sprint:
+                            project.id === selectedProject.id
+                              ? requestedSprintId
+                              : null,
+                        });
+
                         setIsProjectDropdownOpen(false);
+                        setIsSprintDropdownOpen(false);
                       }}
                       className={`flex h-10 w-full items-center gap-3 rounded-lg px-3 text-left transition ${
                         isSelected
@@ -526,7 +744,7 @@ export default function SprintWipPage() {
                       </span>
 
                       <span className="font-mono text-[10px] font-semibold text-[#22d3ee]">
-                        0 repos
+                        {project.repositoryCount} repos
                       </span>
 
                       {isSelected && (
@@ -541,108 +759,180 @@ export default function SprintWipPage() {
         </div>
       </header>
 
-      {process.env.NODE_ENV !== "production" && (
-        <div className="flex flex-wrap items-center gap-2 rounded-lg border border-[#263448] bg-[#111a27] px-3 py-2">
-          <span className="mr-1 flex items-center gap-1.5 text-[9px] font-semibold uppercase tracking-wider text-[#8290a6]">
-            <Sparkles className="size-3 text-[#f6c453]" />
-            UI state preview
-          </span>
-
-          {PREVIEW_SCENARIOS.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => updateParams({ preview: item.id })}
-              className={`rounded px-2.5 py-1.5 text-[9px] font-semibold transition ${
-                preview === item.id
-                  ? "bg-[#00d9a0] text-[#061b16]"
-                  : "border border-[#293448] bg-[#182232] text-[#aab6c8] hover:border-[#00d9a0]/60"
-              }`}
-            >
-              {item.label}
-            </button>
-          ))}
-
+      <section className="grid grid-cols-1 gap-3 rounded-[10px] border border-[#202a3b] bg-[#151c28] px-4 py-3 lg:grid-cols-[292px_minmax(0,1fr)_auto] lg:items-center">
+        {/* Sprint Selector */}
+        <div className="relative flex min-w-0 items-center gap-3 sm:w-[292px]">
           <button
             type="button"
-            onClick={() => updateParams({ preview: null })}
-            className="ml-auto text-[9px] text-[#8290a6] hover:text-white"
+            onClick={() => setIsSprintDropdownOpen((previous) => !previous)}
+            aria-expanded={isSprintDropdownOpen}
+            aria-haspopup="listbox"
+            className="flex h-[64px] w-full items-center gap-3 rounded-md bg-[#191e29] px-3 text-left transition hover:bg-[#202633]"
           >
-            Use API data
-          </button>
-        </div>
-      )}
-
-      <section className="flex flex-col gap-3 rounded-[10px] border border-[#202a3b] bg-[#151c28] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex min-w-0 items-center gap-3">
-          <button
-            type="button"
-            className="flex h-[52px] w-full items-center gap-2 rounded-md bg-[#191e29] px-2.5 text-left transition hover:bg-[#202633]"
-          >
-            <Rocket className="size-3.5 shrink-0 text-[#38d9a7]" />
+            <Rocket className="size-4 shrink-0 text-[#38d9a7]" />
 
             <div className="min-w-0 flex-1">
-              <p className="font-mono text-[8px] font-medium uppercase tracking-[0.12em] text-[#84958d]">
-                Active sprint
+              <p className="font-mono text-[10px] font-medium uppercase tracking-[0.12em] text-[#84958d]">
+                Active Sprint
               </p>
-              <p className="truncate text-sm font-medium text-[#e0e4ed]">
-                {sprint?.sprint ?? "No active sprint"}
+
+              <p className="truncate text-sm font-semibold text-[#e0e4ed]">
+                {selectedSprint?.name ?? sprint?.name ?? "No sprint selected"}
               </p>
             </div>
 
             <ChevronsUpDown className="size-3.5 shrink-0 text-[#82908b]" />
           </button>
+
+          {isSprintDropdownOpen && (
+            <div
+              role="listbox"
+              aria-label="Available sprints"
+              className="absolute left-0 top-[calc(100%+8px)] z-50 max-h-72 w-full overflow-y-auto rounded-xl border border-[#293448] bg-[#111925] p-1.5 shadow-[0_12px_35px_rgba(0,0,0,0.45)]"
+            >
+              <p className="px-3 py-2 font-mono text-[9px] font-semibold uppercase tracking-wider text-[#8290a6]">
+                Select Sprint
+              </p>
+
+              {sprintsQuery.isLoading && (
+                <p className="px-3 py-4 text-xs text-[#8290a6]">
+                  Loading sprints...
+                </p>
+              )}
+
+              {sprintsQuery.isError && (
+                <div className="px-3 py-3">
+                  <p className="text-xs text-[#ff9aa1]">
+                    Unable to load sprints.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => void sprintsQuery.refetch()}
+                    className="mt-2 text-xs text-[#42e6b2] hover:underline"
+                  >
+                    Try again
+                  </button>
+                </div>
+              )}
+
+              {!sprintsQuery.isLoading &&
+                !sprintsQuery.isError &&
+                availableSprints.length === 0 && (
+                  <p className="px-3 py-4 text-xs text-[#8290a6]">
+                    No saved sprints found for this project.
+                  </p>
+                )}
+
+              {availableSprints.map((item) => {
+                const isSelected = item.id === selectedSprintId;
+
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    role="option"
+                    aria-selected={isSelected}
+                    onClick={() => {
+                      updateParams({ sprint: item.id });
+                      setIsSprintDropdownOpen(false);
+                    }}
+                    className={`flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition ${
+                      isSelected
+                        ? "bg-[#1d303c] text-[#e2eaf4]"
+                        : "text-[#aab7c9] hover:bg-[#1a2735] hover:text-white"
+                    }`}
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-xs font-medium">
+                        {item.name}
+                      </p>
+                      <p className="mt-1 font-mono text-[9px] uppercase text-[#8290a6]">
+                        {item.state}
+                      </p>
+                    </div>
+
+                    {isSelected && (
+                      <span className="size-2 shrink-0 rounded-full bg-[#42e6b2]" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
 
-        <div className="flex flex-wrap items-center gap-3 sm:justify-end">
-          <span className="flex items-center gap-2 text-xs text-[#aab7c9]">
-            <CalendarDays className="size-3" />
-            {sprint?.dates ?? "Sprint dates not available"}
+        {/* Sprint Dates and Progress */}
+        <div className="flex min-w-0 flex-wrap items-center gap-2 font-mono text-[11px] text-[#cbd5e1]">
+          <CalendarDays className="size-4 shrink-0 text-[#9aa9bd]" />
+
+          <span>{sprintDatesLabel}</span>
+
+          <span className="text-[#536175]">•</span>
+
+          <span className="text-[#a7bbaa]">{sprintProgressLabel}</span>
+        </div>
+
+        {/* Sprint Status */}
+        <div className="flex flex-wrap items-center gap-2 lg:justify-self-end">
+          <span className="inline-flex h-7 items-center gap-2 rounded-full bg-[#203a37] px-3 font-mono text-[10px] font-semibold tracking-wider text-[#42e6b2]">
+            <span className="size-2 rounded-full bg-[#42e6b2]" />
+            {sprintStateLabel}
           </span>
 
-          <span className="flex items-center gap-2 text-xs text-[#aab7c9]">
-            <Clock3 className="size-3" />
-            {sprint
-              ? `${sprint.day} · ${sprint.dayCount}`
-              : "Waiting for sprint data"}
-          </span>
+          <span
+            className={`inline-flex h-7 items-center gap-2 rounded-full px-3 font-mono text-[10px] font-semibold tracking-wider ${
+              !latestActualPoint
+                ? "bg-[#263244] text-[#aab7c9]"
+                : isOnTrack
+                  ? "bg-[#203a37] text-[#42e6b2]"
+                  : "bg-[#3b3020] text-[#f6c453]"
+            }`}
+          >
+            <span
+              className={`size-2 rounded-full ${
+                !latestActualPoint
+                  ? "bg-[#aab7c9]"
+                  : isOnTrack
+                    ? "bg-[#42e6b2]"
+                    : "bg-[#f6c453]"
+              }`}
+            />
 
-          <StatusPill status={status} />
+            {!latestActualPoint ? "NO DATA" : isOnTrack ? "ON TRACK" : "BEHIND"}
+          </span>
         </div>
       </section>
 
-      {preview === "upcoming" || !preview ? (
+      {sprintQuery.isLoading && (
+        <div className={`${PANEL} grid min-h-[300px] place-items-center`}>
+          <div className="text-center">
+            <RefreshCw className="mx-auto mb-3 size-5 animate-spin text-[#00d9a0]" />
+            <p className="text-xs text-[#94a1b5]">Loading sprint metrics...</p>
+          </div>
+        </div>
+      )}
+
+      {sprintQuery.isError && (
+        <div className="flex items-start gap-2 rounded-lg border border-[#71333a] bg-[#321e27] p-3 text-[10px] text-[#ff9aa1]">
+          <AlertTriangle className="mt-0.5 size-4 shrink-0" />
+
+          <div>
+            <b>Unable to retrieve sprint data.</b>
+
+            <p className="mt-1 text-[#c18b93]">{sprintQuery.error.message}</p>
+
+            <button
+              className="mt-2 underline"
+              onClick={() => void sprintQuery.refetch()}
+            >
+              Try again
+            </button>
+          </div>
+        </div>
+      )}
+
+      {!sprintQuery.isLoading && !sprintQuery.isError && !sprint && (
         <>
-          {unexpectedError && (
-            <div className="flex items-start gap-2 rounded-lg border border-[#71333a] bg-[#321e27] p-3 text-[10px] text-[#ff9aa1]">
-              <AlertTriangle className="mt-0.5 size-4 shrink-0" />
-              <div>
-                <b>Unable to retrieve sprint data.</b>
-                <p className="mt-0.5 text-[#c18b93]">
-                  {sprintQuery.error instanceof Error
-                    ? sprintQuery.error.message
-                    : "The sprint endpoint returned an error."}
-                </p>
-                <button
-                  className="mt-2 underline"
-                  onClick={() => void sprintQuery.refetch()}
-                >
-                  Try again
-                </button>
-              </div>
-            </div>
-          )}
-
-          {sprintQuery.data?.kind === "unavailable" && !preview && (
-            <div className="flex items-start gap-2 rounded-lg border border-[#70551e] bg-[#2b2519] p-3 text-[10px] text-[#f6c453]">
-              <Info className="mt-0.5 size-4 shrink-0" />
-              <div>
-                <b>Sprint data is currently unavailable.</b>
-                <p className="mt-0.5 text-[#c5ae7c]">{unavailableReason}</p>
-              </div>
-            </div>
-          )}
-
           <UpcomingEmpty projectName={selectedProject.name} />
 
           <section className="flex flex-col gap-3 rounded-[10px] border border-[#263448] bg-[#131d2a] px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
@@ -655,6 +945,7 @@ export default function SprintWipPage() {
                 <p className="text-[11px] font-semibold text-[#dce5f0]">
                   Sprint initialization guide
                 </p>
+
                 <p className="text-[9px] text-[#8290a6]">
                   Connect Jira and establish sprint scope to start tracking
                   delivery.
@@ -677,15 +968,18 @@ export default function SprintWipPage() {
             </div>
           </section>
         </>
-      ) : (
-        <>
-          {sprintData && <ActiveDashboard data={sprintData} />}
-
-          <p className="text-right font-mono text-[8px] text-[#66758c]">
-            Illustrative preview values · Not retrieved from the backend
-          </p>
-        </>
       )}
+
+      {!sprintQuery.isLoading &&
+        !sprintQuery.isError &&
+        sprint &&
+        flowMetrics && (
+          <ActiveDashboard
+            data={flowMetrics}
+            wipItems={wipItems}
+            sprintEndDate={selectedSprint?.end_date ?? null}
+          />
+        )}
     </main>
   );
 }

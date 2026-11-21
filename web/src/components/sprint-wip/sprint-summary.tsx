@@ -10,6 +10,7 @@ import {
 
 interface SprintSummaryProps {
   variance: string;
+  completionDetail: string;
   blocked: number;
   completion: string;
   completionNote: string;
@@ -21,6 +22,7 @@ export function SprintSummary({
   blocked,
   completion,
   completionNote,
+  completionDetail,
   status,
 }: SprintSummaryProps) {
   const isHealthy = status === "healthy";
@@ -59,17 +61,17 @@ export function SprintSummary({
     {
       label: "Blocked issues",
       value: String(blocked),
-      badge: blocked > 2 ? "Needs attention" : "Nominal",
+      badge: blocked > 0 ? "Needs attention" : "Nominal",
       note: "Issues requiring attention.",
-      tone: blocked > 2 ? "text-[#f6c453]" : "text-[#e4eaf3]",
-      badgeTone: blocked > 2 ? "text-[#f6c453]" : "text-[#43e0ae]",
+      tone: blocked > 0 ? "text-[#f6c453]" : "text-[#e4eaf3]",
+      badgeTone: blocked > 0 ? "text-[#f6c453]" : "text-[#43e0ae]",
       icon: <ShieldAlert className="size-3" />,
     },
     {
       label: "Estimated sprint completion",
       value: completion,
       badge: completionNote,
-      note: "Based on the current sprint progress.",
+      note: completionDetail,
       tone: isHealthy ? "text-[#43e0ae]" : "text-[#f6c453]",
       badgeTone: isHealthy ? "text-[#43e0ae]" : "text-[#f6c453]",
       icon: <CalendarDays className="size-3" />,
