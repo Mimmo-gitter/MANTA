@@ -10,14 +10,25 @@ Acceptance Criteria:
 2. The test runs in CI.
 """
 
+from contextlib import asynccontextmanager
 import copy
 import json
 from pathlib import Path
+import re
+import time
 import unittest
+from unittest import mock
 
-from fastapi import APIRouter
+from cryptography.hazmat.primitives.asymmetric import rsa
+from fastapi import APIRouter, Depends, WebSocket
+from fastapi.testclient import TestClient
+import httpx
+import jwt
+from jwt.algorithms import RSAAlgorithm
+from starlette.websockets import WebSocketDisconnect
 import yaml
 
+from app.auth.jwks import JWKSClient
 from app.auth.middleware import JWTAuthMiddleware
 from app.auth.permissions import (
     Permission,
@@ -27,9 +38,11 @@ from app.auth.permissions import (
     extract_all_app_routes,
     get_route_declared_permissions,
     require_permission,
+    require_ws_permission,
     validate_permission_matrix_completeness,
     validate_registered_routes_completeness,
 )
+from app.config import settings
 from app.main import app
 from scripts.verify_permission_completeness import run_checks
 
@@ -37,6 +50,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 DOCS_MATRIX_PATH = REPO_ROOT / "docs" / "roles-permissions.json"
 BACKEND_MATRIX_PATH = REPO_ROOT / "backend" / "app" / "auth" / "roles-permissions.json"
 WEB_MATRIX_PATH = REPO_ROOT / "web" / "src" / "config" / "roles-permissions.json"
+WEB_PERMISSIONS_TS_PATH = REPO_ROOT / "web" / "src" / "lib" / "permissions.ts"
 CI_WORKFLOW_PATH = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 
 
@@ -218,6 +232,39 @@ class TestPermissionMatrixCompleteness(unittest.TestCase):
                 f"Matrix in {other_path} has drifted from {base_path}",
             )
 
+    def test_cross_stack_python_and_typescript_action_parity(self) -> None:
+        """
+        Verify Python Permission StrEnum and frontend CANONICAL_ACTIONS stay locked to
+        docs/roles-permissions.json action IDs (no uncoordinated drift across stacks).
+        """
+        matrix_actions = {a["id"] for a in self.docs_matrix_data.get("actions", [])}
+        python_actions = {p.value for p in Permission}
+        self.assertEqual(
+            python_actions,
+            matrix_actions,
+            "backend Permission enum has drifted from docs/roles-permissions.json",
+        )
+
+        self.assertTrue(
+            WEB_PERMISSIONS_TS_PATH.is_file(),
+            f"Frontend permissions module missing at {WEB_PERMISSIONS_TS_PATH}",
+        )
+        ts_src = WEB_PERMISSIONS_TS_PATH.read_text(encoding="utf-8")
+        match = re.search(
+            r"export const CANONICAL_ACTIONS:\s*readonly ActionId\[\]\s*=\s*\[(.*?)\]\s*as const;",
+            ts_src,
+            re.DOTALL,
+        )
+        self.assertIsNotNone(
+            match, "Could not locate CANONICAL_ACTIONS in web/src/lib/permissions.ts"
+        )
+        ts_actions = set(re.findall(r'"([A-Z0-9_]+)"', match.group(1)))
+        self.assertEqual(
+            ts_actions,
+            matrix_actions,
+            "web/src/lib/permissions.ts CANONICAL_ACTIONS drifted from docs/roles-permissions.json",
+        )
+
 
 class TestRegisteredRoutesCompleteness(unittest.TestCase):
     """
@@ -346,6 +393,140 @@ class TestRegisteredRoutesCompleteness(unittest.TestCase):
             get_route_declared_permissions(dummy_endpoint),
             frozenset({"VIEW_PORTFOLIO_OVERVIEW"}),
         )
+
+    def test_unprotected_websocket_route_fails_completeness_check(self) -> None:
+        """Adding an unprotected @router.websocket route MUST fail completeness validation."""
+        ws_router = APIRouter(prefix="/api/v1/ws")
+
+        @ws_router.websocket("/unprotected-stream")
+        async def unprotected_ws(websocket: WebSocket) -> None:
+            await websocket.accept()
+
+        app.include_router(ws_router)
+
+        errors = validate_registered_routes_completeness(app)
+        expected_offender = "WEBSOCKET /api/v1/ws/unprotected-stream"
+        self.assertTrue(
+            any(expected_offender in err and "no declared permission" in err for err in errors),
+            f"Expected error for '{expected_offender}', got {errors}",
+        )
+        with self.assertRaises(AssertionError):
+            assert_registered_routes_complete(app)
+
+    def test_protected_websocket_routes_pass_completeness_and_enforce_rbac_handshake(self) -> None:
+        """
+        Verify @router.websocket routes protected via Depends(require_permission(...))
+        or @require_ws_permission(...) pass route completeness and enforce RS256 JWT +
+        tenant boundary + RBAC during the handshake before websocket.accept().
+        """
+        private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        jwk_dict = json.loads(RSAAlgorithm.to_jwk(private_key.public_key()))
+        jwk_dict.update({"kid": "ws-test-key", "kty": "RSA", "alg": "RS256", "use": "sig"})
+
+        async def _jwks_handler(_req: httpx.Request) -> httpx.Response:
+            return httpx.Response(200, json={"keys": [jwk_dict]})
+
+        ws_router = APIRouter(prefix="/api/v1/ws")
+
+        @ws_router.websocket("/tenants/{tenant_id}/stream")
+        async def dep_protected_ws(
+            websocket: WebSocket,
+            tenant_id: str,
+            user=Depends(require_permission(Permission.VIEW_PROJECT_DORA)),
+        ) -> None:
+            await websocket.accept()
+            await websocket.send_json({"tenant_id": tenant_id, "sub": user.sub})
+            await websocket.close()
+
+        @ws_router.websocket("/admin/{tenant_id}")
+        @require_ws_permission(Permission.MANAGE_WEBHOOK_INTEGRATIONS)
+        async def decorator_protected_ws(websocket: WebSocket, tenant_id: str) -> None:
+            await websocket.accept()
+            await websocket.send_json({"tenant_id": tenant_id, "ok": True})
+            await websocket.close()
+
+        app.include_router(ws_router)
+        self.assertEqual(validate_registered_routes_completeness(app), [])
+        assert_registered_routes_complete(app)
+
+        def _mint_ws_token(tenant_id: str, roles: list[str]) -> str:
+            payload = {
+                "sub": "ws-user-1",
+                "email": "ws-user@manta.local",
+                "tenant_id": tenant_id,
+                "aud": settings.OIDC_AUDIENCE,
+                "iss": f"{settings.KEYCLOAK_URL}/realms/{settings.KEYCLOAK_REALM}",
+                "exp": int(time.time()) + 3600,
+                "realm_access": {"roles": roles},
+            }
+            return jwt.encode(
+                payload,
+                private_key,
+                algorithm="RS256",
+                headers={"kid": "ws-test-key", "alg": "RS256"},
+            )
+
+        tenant_a = "11111111-1111-1111-1111-111111111111"
+        tenant_b = "22222222-2222-2222-2222-222222222222"
+
+        @asynccontextmanager
+        async def _no_db_ctx(_tenant_uuid):
+            raise OSError("DB not required for JWT fallback role check")
+            yield
+
+        original_jwks = getattr(app.state, "jwks_client", None)
+        app.state.jwks_client = JWKSClient(
+            jwks_url="http://mock-idp/certs",
+            ttl_seconds=300.0,
+            transport=httpx.MockTransport(_jwks_handler),
+        )
+        try:
+            with mock.patch("app.auth.permissions.get_tenant_db_context", _no_db_ctx):
+                client = TestClient(app)
+
+                # 1. Unauthenticated handshake must close with 1008 before accept()
+                with self.assertRaises(WebSocketDisconnect) as unauth_ctx:
+                    with client.websocket_connect(f"/api/v1/ws/tenants/{tenant_a}/stream"):
+                        pass
+                self.assertEqual(unauth_ctx.exception.code, 1008)
+
+                # 2. Cross-tenant handshake must close with 1008 before accept()
+                tenant_b_token = _mint_ws_token(tenant_b, ["DEVELOPER"])
+                with self.assertRaises(WebSocketDisconnect) as xtenant_ctx:
+                    with client.websocket_connect(
+                        f"/api/v1/ws/tenants/{tenant_a}/stream",
+                        headers={"Authorization": f"Bearer {tenant_b_token}"},
+                    ):
+                        pass
+                self.assertEqual(xtenant_ctx.exception.code, 1008)
+
+                # 3. Unauthorized role must close with 1008 before accept()
+                dev_token = _mint_ws_token(tenant_a, ["DEVELOPER"])
+                with self.assertRaises(WebSocketDisconnect) as rbac_ctx:
+                    with client.websocket_connect(
+                        f"/api/v1/ws/admin/{tenant_a}",
+                        headers={"Authorization": f"Bearer {dev_token}"},
+                    ):
+                        pass
+                self.assertEqual(rbac_ctx.exception.code, 1008)
+
+                # 4. Authorized role via Authorization header succeeds
+                with client.websocket_connect(
+                    f"/api/v1/ws/tenants/{tenant_a}/stream",
+                    headers={"Authorization": f"Bearer {dev_token}"},
+                ) as ws:
+                    msg = ws.receive_json()
+                    self.assertEqual(msg, {"tenant_id": tenant_a, "sub": "ws-user-1"})
+
+                # 5. Authorized decorator-protected WS via ?token= query param succeeds
+                admin_token = _mint_ws_token(tenant_a, ["TENANT_ADMIN"])
+                with client.websocket_connect(
+                    f"/api/v1/ws/admin/{tenant_a}?token={admin_token}",
+                ) as ws:
+                    msg = ws.receive_json()
+                    self.assertEqual(msg, {"tenant_id": tenant_a, "ok": True})
+        finally:
+            app.state.jwks_client = original_jwks
 
 
 class TestCompletenessCIIntegration(unittest.TestCase):

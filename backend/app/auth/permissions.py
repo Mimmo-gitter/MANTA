@@ -1,18 +1,25 @@
+from collections.abc import Iterable
+from enum import StrEnum
 import functools
+from functools import lru_cache
 import inspect
 import json
 import logging
-from collections.abc import Iterable
-from enum import StrEnum
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
+import uuid
 
-from fastapi import Depends, HTTPException, Request, status
+from fastapi import HTTPException, Request, WebSocket, WebSocketException, status
+import jwt
 from sqlalchemy import or_, select
+from starlette.requests import HTTPConnection
+from starlette.routing import WebSocketRoute
 
-from app.auth.dependencies import get_current_user
+from app.auth.errors import AuthError, JWKSUnavailable
+from app.auth.jwks import JWKSClient
 from app.auth.schemas import StubEndpointResponse, TokenClaims
+from app.auth.tokens import decode_token, extract_bearer_token, read_kid
+from app.config import settings
 from app.db.models.models import User, UserRole
 from app.db.session import get_tenant_db_context
 
@@ -169,11 +176,116 @@ async def resolve_caller_roles(user: TokenClaims) -> set[str]:
     return matrix.normalize_roles(db_roles)
 
 
+async def authenticate_websocket(
+    websocket: WebSocket,
+    *,
+    expected_tenant_id: uuid.UUID | str | None = None,
+) -> TokenClaims:
+    """
+    Verify RS256 JWT credentials, issuer/audience claims, and tenant boundary on a
+    WebSocket upgrade handshake before `websocket.accept()`.
+
+    Token resolution checks the `Authorization: Bearer <token>` header first, then
+    falls back to the `?token=<jwt>` query parameter when no Authorization header is sent
+    (needed by browser WebSocket clients).
+    """
+    auth_header = websocket.headers.get("authorization")
+    if auth_header is not None:
+        try:
+            token = extract_bearer_token(auth_header)
+        except AuthError as exc:
+            raise WebSocketException(
+                code=status.WS_1008_POLICY_VIOLATION,
+                reason="Not authenticated",
+            ) from exc
+    else:
+        raw_query_token = websocket.query_params.get("token")
+        if not raw_query_token or not raw_query_token.strip():
+            raise WebSocketException(
+                code=status.WS_1008_POLICY_VIOLATION,
+                reason="Not authenticated",
+            )
+        token = raw_query_token.strip()
+        if token.lower().startswith("bearer "):
+            token = token[7:].strip()
+        if not token:
+            raise WebSocketException(
+                code=status.WS_1008_POLICY_VIOLATION,
+                reason="Not authenticated",
+            )
+
+    client: JWKSClient | None = getattr(websocket.app.state, "jwks_client", None)
+    if client is None:
+        logger.error("JWKSClient not configured on app.state during WebSocket handshake")
+        raise WebSocketException(
+            code=status.WS_1011_INTERNAL_ERROR,
+            reason="Authentication service misconfigured",
+        )
+
+    try:
+        kid = read_kid(token)
+        key = await client.get_signing_key(kid)
+        claims = decode_token(
+            token,
+            key,
+            audience=settings.OIDC_AUDIENCE,
+            issuer=settings.allowed_issuers,
+        )
+    except JWKSUnavailable as exc:
+        logger.warning("JWKS unavailable during WebSocket token verification")
+        raise WebSocketException(
+            code=status.WS_1011_INTERNAL_ERROR,
+            reason="Authentication service unavailable",
+        ) from exc
+    except (AuthError, jwt.PyJWTError) as exc:
+        logger.debug("WebSocket token validation rejected: %s", exc)
+        raise WebSocketException(
+            code=status.WS_1008_POLICY_VIOLATION,
+            reason="Not authenticated",
+        ) from exc
+
+    user = TokenClaims.from_claims(claims)
+
+    target_tenant = (
+        expected_tenant_id
+        if expected_tenant_id is not None
+        else websocket.path_params.get("tenant_id")
+    )
+    if target_tenant is not None:
+        try:
+            target_uuid = (
+                target_tenant
+                if isinstance(target_tenant, uuid.UUID)
+                else uuid.UUID(str(target_tenant).strip())
+            )
+        except (ValueError, AttributeError) as exc:
+            raise WebSocketException(
+                code=status.WS_1008_POLICY_VIOLATION,
+                reason=FORBIDDEN_DETAIL,
+            ) from exc
+
+        if target_uuid != user.tenant_uuid:
+            logger.warning(
+                "WebSocket cross-tenant access rejected: token tenant %s != target %s",
+                user.tenant_uuid,
+                target_uuid,
+            )
+            raise WebSocketException(
+                code=status.WS_1008_POLICY_VIOLATION,
+                reason=FORBIDDEN_DETAIL,
+            )
+
+    websocket.state.claims = claims
+    websocket.state.tenant_id = claims["tenant_id"]
+    websocket.state.user = user
+    return user
+
+
 class PermissionChecker:
     """
-    Dual-purpose permission enforcement callable:
-    - FastAPI dependency: `Depends(require_permission(...))`
-    - Route decorator: `@require_permission(...)`
+    Dual-purpose permission enforcement callable for HTTP and WebSocket routes:
+    - FastAPI dependency: `Depends(require_permission(...))` / `Depends(require_ws_permission(...))`
+    - Route decorator: `@require_permission(...)` / `@require_ws_permission(...)`
     """
 
     def __init__(self, *permissions: Permission | str) -> None:
@@ -195,9 +307,29 @@ class PermissionChecker:
         self._required_permissions = frozenset(cleaned_perms)
         self.required_permissions = self._required_permissions
 
-        async def dependency(user: TokenClaims = Depends(get_current_user)) -> TokenClaims:
+        async def dependency(conn: HTTPConnection) -> TokenClaims:
+            is_ws = isinstance(conn, WebSocket)
+            if is_ws:
+                user = getattr(conn.state, "user", None)
+                if user is None:
+                    user = await authenticate_websocket(conn)
+            else:
+                claims = getattr(conn.state, "claims", None)
+                if claims is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Not authenticated",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+                user = TokenClaims.from_claims(claims)
+
             roles = await resolve_caller_roles(user)
             if not get_permission_matrix().is_allowed(roles, self._required_permissions):
+                if is_ws:
+                    raise WebSocketException(
+                        code=status.WS_1008_POLICY_VIOLATION,
+                        reason=FORBIDDEN_DETAIL,
+                    )
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail=FORBIDDEN_DETAIL,
@@ -221,12 +353,20 @@ class PermissionChecker:
 
             @functools.wraps(fn)
             async def wrapper(*f_args: Any, **f_kwargs: Any) -> Any:
-                req: Request | None = f_kwargs.get("request") or next(
-                    (a for a in f_args if isinstance(a, Request)), None
-                )
-                user: TokenClaims | None = f_kwargs.get("user") or next(
-                    (a for a in f_args if isinstance(a, TokenClaims)), None
-                )
+                req: Request | None = next(
+                    (v for v in f_kwargs.values() if isinstance(v, Request)), None
+                ) or next((a for a in f_args if isinstance(a, Request)), None)
+                ws: WebSocket | None = next(
+                    (v for v in f_kwargs.values() if isinstance(v, WebSocket)), None
+                ) or next((a for a in f_args if isinstance(a, WebSocket)), None)
+                user: TokenClaims | None = next(
+                    (v for v in f_kwargs.values() if isinstance(v, TokenClaims)), None
+                ) or next((a for a in f_args if isinstance(a, TokenClaims)), None)
+
+                if user is None and ws is not None:
+                    user = getattr(ws.state, "user", None)
+                    if user is None:
+                        user = await authenticate_websocket(ws)
 
                 if user is None and req is not None:
                     user = getattr(req.state, "user", None)
@@ -236,6 +376,11 @@ class PermissionChecker:
                             user = TokenClaims.from_claims(claims)
 
                 if user is None:
+                    if ws is not None:
+                        raise WebSocketException(
+                            code=status.WS_1008_POLICY_VIOLATION,
+                            reason="Not authenticated",
+                        )
                     raise HTTPException(
                         status_code=status.HTTP_403_FORBIDDEN,
                         detail=FORBIDDEN_DETAIL,
@@ -243,6 +388,11 @@ class PermissionChecker:
 
                 roles = await resolve_caller_roles(user)
                 if not get_permission_matrix().is_allowed(roles, perms):
+                    if ws is not None:
+                        raise WebSocketException(
+                            code=status.WS_1008_POLICY_VIOLATION,
+                            reason=FORBIDDEN_DETAIL,
+                        )
                     raise HTTPException(
                         status_code=status.HTTP_403_FORBIDDEN,
                         detail=FORBIDDEN_DETAIL,
@@ -262,6 +412,9 @@ class PermissionChecker:
 def require_permission(*permissions: Permission | str) -> PermissionChecker:
     """Factory creating a PermissionChecker dependency/decorator."""
     return PermissionChecker(*permissions)
+
+
+require_ws_permission = require_permission
 
 
 def build_stub_response(permission: Permission | str) -> StubEndpointResponse:
@@ -522,7 +675,12 @@ def validate_registered_routes_completeness(
             continue
 
         methods = getattr(route, "methods", None)
-        method_str = ",".join(sorted(methods)) if methods else "UNKNOWN"
+        if methods:
+            method_str = ",".join(sorted(methods))
+        elif isinstance(route, WebSocketRoute):
+            method_str = "WEBSOCKET"
+        else:
+            method_str = "UNKNOWN"
         route_desc = f"{method_str} {path}"
 
         perms = get_route_declared_permissions(route)

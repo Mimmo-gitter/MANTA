@@ -55,8 +55,24 @@ class Settings(BaseSettings):
     SWEEP_BATCH_SIZE: int = 100
     SWEEPER_HEARTBEAT_FILE: str = "/tmp/sweeper.heartbeat"
 
+    # Outbox Relay Settings (SRS v2.0 §3.5.2)
+    OUTBOX_RELAY_HEARTBEAT_FILE: str = "/tmp/outbox_relay.heartbeat"
+
     # Worker Prometheus Metrics Exporter (SCRUM-424)
     WORKER_METRICS_PORT: int = 9101
+
+    # AI / LLM Endpoints (US-41: Zero Data Retention & Local Inference)
+    LOCAL_LLM_BASE_URL: str = "http://localhost:11434/v1"
+    CLOUD_ZDR_LLM_BASE_URL: str | None = None
+    CLOUD_ZDR_API_KEY: str | None = None
+
+    # Firebase Cloud Messaging (Mobile Push Dispatch)
+    FCM_PROJECT_ID: str | None = None
+    FCM_CREDENTIALS_JSON: str | None = None
+
+    # Refactoring Sandbox Execution (US-46)
+    SANDBOX_RUNTIME: str = "runsc"
+    SANDBOX_IMAGE_DIGEST: str = ""
 
     @property
     def cors_origins(self) -> list[str]:

@@ -10,9 +10,11 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import json
+from pathlib import Path
 import uuid
 
 import pytest
@@ -138,7 +140,7 @@ def test_build_stream_key_and_fields() -> None:
 
 
 async def test_relay_worker_unit_monotonic_xadd_and_commit() -> None:
-    """Verify relay claims with ORDER BY id ASC LIMIT 100 SKIP LOCKED and XADD MAXLEN ~ 10000."""
+    """Verify relay claims with ORDER BY id ASC LIMIT 100 SKIP LOCKED and XADD MAXLEN ~ 5000."""
     tenant_id = uuid.uuid4()
     rows = [_make_outbox_row(tenant_id) for _ in range(3)]
     session = _FakeRelaySession(list(reversed(rows)))
@@ -160,7 +162,43 @@ async def test_relay_worker_unit_monotonic_xadd_and_commit() -> None:
     published_ids = [c["fields"]["event_id"] for c in redis.calls]  # type: ignore[index]
     assert published_ids == [str(r.id) for r in rows]
     assert all(c["name"] == f"tenant_stream:{tenant_id}" for c in redis.calls)
-    assert all(c["maxlen"] == 10_000 and c["approximate"] is True for c in redis.calls)
+    assert all(c["maxlen"] == 5_000 and c["approximate"] is True for c in redis.calls)
+
+
+@pytest.mark.asyncio
+async def test_relay_run_forever_writes_heartbeat_and_stops_cleanly(tmp_path: Path) -> None:
+    """Verify run_forever periodically writes heartbeat timestamp and stops cleanly on event."""
+    heartbeat_path = tmp_path / "outbox_relay.heartbeat"
+    stop_event = asyncio.Event()
+
+    class _EmptyDiscoveryResult:
+        def fetchall(self) -> list[tuple[uuid.UUID]]:
+            return []
+
+    class _EmptyDiscoverySession:
+        @asynccontextmanager
+        async def begin(self):
+            yield
+
+        async def execute(self, *_args: object, **_kwargs: object) -> _EmptyDiscoveryResult:
+            stop_event.set()
+            return _EmptyDiscoveryResult()
+
+    @asynccontextmanager
+    async def _discovery_factory():
+        yield _EmptyDiscoverySession()
+
+    worker = OutboxRelayWorker(
+        redis_client=_RecordingStreamRedis(),
+        discovery_session_factory=_discovery_factory,
+        poll_interval=0.05,
+        heartbeat_file=heartbeat_path,
+    )
+    await asyncio.wait_for(worker.run_forever(stop_event=stop_event), timeout=2.0)
+
+    assert heartbeat_path.is_file()
+    recorded_ts = float(heartbeat_path.read_text(encoding="utf-8").strip())
+    assert recorded_ts > 0
 
 
 async def test_relay_crash_after_xadd_before_commit_preserves_event_id() -> None:

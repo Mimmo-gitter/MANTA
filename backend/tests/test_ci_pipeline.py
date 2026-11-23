@@ -52,6 +52,7 @@ class TestCIWorkflowOptimizations(unittest.TestCase):
             "pgbouncer-integration",
             "backend-docker-build",
             "web-checks",
+            "web-docker-build",
             "web-e2e",
             "web-e2e-keycloak",
         }
@@ -59,6 +60,14 @@ class TestCIWorkflowOptimizations(unittest.TestCase):
         gate_script = "\n".join(step.get("run", "") for step in jobs["ci-gate"]["steps"])
         for job_id in expected_needs:
             self.assertIn(f"needs.{job_id}.result", gate_script)
+
+    def test_backend_test_runs_valkey_service_and_web_docker_build_exists(self) -> None:
+        jobs = self.ci_data["jobs"]
+        backend_services = jobs["backend-test"].get("services", {})
+        self.assertIn("valkey", backend_services)
+        self.assertEqual(backend_services["valkey"]["image"], "valkey/valkey:7-alpine")
+        self.assertEqual(jobs["backend-test"]["env"].get("REDIS_URL"), "redis://localhost:6379/0")
+        self.assertIn("web-docker-build", jobs)
 
     def test_webhook_suites_not_duplicated_in_backend_test(self) -> None:
         jobs = self.ci_data["jobs"]

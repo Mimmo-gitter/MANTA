@@ -1,6 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
+  output: "standalone",
   reactStrictMode: true,
   async redirects() {
     return [
@@ -18,8 +19,8 @@ const nextConfig: NextConfig = {
   },
   experimental: {
     // optimizePackageImports for performance
-    optimizePackageImports: ["lucide-react", "recharts", "@tremor/react", "@xyflow/react"]
-  }
+    optimizePackageImports: ["lucide-react", "recharts", "@xyflow/react"],
+  },
 };
 
 export default nextConfig;
