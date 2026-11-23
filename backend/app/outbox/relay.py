@@ -4,7 +4,7 @@ Task 33.2: Outbox Relay Background Worker & Redis Stream Publisher.
 Polls unpublished `outbox_events` rows strictly in monotonic RFC 9562 UUIDv7 order
 (`WHERE published_at IS NULL ORDER BY id ASC LIMIT 100 FOR UPDATE SKIP LOCKED`),
 publishes each row to per-tenant Redis / Valkey Streams
-(`tenant_stream:{row.tenant_id}` via `XADD ... MAXLEN ~ 10000`), and updates
+(`tenant_stream:{row.tenant_id}` via `XADD ... MAXLEN ~ 5000`), and updates
 `published_at` atomically on commit.
 
 Multi-tenant RLS compliance:
@@ -24,7 +24,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 import logging
+import os
+from pathlib import Path
 import signal
+import time
 from typing import Any, Optional
 import uuid
 
@@ -39,10 +42,13 @@ from app.db.session import AsyncSessionLocal, async_engine, get_tenant_db_contex
 logger = logging.getLogger("app.outbox.relay")
 
 DEFAULT_BATCH_SIZE = 100
-DEFAULT_STREAM_MAXLEN = 10_000
+DEFAULT_STREAM_MAXLEN = 5_000
 DEFAULT_POLL_INTERVAL_SECONDS = 0.25
 DEFAULT_TENANT_DISCOVERY_LIMIT = 100
 STREAM_KEY_PREFIX = "tenant_stream"
+DEFAULT_HEARTBEAT_FILE = Path(
+    os.getenv("OUTBOX_RELAY_HEARTBEAT_FILE", settings.OUTBOX_RELAY_HEARTBEAT_FILE)
+)
 
 _DISCOVER_UNPUBLISHED_TENANTS_SQL = text(
     "SELECT tenant_id FROM list_tenants_with_unpublished_outbox_events(CAST(:limit AS integer))"
@@ -118,6 +124,7 @@ class OutboxRelayWorker:
         stream_maxlen: int = DEFAULT_STREAM_MAXLEN,
         poll_interval: float = DEFAULT_POLL_INTERVAL_SECONDS,
         tenant_discovery_limit: int = DEFAULT_TENANT_DISCOVERY_LIMIT,
+        heartbeat_file: Optional[Path | str] = DEFAULT_HEARTBEAT_FILE,
     ) -> None:
         if batch_size <= 0:
             raise ValueError("batch_size must be a positive integer.")
@@ -130,6 +137,19 @@ class OutboxRelayWorker:
         self.stream_maxlen = stream_maxlen
         self.poll_interval = poll_interval
         self.tenant_discovery_limit = tenant_discovery_limit
+        self.heartbeat_file = Path(heartbeat_file) if heartbeat_file is not None else None
+
+    def _write_heartbeat(self) -> None:
+        """Write current UNIX timestamp to the liveness heartbeat file."""
+        if self.heartbeat_file is None:
+            return
+        try:
+            self.heartbeat_file.parent.mkdir(parents=True, exist_ok=True)
+            self.heartbeat_file.write_text(str(time.time()), encoding="utf-8")
+        except OSError as exc:
+            logger.debug(
+                "Failed to write outbox relay heartbeat to %s: %s", self.heartbeat_file, exc
+            )
 
     def _get_redis(self, redis_client: Optional[Any] = None) -> Any:
         return redis_client or self.redis_client or get_redis()
@@ -237,8 +257,10 @@ class OutboxRelayWorker:
             self.stream_maxlen,
             self.poll_interval,
         )
+        self._write_heartbeat()
         while not stopper.is_set():
             stats = await self.run_once()
+            self._write_heartbeat()
             if stats.events_published > 0 and stats.errors == 0:
                 continue
             try:

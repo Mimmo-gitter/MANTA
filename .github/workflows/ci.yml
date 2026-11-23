@@ -31,6 +31,7 @@ jobs:
       backend_pgbouncer: ${{ steps.mode.outputs.run_all == 'true' || steps.filter.outputs.backend_pgbouncer == 'true' }}
       backend_docker: ${{ steps.mode.outputs.run_all == 'true' || steps.filter.outputs.backend_docker == 'true' }}
       web: ${{ steps.mode.outputs.run_all == 'true' || steps.filter.outputs.web == 'true' }}
+      web_docker: ${{ steps.mode.outputs.run_all == 'true' || steps.filter.outputs.web_docker == 'true' }}
       web_keycloak: ${{ steps.mode.outputs.run_all == 'true' || steps.filter.outputs.web_keycloak == 'true' }}
     steps:
       - name: Determine execution mode
@@ -117,6 +118,18 @@ jobs:
             web:
               - 'web/**'
               - '.github/workflows/ci.yml'
+            web_docker:
+              - 'web/Dockerfile'
+              - 'web/.dockerignore'
+              - 'web/package*.json'
+              - 'web/.npmrc'
+              - 'web/next.config.*'
+              - 'web/tsconfig.json'
+              - 'web/postcss.config.*'
+              - 'web/tailwind.config.*'
+              - 'web/public/**'
+              - 'web/src/**'
+              - '.github/workflows/ci.yml'
             web_keycloak:
               - 'web/src/app/(auth)/**'
               - 'web/src/app/**/login/**'
@@ -179,9 +192,19 @@ jobs:
           --health-interval=5s
           --health-timeout=5s
           --health-retries=10
+      valkey:
+        image: valkey/valkey:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="valkey-cli ping"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
     env:
       DATABASE_URL: postgresql+asyncpg://eng_app_user:eng_app_pass_change_in_prod@localhost:5432/manta_db
       MIGRATION_DATABASE_URL: postgresql+asyncpg://manta_user:manta_password@localhost:5432/manta_db
+      REDIS_URL: redis://localhost:6379/0
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -479,9 +502,32 @@ jobs:
           path: |
             web/.next/
             !web/.next/cache/**
+            !web/.next/standalone/**
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 1
+
+  web-docker-build:
+    name: Web Docker Image Build
+    needs: changes
+    if: needs.changes.outputs.web_docker == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build web container image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./web
+          file: ./web/Dockerfile
+          push: false
+          tags: manta-web:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   web-e2e:
     name: Web Portal Playwright E2E Tests (Mocked)
@@ -615,6 +661,7 @@ jobs:
       - pgbouncer-integration
       - backend-docker-build
       - web-checks
+      - web-docker-build
       - web-e2e
       - web-e2e-keycloak
     if: always()
@@ -659,6 +706,7 @@ jobs:
           evaluate_job "PgBouncer Integration"   "${{ needs.changes.outputs.backend_pgbouncer }}"    "${{ needs.pgbouncer-integration.result }}"
           evaluate_job "Backend Docker Build"    "${{ needs.changes.outputs.backend_docker }}"       "${{ needs.backend-docker-build.result }}"
           evaluate_job "Web Checks"              "$WEB_CHECKS_SHOULD_RUN"                            "${{ needs.web-checks.result }}"
+          evaluate_job "Web Docker Build"        "${{ needs.changes.outputs.web_docker }}"           "${{ needs.web-docker-build.result }}"
           evaluate_job "Web E2E (Mocked)"        "${{ needs.changes.outputs.web }}"                  "${{ needs.web-e2e.result }}"
           evaluate_job "Web E2E (Keycloak)"      "${{ needs.changes.outputs.web_keycloak }}"         "${{ needs.web-e2e-keycloak.result }}"
 
