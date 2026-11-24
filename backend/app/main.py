@@ -1,4 +1,7 @@
-from fastapi import FastAPI, Response
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from app.auth.members_router import router as members_router
@@ -12,6 +15,11 @@ from app.dead_letters import dead_letters_router
 from app.deployments import deployments_router
 from app.dora import dora_router
 from app.integrations import integrations_router
+from app.observability import (
+    close_metrics_redis,
+    refresh_broker_metrics,
+    setup_prometheus_instrumentation,
+)
 from app.projects import projects_router
 from app.refactoring import refactoring_router
 from app.search import search_router
@@ -19,9 +27,19 @@ from app.tenants import router as tenants_router
 from app.webhooks import webhooks_router
 from app.mobile import mobile_router
 
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    try:
+        yield
+    finally:
+        await close_metrics_redis()
+
+
 app = FastAPI(
     title="Engineering Intelligence Platform",
     version="3.0.0",
+    lifespan=lifespan,
 )
 
 # Initialize in-memory JWKS client on application state
@@ -34,6 +52,9 @@ app.state.jwks_client = JWKSClient(
 
 # Register JWT authentication middleware FIRST (denies unauthenticated requests on non-public paths)
 app.add_middleware(JWTAuthMiddleware)
+
+# Instrument HTTP requests & webhook ACK latency before CORS so CORS stays outermost (TASK-302-1)
+setup_prometheus_instrumentation(app)
 
 # Register CORS middleware LAST so it wraps outermost in Starlette's middleware stack.
 # This ensures that ALL responses (including preflight OPTIONS and 401/403/500 errors from inner middlewares)
@@ -86,5 +107,7 @@ async def health_check():
 
 
 @app.get("/metrics", include_in_schema=False)
-async def prometheus_metrics() -> Response:
+async def prometheus_metrics(request: Request) -> Response:
+    override_redis = getattr(request.app.state, "metrics_redis", None)
+    await refresh_broker_metrics(redis_client=override_redis)
     return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)

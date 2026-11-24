@@ -61,6 +61,11 @@ class Settings(BaseSettings):
     # Worker Prometheus Metrics Exporter (SCRUM-424)
     WORKER_METRICS_PORT: int = 9101
 
+    # Prometheus Broker Metrics Scrape Settings (TASK-302-1 / US-49)
+    METRICS_REDIS_ENABLED: bool = True
+    METRICS_REDIS_TIMEOUT_SECONDS: float = 0.75
+    METRICS_REDIS_SCAN_LIMIT: int = 1000
+
     # AI / LLM Endpoints (US-41: Zero Data Retention & Local Inference)
     LOCAL_LLM_BASE_URL: str = "http://localhost:11434/v1"
     CLOUD_ZDR_LLM_BASE_URL: str | None = None
