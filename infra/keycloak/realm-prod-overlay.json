@@ -1,0 +1,62 @@
+{
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "loginWithEmailAllowed": true,
+  "duplicateEmailsAllowed": false,
+  "resetPasswordAllowed": true,
+  "editUsernameAllowed": false,
+  "accessTokenLifespan": 900,
+  "accessTokenLifespanForImplicitFlow": 900,
+  "ssoSessionIdleTimeout": 1800,
+  "ssoSessionMaxLifespan": 36000,
+  "ssoSessionIdleTimeoutRememberMe": 1800,
+  "ssoSessionMaxLifespanRememberMe": 36000,
+  "clientSessionIdleTimeout": 1800,
+  "clientSessionMaxLifespan": 36000,
+  "offlineSessionIdleTimeout": 2592000,
+  "offlineSessionMaxLifespan": 5184000,
+  "accessCodeLifespan": 60,
+  "accessCodeLifespanUserAction": 300,
+  "accessCodeLifespanLogin": 1800,
+  "clients": [
+    {
+      "clientId": "manta-portal",
+      "rootUrl": "${PORTAL_ORIGIN}",
+      "baseUrl": "/",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "frontchannelLogout": true,
+      "redirectUris": [
+        "${PORTAL_ORIGIN}/*"
+      ],
+      "webOrigins": [
+        "${PORTAL_ORIGIN}"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "${PORTAL_ORIGIN}/*"
+      }
+    },
+    {
+      "clientId": "manta-mobile",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "frontchannelLogout": true,
+      "redirectUris": [
+        "manta://auth/callback"
+      ],
+      "webOrigins": [],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "manta://auth/callback"
+      }
+    }
+  ],
+  "users": []
+}

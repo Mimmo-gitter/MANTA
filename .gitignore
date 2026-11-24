@@ -10,6 +10,7 @@
 .env
 .env.*
 !.env.example
+!.env.*.example
 !.env.template
 
 # Keys, certificates, OIDC/JWKS private keys, KMS/Vault local exports

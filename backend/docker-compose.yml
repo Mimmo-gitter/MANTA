@@ -113,9 +113,14 @@ services:
       dockerfile: Dockerfile
     container_name: manta_app
     environment:
+      - APP_ENV=${APP_ENV:-development}
       - DATABASE_URL=${DATABASE_URL:-postgresql+asyncpg://eng_app_user:eng_app_pass_change_in_prod@pgbouncer:5432/manta_db}
       - MIGRATION_DATABASE_URL=${MIGRATION_DATABASE_URL:-postgresql+asyncpg://manta_user:manta_password@postgres:5432/manta_db}
       - REDIS_URL=${REDIS_URL:-redis://valkey:6379/0}
+      - CORS_ORIGINS=${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      - ENCRYPTION_MASTER_KEY=${ENCRYPTION_MASTER_KEY:-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef}
+      - ENCRYPTION_KEYRING_JSON=${ENCRYPTION_KEYRING_JSON:-}
+      - ACTIVE_ENCRYPTION_KEY_ID=${ACTIVE_ENCRYPTION_KEY_ID:-primary}
       - KEYCLOAK_URL=${KEYCLOAK_INTERNAL_URL:-http://keycloak:8080}
       - KEYCLOAK_REALM=${KEYCLOAK_REALM:-manta}
       - KEYCLOAK_REALM_EXPORT_PATH=/infra/keycloak/realm-export.json
@@ -123,6 +128,7 @@ services:
       - WEBHOOK_BASE_URL=${WEBHOOK_BASE_URL:-}
       - OIDC_AUDIENCE=${OIDC_AUDIENCE:-manta-backend}
       - OIDC_ISSUER=${OIDC_ISSUER:-}
+      - OIDC_JWKS_URL=${OIDC_JWKS_URL:-}
       - OIDC_EXTRA_ISSUERS=${OIDC_EXTRA_ISSUERS:-}
       - KEYCLOAK_ADMIN=${KEYCLOAK_ADMIN:-admin}
       - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:-admin}
