@@ -26,6 +26,7 @@ from sqlalchemy.exc import DBAPIError, ProgrammingError, SQLAlchemyError
 from app.db.models.models import Integration
 from app.db.session import AsyncSessionLocal, get_tenant_db_context
 from app.integrations.crypto import encryption_service
+from app.observability.metrics import normalize_webhook_provider
 from app.projects.health_service import handle_project_health_signal_http
 from app.projects.schemas import HealthSignalIngestResponse
 from app.webhooks.delivery import extract_delivery_id
@@ -93,6 +94,7 @@ async def ingest_project_health_webhook(
     Verifies HMAC-SHA256 signature or webhook secret token and executes the
     idempotent production_failures session state machine under tenant RLS.
     """
+    request.state.webhook_provider = "health"
     return await handle_project_health_signal_http(
         project_id=project_id,
         request=request,
@@ -118,6 +120,7 @@ async def ingest_webhook_by_provider(
     SCRUM-331: Returns HTTP 503 with Retry-After if database is unavailable.
     """
     prov = provider.lower().strip()
+    request.state.webhook_provider = normalize_webhook_provider(prov)
     if prov not in {"github", "jira", "slack", "argocd", "generic"}:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -276,6 +279,7 @@ def _verify_and_extract_for_integration(
 
     tenant_id: uuid.UUID = row["tenant_id"]
     provider: str = row["provider"]
+    request.state.webhook_provider = normalize_webhook_provider(provider)
     secret_hash: str | None = row.get("webhook_secret_hash")
 
     if provider.lower().strip() == "argocd" and not secret_hash:
@@ -348,6 +352,7 @@ async def ingest_webhook_for_integration(
     SCRUM-335: Idempotent staging in webhook_events within a single pooled transaction.
     SCRUM-331: Returns HTTP 503 with Retry-After if database is unavailable.
     """
+    request.state.webhook_provider = "unknown"
     payload, raw_body, raw_payload_json = await _read_request_data(request)
 
     try:
