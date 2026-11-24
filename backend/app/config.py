@@ -1,8 +1,28 @@
+import os
+import re
+from urllib.parse import urlparse
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_DEV_LOCALHOST_CORS_REGEX = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
+_DEV_DEFAULT_ENCRYPTION_MASTER_KEY = (
+    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+)
+_HEX_64_RE = re.compile(r"^[0-9a-fA-F]{64}$")
+_LOCALHOST_HOSTS = frozenset({"localhost", "127.0.0.1", "0.0.0.0", "::1"})
+
+
+def _is_localhost_url(url: str) -> bool:
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").strip().lower()
+    return host in _LOCALHOST_HOSTS or host.endswith(".localhost")
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+    APP_ENV: str = "development"
+    SEED_DEV_DATA: bool | None = None
 
     DATABASE_URL: str = (
         "postgresql+asyncpg://eng_app_user:eng_app_pass_change_in_prod@localhost:5432/manta_db"
@@ -25,6 +45,7 @@ class Settings(BaseSettings):
 
     # CORS Configuration
     CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
+    CORS_ALLOW_ORIGIN_REGEX: str | None = None
 
     # Secret & Credential Encryption (SCRUM-321)
     # Master key (32-byte / 256-bit hex string) used for AES-256-GCM
@@ -80,8 +101,106 @@ class Settings(BaseSettings):
     SANDBOX_IMAGE_DIGEST: str = ""
 
     @property
+    def is_production(self) -> bool:
+        return self.APP_ENV.strip().lower() in {"prod", "production"}
+
+    @property
     def cors_origins(self) -> list[str]:
         return [orig.strip() for orig in self.CORS_ORIGINS.split(",") if orig.strip()]
+
+    @property
+    def cors_allow_origin_regex(self) -> str | None:
+        cleaned = (self.CORS_ALLOW_ORIGIN_REGEX or "").strip()
+        if cleaned:
+            return cleaned
+        if self.is_production:
+            return None
+        return _DEV_LOCALHOST_CORS_REGEX
+
+    def validate_production_security(self) -> list[str]:
+        """Validate mandatory production hardening invariants when APP_ENV=production."""
+        if not self.is_production:
+            return []
+
+        errors: list[str] = []
+
+        master_key = (self.ENCRYPTION_MASTER_KEY or "").strip()
+        if (
+            not _HEX_64_RE.match(master_key)
+            or master_key.lower() == _DEV_DEFAULT_ENCRYPTION_MASTER_KEY
+        ):
+            errors.append(
+                "ENCRYPTION_MASTER_KEY must be a rotated 64-character hex key (not the dev default)."
+            )
+
+        kc_pass = (self.KEYCLOAK_ADMIN_PASSWORD or "").strip()
+        if not kc_pass or kc_pass.lower() == "admin" or len(kc_pass) < 12:
+            errors.append(
+                "KEYCLOAK_ADMIN_PASSWORD must be rotated in production (non-default, >= 12 chars)."
+            )
+
+        db_url = (self.DATABASE_URL or "").strip()
+        if (
+            "eng_app_pass_change_in_prod" in db_url
+            or "manta_password" in db_url
+            or _is_localhost_url(db_url)
+        ):
+            errors.append(
+                "DATABASE_URL must use rotated production credentials and a non-localhost host."
+            )
+
+        origins = self.cors_origins
+        if not origins:
+            errors.append("CORS_ORIGINS must be explicitly configured in production.")
+        for orig in origins:
+            if orig == "*" or not orig.startswith("https://") or _is_localhost_url(orig):
+                errors.append(
+                    f"CORS_ORIGINS entry must be an explicit HTTPS non-localhost origin: {orig!r}"
+                )
+
+        issuer = (self.OIDC_ISSUER or "").strip()
+        if not issuer or not issuer.startswith("https://") or _is_localhost_url(issuer):
+            errors.append("OIDC_ISSUER must be explicitly set to a public HTTPS URL in production.")
+
+        jwks_url = (self.OIDC_JWKS_URL or "").strip()
+        if (
+            not jwks_url
+            or not jwks_url.startswith(("https://", "http://"))
+            or _is_localhost_url(jwks_url)
+        ):
+            errors.append(
+                "OIDC_JWKS_URL must be explicitly set to a non-localhost internal or HTTPS URL in production."
+            )
+
+        web_base = (self.WEB_BASE_URL or "").strip()
+        if not web_base.startswith("https://") or _is_localhost_url(web_base):
+            errors.append("WEB_BASE_URL must be an explicit HTTPS non-localhost URL in production.")
+
+        webhook_base = (self.WEBHOOK_BASE_URL or "").strip()
+        if (
+            not webhook_base
+            or not webhook_base.startswith("https://")
+            or _is_localhost_url(webhook_base)
+        ):
+            errors.append(
+                "WEBHOOK_BASE_URL must be explicitly set to an HTTPS non-localhost URL in production."
+            )
+
+        seed_env_truthy = self.SEED_DEV_DATA is True or os.getenv(
+            "SEED_DEV_DATA", ""
+        ).strip().lower() in {"1", "true", "yes", "on"}
+        if seed_env_truthy:
+            errors.append("SEED_DEV_DATA must be false in production.")
+
+        return errors
+
+    def assert_production_security(self) -> None:
+        """Fail fast at startup if any production hardening invariant is violated."""
+        errors = self.validate_production_security()
+        if errors:
+            raise RuntimeError(
+                "Production security configuration check failed:\n- " + "\n- ".join(errors)
+            )
 
     @property
     def jwks_url(self) -> str:

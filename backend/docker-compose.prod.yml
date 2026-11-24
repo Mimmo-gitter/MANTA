@@ -1,0 +1,188 @@
+# =============================================================================
+# TASK-301-5 (SCRUM-500 / STORY-301): Production Docker Compose Hardening Overlay
+#
+# Usage (requires Docker Compose v2.24+ for !reset):
+#   docker compose --env-file backend/.env.prod \
+#     -f backend/docker-compose.yml \
+#     -f backend/docker-compose.prod.yml up -d --build
+#
+# Hardens:
+# - Keycloak: switches from `start-dev` to production `start --import-realm`
+#   behind Caddy (`KC_HOSTNAME`, `KC_PROXY_HEADERS=xforwarded`, `KC_HTTP_ENABLED=true`)
+#   importing the rendered production realm (HTTPS URIs, sslRequired=external,
+#   production lifespans, zero dev users).
+# - Database migrations: replaces dev `db-init` command with
+#   `python -m scripts.run_prod_migrations` (`SEED_DEV_DATA=false`, Alembic only,
+#   plus `eng_app_user` password rotation sync).
+# - Runtime secrets & URLs: enforces fail-fast `${VAR:?...}` required secrets
+#   across Postgres, PgBouncer, Keycloak, FastAPI app, worker, sweeper, and relay.
+# - Network exposure: strips direct public host ports so Caddy is the sole ingress.
+# =============================================================================
+
+services:
+  postgres:
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-manta_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in production}
+      POSTGRES_DB: ${POSTGRES_DB:-manta_db}
+    ports: !reset []
+    restart: unless-stopped
+
+  pgbouncer:
+    environment:
+      DB_USER: ${POSTGRES_USER:-manta_user}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in production}
+      AUTH_TYPE: scram-sha-256
+    ports: !reset []
+    restart: unless-stopped
+
+  valkey:
+    ports: !reset []
+    restart: unless-stopped
+
+  # Disable local Mailpit catch-all SMTP server in production
+  mailpit:
+    profiles: ["dev-only"]
+    ports: !reset []
+
+  # Production database migrations ONLY (alembic upgrade head; never seeds dev data)
+  db-init:
+    command: ["python", "-m", "scripts.run_prod_migrations"]
+    environment:
+      - APP_ENV=production
+      - SEED_DEV_DATA=false
+      - DATABASE_URL=${DATABASE_URL:?DATABASE_URL must be set in production}
+      - MIGRATION_DATABASE_URL=${MIGRATION_DATABASE_URL:?MIGRATION_DATABASE_URL must be set in production}
+      - ENG_APP_DB_PASSWORD=${ENG_APP_DB_PASSWORD:?ENG_APP_DB_PASSWORD must be set in production}
+    volumes: !reset []
+    restart: "no"
+
+  # Render hardened production Keycloak realm JSON before Keycloak starts
+  keycloak-realm-init:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: manta_keycloak_realm_init
+    command:
+      - "python"
+      - "/infra/keycloak/render_prod_realm.py"
+      - "--domain"
+      - "${MANTA_DOMAIN:?MANTA_DOMAIN must be set in production}"
+      - "--output"
+      - "/rendered/realm-export.json"
+    environment:
+      - MANTA_DOMAIN=${MANTA_DOMAIN:?MANTA_DOMAIN must be set in production}
+      - PORTAL_ORIGIN=${PORTAL_ORIGIN:-}
+    volumes:
+      - ../infra/keycloak:/infra/keycloak:ro
+      - keycloak_rendered_realm:/rendered
+    networks:
+      - manta_net
+    restart: "no"
+
+  keycloak:
+    command:
+      - "start"
+      - "--import-realm"
+    environment:
+      KC_DB: postgres
+      KC_DB_URL_HOST: postgres
+      KC_DB_URL_PORT: 5432
+      KC_DB_URL_DATABASE: ${KEYCLOAK_DB_NAME:-keycloak}
+      KC_DB_USERNAME: ${POSTGRES_USER:-manta_user}
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set in production}
+      KC_DB_SCHEMA: ${KEYCLOAK_DB_SCHEMA:-public}
+      KC_HOSTNAME: ${KC_HOSTNAME:?KC_HOSTNAME must be set in production}
+      KC_HTTP_RELATIVE_PATH: ${KC_HTTP_RELATIVE_PATH:-/}
+      KC_PROXY_HEADERS: xforwarded
+      KC_HTTP_ENABLED: "true"
+      KC_HOSTNAME_STRICT_HTTPS: "true"
+      KC_HOSTNAME_STRICT: "false"
+      KEYCLOAK_ADMIN: ${KEYCLOAK_ADMIN:-admin}
+      KEYCLOAK_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?KEYCLOAK_ADMIN_PASSWORD must be set in production}
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+      KC_HTTP_PORT: 8080
+    ports: !reset []
+    volumes: !reset
+      - keycloak_rendered_realm:/opt/keycloak/data/import:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      keycloak-realm-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  app:
+    environment:
+      - APP_ENV=production
+      - SEED_DEV_DATA=false
+      - DATABASE_URL=${DATABASE_URL:?DATABASE_URL must be set in production}
+      - MIGRATION_DATABASE_URL=${MIGRATION_DATABASE_URL:?MIGRATION_DATABASE_URL must be set in production}
+      - REDIS_URL=${REDIS_URL:-redis://valkey:6379/0}
+      - CORS_ORIGINS=${CORS_ORIGINS:?CORS_ORIGINS must be set in production}
+      - OIDC_AUDIENCE=${OIDC_AUDIENCE:-manta-backend}
+      - OIDC_ISSUER=${OIDC_ISSUER:?OIDC_ISSUER must be set in production}
+      - OIDC_JWKS_URL=${OIDC_JWKS_URL:?OIDC_JWKS_URL must be set in production}
+      - OIDC_EXTRA_ISSUERS=${OIDC_EXTRA_ISSUERS:-}
+      - KEYCLOAK_URL=${KEYCLOAK_INTERNAL_URL:-http://keycloak:8080}
+      - KEYCLOAK_REALM=${KEYCLOAK_REALM:-manta}
+      - KEYCLOAK_ADMIN=${KEYCLOAK_ADMIN:-admin}
+      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:?KEYCLOAK_ADMIN_PASSWORD must be set in production}
+      - KC_SERVICE_CLIENT_ID=${KC_SERVICE_CLIENT_ID:-manta-backend}
+      - KC_SERVICE_CLIENT_SECRET=${KC_SERVICE_CLIENT_SECRET:-}
+      - ENCRYPTION_MASTER_KEY=${ENCRYPTION_MASTER_KEY:?ENCRYPTION_MASTER_KEY must be set in production}
+      - ENCRYPTION_KEYRING_JSON=${ENCRYPTION_KEYRING_JSON:-}
+      - ACTIVE_ENCRYPTION_KEY_ID=${ACTIVE_ENCRYPTION_KEY_ID:-primary}
+      - WEB_BASE_URL=${WEB_BASE_URL:?WEB_BASE_URL must be set in production}
+      - WEBHOOK_BASE_URL=${WEBHOOK_BASE_URL:?WEBHOOK_BASE_URL must be set in production}
+      - SMTP_HOST=${SMTP_HOST:?SMTP_HOST must be set in production}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM=${SMTP_FROM:?SMTP_FROM must be set in production}
+      - SMTP_START_TLS=${SMTP_START_TLS:-true}
+    ports: !reset []
+    volumes: !reset
+      - ../docs/roles-permissions.json:/docs/roles-permissions.json:ro
+    depends_on: !reset
+      db-init:
+        condition: service_completed_successfully
+      pgbouncer:
+        condition: service_healthy
+      valkey:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+    restart: unless-stopped
+
+  sweeper:
+    environment:
+      - APP_ENV=production
+      - SEED_DEV_DATA=false
+      - DATABASE_URL=${DATABASE_URL:?DATABASE_URL must be set in production}
+      - REDIS_URL=${REDIS_URL:-redis://valkey:6379/0}
+    restart: unless-stopped
+
+  worker:
+    environment:
+      - APP_ENV=production
+      - SEED_DEV_DATA=false
+      - DATABASE_URL=${DATABASE_URL:?DATABASE_URL must be set in production}
+      - REDIS_URL=${REDIS_URL:-redis://valkey:6379/0}
+      - ENCRYPTION_MASTER_KEY=${ENCRYPTION_MASTER_KEY:?ENCRYPTION_MASTER_KEY must be set in production}
+      - ENCRYPTION_KEYRING_JSON=${ENCRYPTION_KEYRING_JSON:-}
+      - ACTIVE_ENCRYPTION_KEY_ID=${ACTIVE_ENCRYPTION_KEY_ID:-primary}
+      - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:?KEYCLOAK_ADMIN_PASSWORD must be set in production}
+    restart: unless-stopped
+
+  outbox-relay:
+    environment:
+      - APP_ENV=production
+      - SEED_DEV_DATA=false
+      - DATABASE_URL=${DATABASE_URL:?DATABASE_URL must be set in production}
+      - REDIS_URL=${REDIS_URL:-redis://valkey:6379/0}
+    restart: unless-stopped
+
+volumes:
+  keycloak_rendered_realm:
