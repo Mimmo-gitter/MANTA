@@ -11,6 +11,7 @@ from app.webhooks.versioning import extract_entity_version
 
 _TZ_NO_COLON = re.compile(r"([+-]\d{2})(\d{2})$")
 HANDLED_PR_ACTIONS = {"opened", "synchronize", "reopened", "closed"}
+HANDLED_PR_REVIEW_ACTIONS = {"submitted", "edited"}
 
 
 def parse_dt(value: Any) -> Optional[datetime]:
@@ -76,6 +77,21 @@ class NormalizedPullRequest:
     closed_at: Optional[datetime] = None
     author_login: Optional[str] = None
     incoming_version: Optional[int] = None
+
+
+@dataclass
+class NormalizedPullRequestReview:
+    kind: str  # "pull_request_review" | "noop"
+    reason: Optional[str] = None
+    action: Optional[str] = None
+    repo_external_id: Optional[str] = None
+    repo_full_name: Optional[str] = None
+    pr_number: Optional[int] = None
+    review_state: Optional[str] = None
+    reviewer_login: Optional[str] = None
+    reviewer_email: Optional[str] = None
+    reviewer_name: Optional[str] = None
+    submitted_at: Optional[datetime] = None
 
 
 def _repo(payload: dict[str, Any]) -> tuple[Optional[str], Optional[str]]:
@@ -183,4 +199,43 @@ def normalize_pull_request(payload: dict[str, Any]) -> NormalizedPullRequest:
         closed_at=parse_dt(pr.get("closed_at")),
         author_login=(pr.get("user") or {}).get("login"),
         incoming_version=extract_entity_version("github", payload),
+    )
+
+
+def normalize_pull_request_review(payload: dict[str, Any]) -> NormalizedPullRequestReview:
+    raw_action = payload.get("action")
+    action = str(raw_action).strip().lower() if raw_action is not None else ""
+    if action not in HANDLED_PR_REVIEW_ACTIONS:
+        return NormalizedPullRequestReview(
+            kind="noop",
+            reason=f"unhandled_review_action:{raw_action}",
+        )
+    pr = payload.get("pull_request") or {}
+    review = payload.get("review") or {}
+    pr_number = pr.get("number") or payload.get("number")
+    if pr_number is None:
+        return NormalizedPullRequestReview(kind="noop", reason="missing_pr_number")
+    repo_id, full_name = _repo(payload)
+    if repo_id is None and not full_name:
+        return NormalizedPullRequestReview(kind="noop", reason="missing_repository")
+
+    reviewer = review.get("user") or {}
+    raw_state = str(review.get("state") or "commented").strip().upper()[:32] or "COMMENTED"
+    submitted_at = (
+        parse_dt(review.get("submitted_at"))
+        or parse_dt(review.get("updated_at"))
+        or parse_dt(pr.get("updated_at"))
+    )
+
+    return NormalizedPullRequestReview(
+        kind="pull_request_review",
+        action=action,
+        repo_external_id=repo_id,
+        repo_full_name=full_name,
+        pr_number=int(pr_number),
+        review_state=raw_state,
+        reviewer_login=reviewer.get("login") or reviewer.get("username"),
+        reviewer_email=reviewer.get("email"),
+        reviewer_name=reviewer.get("name"),
+        submitted_at=submitted_at,
     )

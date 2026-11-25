@@ -31,8 +31,10 @@ from unittest.mock import Mock
 import uuid
 
 try:
+    from arq import cron as arq_cron
     from arq.connections import RedisSettings
 except ImportError:  # pragma: no cover
+    arq_cron = None  # type: ignore[assignment]
 
     class RedisSettings:  # type: ignore[no-redef]
         def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -901,6 +903,13 @@ async def shutdown(ctx: dict[str, Any]) -> None:
 async def dispatch_worker_job(parsed_payload: dict[str, Any]) -> Any:
     """Route a queued MantaJobEnvelope payload to the registered domain processor."""
     job_type = str(parsed_payload.get("job_type") or "").strip().lower()
+    if job_type == "blocker.detect":
+        from .blocker_detector import run_blocker_detector_cron
+
+        inner = parsed_payload.get("payload")
+        ctx_arg = inner if isinstance(inner, dict) else {}
+        return await run_blocker_detector_cron(ctx_arg)
+
     if job_type == "webhook.process" or "event_id" in parsed_payload:
         from app.webhooks.processor import process_webhook_job
 
@@ -917,6 +926,30 @@ async def process_webhook_event_arq(ctx: dict[str, Any], parsed_payload: dict[st
     return await process_webhook_job(parsed_payload)
 
 
+async def run_blocker_detector_arq(ctx: dict[str, Any]) -> dict[str, Any]:
+    """ARQ scheduled 15-minute blocker detector cron/task entrypoint (TASK-307-1)."""
+    from .blocker_detector import run_blocker_detector_cron
+
+    return await run_blocker_detector_cron(ctx)
+
+
+def _build_default_cron_jobs() -> list[Any]:
+    """Build scheduled ARQ cron jobs (15-minute blocker detector at :00/:15/:30/:45)."""
+    if arq_cron is None:
+        return []
+    return [
+        arq_cron(
+            run_blocker_detector_arq,
+            name="blocker_detector_15m",
+            minute={0, 15, 30, 45},
+            second=0,
+            unique=True,
+            timeout=300,
+            run_at_startup=False,
+        )
+    ]
+
+
 def get_default_redis_settings() -> RedisSettings:
     """Creates RedisSettings from settings.REDIS_URL with fallback to default RedisSettings."""
     try:
@@ -926,7 +959,8 @@ def get_default_redis_settings() -> RedisSettings:
 
 
 class WorkerSettings:
-    functions: list[Any] = [process_webhook_event_arq]
+    functions: list[Any] = [process_webhook_event_arq, run_blocker_detector_arq]
+    cron_jobs: list[Any] = _build_default_cron_jobs()
     on_startup = startup
     on_shutdown = shutdown
     redis_settings = get_default_redis_settings()
@@ -1009,6 +1043,7 @@ async def run_worker_daemon() -> None:
             signal.signal(sig, lambda *_: loop.call_soon_threadsafe(stop_event.set))
 
     heartbeat_task: asyncio.Task[None] | None = None
+    blocker_task: asyncio.Task[int] | None = None
     try:
         await record_worker_heartbeat(redis_client, worker_id)
         _write_worker_heartbeat_file(heartbeat_path)
@@ -1016,6 +1051,17 @@ async def run_worker_daemon() -> None:
         heartbeat_task = asyncio.create_task(
             _run_daemon_heartbeat(redis_client, worker_id, heartbeat_path, stop_event)
         )
+        blocker_enabled = getattr(settings, "BLOCKER_DETECTOR_ENABLED", True)
+        if blocker_enabled:
+            from .blocker_detector import run_blocker_detector_loop
+
+            blocker_task = asyncio.create_task(
+                run_blocker_detector_loop(
+                    stop_event,
+                    redis=redis_client,
+                    worker_id=worker_id,
+                )
+            )
         logger.info(
             "Worker daemon %s started (in-flight list: %s)", worker_id, get_in_flight_key(worker_id)
         )
@@ -1033,10 +1079,11 @@ async def run_worker_daemon() -> None:
             )
     finally:
         stop_event.set()
-        if heartbeat_task is not None and not heartbeat_task.done():
-            heartbeat_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await heartbeat_task
+        for bg_task in (blocker_task, heartbeat_task):
+            if bg_task is not None and not bg_task.done():
+                bg_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await bg_task
         await redis_client.aclose()
         await async_engine.dispose()
         logger.info("Worker daemon %s stopped cleanly.", worker_id)
@@ -1086,6 +1133,7 @@ __all__ = [
     "reclaim_expired_leases",
     "release_job_lease",
     "renew_job_lease",
+    "run_blocker_detector_arq",
     "run_lease_heartbeat_loop",
     "run_supervisor_reclamation_loop",
     "run_worker_fetch_loop",

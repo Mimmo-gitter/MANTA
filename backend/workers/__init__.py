@@ -1,5 +1,16 @@
 """M.A.N.T.A. Background Worker Package."""
 
+from .blocker_detector import (
+    BLOCKER_CRON_LOCK_KEY,
+    BLOCKER_CRON_MINUTES,
+    BLOCKER_CRON_NAME,
+    BlockerSweepResult,
+    discover_active_tenants,
+    run_blocker_detector_cron,
+    run_blocker_detector_loop,
+    sweep_all_active_tenants,
+    sweep_tenant_blockers,
+)
 from .fencing import (
     ACQUIRE_LEASE_LUA,
     DEFAULT_SUPERVISOR_SWEEP_SEC,
@@ -56,6 +67,7 @@ from .worker import (
     record_worker_heartbeat,
     recover_in_flight_jobs,
     recover_orphan_in_flight_jobs,
+    run_blocker_detector_arq,
     run_heartbeat_loop,
     run_worker_fetch_loop,
     serialize_job_payload,
@@ -65,6 +77,10 @@ from .worker import (
 )
 
 __all__ = [
+    "BLOCKER_CRON_LOCK_KEY",
+    "BLOCKER_CRON_MINUTES",
+    "BLOCKER_CRON_NAME",
+    "BlockerSweepResult",
     "DEFAULT_HEARTBEAT_INTERVAL",
     "DEFAULT_POLL_TIMEOUT",
     "HEARTBEAT_TTL_SECONDS",
@@ -89,13 +105,12 @@ __all__ = [
     "WORKER_HEARTBEAT_SUFFIX",
     "WorkerSettings",
     "ack_job",
+    "discover_active_tenants",
     "discover_in_flight_keys",
     "LeaseHandle",
     "LeaseHeartbeatManager",
     "ReclaimedJobRecord",
     "StaleFencingTokenError",
-    "WorkerSettings",
-    "ack_job",
     "acquire_job_lease",
     "acquire_redis_lease",
     "claim_next_job",
@@ -113,6 +128,9 @@ __all__ = [
     "record_worker_heartbeat",
     "recover_in_flight_jobs",
     "recover_orphan_in_flight_jobs",
+    "run_blocker_detector_arq",
+    "run_blocker_detector_cron",
+    "run_blocker_detector_loop",
     "run_heartbeat_loop",
     "get_lease_key",
     "parse_lease_value",
@@ -125,6 +143,8 @@ __all__ = [
     "serialize_job_payload",
     "shutdown",
     "startup",
+    "sweep_all_active_tenants",
     "sweep_dead_workers",
+    "sweep_tenant_blockers",
     "upsert_job_lease",
 ]

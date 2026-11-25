@@ -79,6 +79,14 @@ class Settings(BaseSettings):
     # Outbox Relay Settings (SRS v2.0 §3.5.2)
     OUTBOX_RELAY_HEARTBEAT_FILE: str = "/tmp/outbox_relay.heartbeat"
 
+    # Scheduled Blocker Detector Settings (TASK-307-1 / US-71)
+    BLOCKER_DETECTOR_ENABLED: bool = True
+    BLOCKER_DETECTOR_INTERVAL_SECONDS: float = 900.0  # 15 minutes
+    BLOCKER_INCIDENT_WINDOW_MINUTES: int = 60
+    BLOCKER_INCIDENT_SPIKE_THRESHOLD: int = 3
+    BLOCKER_TENANT_DISCOVERY_BATCH_SIZE: int = 500
+    BLOCKER_DETECTOR_HEARTBEAT_FILE: str = "/tmp/blocker_detector.heartbeat"
+
     # Worker Prometheus Metrics Exporter (SCRUM-424)
     WORKER_METRICS_PORT: int = 9101
 

@@ -597,6 +597,13 @@ class PullRequest(Base):
     __table_args__ = (
         Index("idx_pull_requests_tenant_id", "tenant_id"),
         Index("idx_pull_requests_merge_commit", "tenant_id", "merge_commit_sha"),
+        Index(
+            "idx_pull_requests_blocker_sweep",
+            "tenant_id",
+            "project_id",
+            "state",
+            "is_stale",
+        ),
         UniqueConstraint("repository_id", "external_pr_number", name="uq_repo_pr_number"),
     )
 
@@ -650,7 +657,15 @@ class PullRequest(Base):
 class PullRequestReview(Base):
     __tablename__ = "pull_request_reviews"
 
-    __table_args__ = (Index("idx_pull_request_reviews_tenant_id", "tenant_id"),)
+    __table_args__ = (
+        Index("idx_pull_request_reviews_tenant_id", "tenant_id"),
+        Index(
+            "idx_pull_request_reviews_pr_submitted_at",
+            "tenant_id",
+            "pull_request_id",
+            "submitted_at",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(
@@ -907,7 +922,20 @@ class CommunicationEvent(Base):
 class Risk(Base):
     __tablename__ = "risks"
 
-    __table_args__ = (Index("idx_risks_tenant_id", "tenant_id"),)
+    __table_args__ = (
+        Index("idx_risks_tenant_id", "tenant_id"),
+        Index("idx_risks_project_type_status", "tenant_id", "project_id", "type", "status"),
+        Index(
+            "uq_risks_active_condition",
+            "tenant_id",
+            "project_id",
+            "type",
+            "subject_type",
+            "subject_id",
+            unique=True,
+            postgresql_where=text("status IN ('OPEN', 'ACKNOWLEDGED')"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(
@@ -1070,7 +1098,10 @@ class DeploymentPullRequest(Base):
 class Incident(Base):
     __tablename__ = "incidents"
 
-    __table_args__ = (Index("idx_incidents_tenant_id", "tenant_id"),)
+    __table_args__ = (
+        Index("idx_incidents_tenant_id", "tenant_id"),
+        Index("idx_incidents_project_started_at", "tenant_id", "project_id", "started_at"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(
