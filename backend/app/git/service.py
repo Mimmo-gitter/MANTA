@@ -10,8 +10,20 @@ import uuid
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models.models import Commit, PullRequest, Repository
-from app.git.normalization import NormalizedCommit, NormalizedPullRequest, NormalizedPush
+from app.blockers.service import (
+    RiskSubjectType,
+    RiskType,
+    is_pr_open,
+    reset_pr_staleness_on_activity,
+    resolve_active_blocker_risks,
+)
+from app.db.models.models import Commit, PullRequest, PullRequestReview, Repository
+from app.git.normalization import (
+    NormalizedCommit,
+    NormalizedPullRequest,
+    NormalizedPullRequestReview,
+    NormalizedPush,
+)
 from app.webhooks.metrics import record_dropped_stale_event
 from app.webhooks.versioning import execute_versioned_update
 
@@ -200,9 +212,14 @@ async def process_push(db: AsyncSession, *, tenant_id: uuid.UUID, n: NormalizedP
         return "noop:unlinked_github_repository"
 
     saved = 0
+    latest_commit_ts: Optional[datetime] = None
     for c in n.commits:
-        if await _upsert_commit(db, tenant_id=tenant_id, repository_id=repo.id, c=c):
+        saved_commit = await _upsert_commit(db, tenant_id=tenant_id, repository_id=repo.id, c=c)
+        if saved_commit is not None:
             saved += 1
+            cand_ts = c.committed_at or c.authored_at
+            if cand_ts is not None and (latest_commit_ts is None or cand_ts > latest_commit_ts):
+                latest_commit_ts = cand_ts
 
     head_sha = n.commits[-1].sha
     open_prs = (
@@ -212,7 +229,9 @@ async def process_push(db: AsyncSession, *, tenant_id: uuid.UUID, n: NormalizedP
                     PullRequest.tenant_id == tenant_id,
                     PullRequest.repository_id == repo.id,
                     PullRequest.head_branch == n.branch,
-                    PullRequest.state == "OPEN",
+                    func.lower(PullRequest.state) == "open",
+                    PullRequest.merged_at.is_(None),
+                    PullRequest.closed_at.is_(None),
                 )
             )
         )
@@ -224,6 +243,13 @@ async def process_push(db: AsyncSession, *, tenant_id: uuid.UUID, n: NormalizedP
             db, tenant_id=tenant_id, repository_id=repo.id, pr_id=pr.id, head_sha=head_sha
         )
         await _refresh_first_commit_at(db, tenant_id=tenant_id, pr=pr)
+        if saved > 0:
+            await reset_pr_staleness_on_activity(
+                db,
+                tenant_id=tenant_id,
+                pr=pr,
+                activity_at=latest_commit_ts or datetime.now(timezone.utc),
+            )
     await db.flush()
     return f"persisted_push:{saved}"
 
@@ -281,6 +307,7 @@ async def process_pull_request(
             merge_commit_sha=n.merge_commit_sha,
             entity_version=n.incoming_version if n.incoming_version is not None else 1,
             created_in_git_at=n.created_at or datetime.now(timezone.utc),
+            updated_at=n.updated_at or n.created_at or datetime.now(timezone.utc),
             merged_at=n.merged_at,
             closed_at=n.closed_at,
         )
@@ -309,6 +336,7 @@ async def process_pull_request(
             "head_branch": n.head_branch or pr.head_branch,
             "base_branch": n.base_branch or pr.base_branch,
             "head_sha": n.head_sha or pr.head_sha,
+            "is_stale": False,
             "updated_at": n.updated_at or datetime.now(timezone.utc),
         }
         if n.state == "MERGED":
@@ -331,6 +359,14 @@ async def process_pull_request(
         if not mut_res.applied:
             return f"noop:stale_pr_version:{n.number}"
         await db.refresh(pr)
+        await resolve_active_blocker_risks(
+            db,
+            tenant_id=tenant_id,
+            project_id=pr.project_id,
+            risk_type=RiskType.STALE_PR,
+            subject_type=RiskSubjectType.PULL_REQUEST,
+            subject_id=pr.id,
+        )
 
     await _attach_chain(
         db, tenant_id=tenant_id, repository_id=repo.id, pr_id=pr.id, head_sha=n.head_sha
@@ -338,3 +374,93 @@ async def process_pull_request(
     await _refresh_first_commit_at(db, tenant_id=tenant_id, pr=pr)
     await db.flush()
     return f"persisted_pr:{pr.id}"
+
+
+async def process_pull_request_review(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    n: NormalizedPullRequestReview,
+    integration_id: Optional[uuid.UUID] = None,
+) -> str:
+    """
+    Persists a GitHub `pull_request_review` event with contributor pseudonym isolation,
+    resets `PullRequest.is_stale = False`, advances activity timestamp, and resolves
+    any active `STALE_PR` Risk (TASK-307-1 / US-71).
+    """
+    repo = await _resolve_repository(
+        db, tenant_id=tenant_id, external_id=n.repo_external_id, full_name=n.repo_full_name
+    )
+    if repo is None:
+        logger.warning("Skipping PR review for unlinked repo %s", n.repo_full_name)
+        return "noop:unlinked_github_repository"
+
+    pr = (
+        await db.execute(
+            select(PullRequest).where(
+                PullRequest.tenant_id == tenant_id,
+                PullRequest.repository_id == repo.id,
+                PullRequest.external_pr_number == n.pr_number,
+            )
+        )
+    ).scalar_one_or_none()
+    if pr is None:
+        return f"noop:missing_pull_request:{n.pr_number}"
+
+    if not is_pr_open(pr):
+        return f"noop:review_on_non_open_pr:{n.pr_number}"
+
+    reviewer_pseudo = await _pseudonym_id(
+        db,
+        tenant_id=tenant_id,
+        login=n.reviewer_login,
+        name=n.reviewer_name,
+        email=n.reviewer_email,
+    )
+    if reviewer_pseudo is None:
+        return f"noop:missing_pr_reviewer:{n.pr_number}"
+
+    submitted_at = n.submitted_at or datetime.now(timezone.utc)
+    review_state = (n.review_state or "COMMENTED").strip().upper()[:32] or "COMMENTED"
+
+    existing_review = (
+        await db.execute(
+            select(PullRequestReview).where(
+                PullRequestReview.tenant_id == tenant_id,
+                PullRequestReview.pull_request_id == pr.id,
+                PullRequestReview.reviewer_pseudonym_id == reviewer_pseudo,
+                PullRequestReview.submitted_at == submitted_at,
+            )
+        )
+    ).scalar_one_or_none()
+
+    if existing_review is None:
+        next_cycle = int(pr.review_cycles_count or 0) + 1
+        review_row = PullRequestReview(
+            tenant_id=tenant_id,
+            pull_request_id=pr.id,
+            integration_id=integration_id,
+            reviewer_pseudonym_id=reviewer_pseudo,
+            state=review_state,
+            review_cycle_index=next_cycle,
+            submitted_at=submitted_at,
+        )
+        db.add(review_row)
+        pr.review_cycles_count = next_cycle
+        if pr.first_review_at is None or submitted_at < pr.first_review_at:
+            pr.first_review_at = submitted_at
+        await db.flush()
+    else:
+        review_row = existing_review
+        if review_row.state != review_state:
+            review_row.state = review_state
+            await db.flush()
+
+    await reset_pr_staleness_on_activity(
+        db,
+        tenant_id=tenant_id,
+        pr=pr,
+        activity_at=submitted_at,
+    )
+    await db.flush()
+    return f"persisted_pr_review:{review_row.id}"

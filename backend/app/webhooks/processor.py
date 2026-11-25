@@ -5,7 +5,11 @@ import logging
 from typing import Any, Optional
 import uuid
 
-from app.git.webhook_handler import handle_pull_request, handle_push
+from app.git.webhook_handler import (
+    handle_pull_request,
+    handle_pull_request_review,
+    handle_push,
+)
 from app.jira.webhook_handler import handle_jira_event
 
 from sqlalchemy import select
@@ -90,6 +94,8 @@ async def process_staged_deployment_event_in_session(
         handler_result = await handle_push(db, event, tenant_id)
     elif provider == "github" and event_type_clean == "pull_request":
         handler_result = await handle_pull_request(db, event, tenant_id)
+    elif provider == "github" and event_type_clean == "pull_request_review":
+        handler_result = await handle_pull_request_review(db, event, tenant_id)
     elif provider == "jira":
         handler_result = await handle_jira_event(db, event, tenant_id)
 

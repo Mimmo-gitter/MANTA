@@ -29,9 +29,15 @@ import logging
 from typing import Any, Optional
 import uuid
 
-from sqlalchemy import select, update
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.blockers.service import (
+    RiskSubjectType,
+    RiskType,
+    reset_pr_staleness_on_activity,
+    resolve_active_blocker_risks,
+)
 from app.contributors.service import resolve_or_create_contributor_pseudonym
 from app.db.models.models import Commit, PullRequest
 from app.deployments.service import resolve_github_project
@@ -121,19 +127,27 @@ async def ingest_github_push_in_session(
     # Identify matching open PR on the same branch if available
     ref = str(payload.get("ref") or "").strip()
     branch_name = ref.replace("refs/heads/", "") if ref.startswith("refs/heads/") else ref
+    open_pr: Optional[PullRequest] = None
     pull_request_id: Optional[uuid.UUID] = None
     if branch_name:
         pr_stmt = (
-            select(PullRequest.id)
+            select(PullRequest)
             .where(
                 PullRequest.tenant_id == tenant_id,
                 PullRequest.repository_id == repository_id,
                 PullRequest.head_branch == branch_name,
-                PullRequest.state == "open",
+                func.lower(PullRequest.state) == "open",
+                PullRequest.merged_at.is_(None),
+                PullRequest.closed_at.is_(None),
             )
             .limit(1)
         )
-        pull_request_id = (await db.execute(pr_stmt)).scalar_one_or_none()
+        pr_candidate = (await db.execute(pr_stmt)).scalar_one_or_none()
+        if isinstance(pr_candidate, PullRequest):
+            open_pr = pr_candidate
+            pull_request_id = pr_candidate.id
+        elif isinstance(pr_candidate, uuid.UUID):
+            pull_request_id = pr_candidate
 
     commits_raw = payload.get("commits")
     if isinstance(commits_raw, list):
@@ -145,6 +159,7 @@ async def ingest_github_push_in_session(
 
     fencing_token = int(payload.get("fencing_token") or payload.get("active_fencing_token") or 0)
     persisted_count = 0
+    latest_commit_ts: Optional[datetime] = None
 
     for commit_data in commits_list:
         if not isinstance(commit_data, dict):
@@ -280,6 +295,16 @@ async def ingest_github_push_in_session(
             db.add(new_commit)
 
         persisted_count += 1
+        if latest_commit_ts is None or committed_at > latest_commit_ts:
+            latest_commit_ts = committed_at
+
+    if open_pr is not None and persisted_count > 0:
+        await reset_pr_staleness_on_activity(
+            db,
+            tenant_id=tenant_id,
+            pr=open_pr,
+            activity_at=latest_commit_ts or datetime.now(timezone.utc),
+        )
 
     await db.flush()
     await complete_webhook_event(db, event_id, tenant_id=tenant_id)
@@ -445,6 +470,7 @@ async def ingest_github_pull_request_in_session(
 
             existing_pr.head_sha = head_sha
             existing_pr.entity_version += 1
+            existing_pr.is_stale = False
             if inbound_token > existing_pr.active_fencing_token:
                 existing_pr.active_fencing_token = inbound_token
             existing_pr.updated_at = parse_iso_datetime(pr_dict.get("updated_at")) or datetime.now(
@@ -452,6 +478,14 @@ async def ingest_github_pull_request_in_session(
             )
 
         await db.flush()
+        await resolve_active_blocker_risks(
+            db,
+            tenant_id=tenant_id,
+            project_id=existing_pr.project_id,
+            risk_type=RiskType.STALE_PR,
+            subject_type=RiskSubjectType.PULL_REQUEST,
+            subject_id=existing_pr.id,
+        )
         await _link_branch_commits_to_pr(
             db,
             tenant_id=tenant_id,
@@ -524,8 +558,17 @@ async def ingest_github_pull_request_in_session(
                 timezone.utc
             )
 
+        existing_pr.is_stale = False
         existing_pr.updated_at = datetime.now(timezone.utc)
         await db.flush()
+        await resolve_active_blocker_risks(
+            db,
+            tenant_id=tenant_id,
+            project_id=existing_pr.project_id,
+            risk_type=RiskType.STALE_PR,
+            subject_type=RiskSubjectType.PULL_REQUEST,
+            subject_id=existing_pr.id,
+        )
         await complete_webhook_event(db, event_id, tenant_id=tenant_id)
         return f"persisted_pr_closed:{existing_pr.id}"
 
