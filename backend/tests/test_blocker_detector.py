@@ -113,6 +113,15 @@ MIGRATION_PATH = (
 )
 
 
+@pytest.fixture(autouse=True)
+async def _cleanup_blocker_test_state() -> AsyncGenerator[None, None]:
+    """Dispose asyncpg pool inside the active event loop and reset rate limiters per test."""
+    registration_rate_limiter.reset()
+    yield
+    await async_engine.dispose()
+    registration_rate_limiter.reset()
+
+
 # ---------------------------------------------------------------------------
 # Deterministic In-Memory Transactional Store & Fake AsyncSession
 # ---------------------------------------------------------------------------
@@ -1640,6 +1649,7 @@ async def test_live_pg_partial_unique_index_suppresses_concurrent_duplicates() -
                 updated_at=now,
             )
         )
+        await session.flush()
         session.add(
             Repository(
                 id=repo_id,
@@ -1650,6 +1660,7 @@ async def test_live_pg_partial_unique_index_suppresses_concurrent_duplicates() -
                 created_at=now,
             )
         )
+        await session.flush()
         session.add(
             PullRequest(
                 id=pr_id,
@@ -1722,6 +1733,7 @@ async def test_live_pg_multi_tenant_rls_sweep_and_full_lifecycle_e2e() -> None:
                 updated_at=now,
             )
         )
+        await session.flush()
         session.add(
             Repository(
                 id=repo_a,
@@ -1732,6 +1744,7 @@ async def test_live_pg_multi_tenant_rls_sweep_and_full_lifecycle_e2e() -> None:
                 created_at=now,
             )
         )
+        await session.flush()
         session.add(
             PullRequest(
                 id=pr_a,
@@ -1764,6 +1777,7 @@ async def test_live_pg_multi_tenant_rls_sweep_and_full_lifecycle_e2e() -> None:
                 updated_at=now,
             )
         )
+        await session.flush()
         for mins in (40, 20, 5):
             session.add(
                 Incident(
