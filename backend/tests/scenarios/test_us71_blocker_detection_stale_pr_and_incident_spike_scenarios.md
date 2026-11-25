@@ -3,6 +3,7 @@
 **Tasks:**
 - `TASK-307-0` (`SCRUM-542`): Author BDD specs & deduplication state-reset rules for `>48h` stale PRs & `3-incident/60m` spikes
 - `TASK-307-1` (`SCRUM-543`): Implement scheduled ARQ blocker detector (`SECURITY DEFINER` tenant sweep, `Risk` upsert & `OutboxEvent` emit)
+- `TASK-307-2` (`SCRUM-544`): Write scenarios & pytest tests for 49h stale PR, duplicate suppression, activity reset & 2-vs-3 incident spikes
 
 **Parent User Story:** `SCRUM-507` (`STORY-307 — US-71`)  
 **Authoritative BDD & State-Machine Specification:** [`docs/blocker-detection-stale-pr-and-incident-spike-bdd-specs.md`](../../../docs/blocker-detection-stale-pr-and-incident-spike-bdd-specs.md)  
@@ -35,7 +36,18 @@
 
 ---
 
-## 2. Verification Commands
+## 2. TASK-307-2 (`SCRUM-544`) Boundary & RLS Verification Scenarios
+
+| Scenario ID | Focus | Preconditions & Inputs | Expected Outcome | Automated Test |
+| :--- | :--- | :--- | :--- | :--- |
+| **`TC-307-2-01`** | **47h vs 49h Stale PR Boundary** | Single active project (`pr_stale_threshold_hours=48`) with PR-A idle `47h` and PR-B idle `49h` (`is_stale=false` on both) | PR-A remains `is_stale=false` (`0` Risks, `0` OutboxEvents); PR-B becomes `is_stale=true` with `updated_at` preserved, committing `1` `Risk(STALE_PR, HIGH, OPEN)` + `1` `OutboxEvent(risk.detected)` | `test_task_307_2_47h_vs_49h_stale_pr_boundary` |
+| **`TC-307-2-02`** | **Repeat-Run Suppression & Activity Reset** | 49h stale PR flagged -> 2 repeat 15m sweeps (`OPEN` then `ACKNOWLEDGED`) -> `push` & `pull_request_review` activity -> another 49h idle window | Repeat sweeps emit `0` duplicate Risks/OutboxEvents; activity resets `is_stale=false` and transitions Risk to `RESOLVED`; subsequent 49h idle period re-arms cleanly with Risk #2 + OutboxEvent #2 | `test_task_307_2_repeat_run_suppression_and_activity_reset_lifecycle` |
+| **`TC-307-2-03`** | **Exact 2-vs-3 Incidents in 60m Boundary** | Active project with `2` incidents inside `[T-60m, T]`, then a `3rd` incident added inside `[T-60m, T]`, followed by a repeat 15m sweep | At `2` incidents: `0` Risks, `0` OutboxEvents; at `3` incidents: `1` `Risk(INCIDENT_SPIKE, CRITICAL, OPEN)` + `1` `OutboxEvent(risk.detected)`; repeat sweep emits `0` duplicates | `test_task_307_2_exact_2_vs_3_incidents_in_60m_boundary` |
+| **`TC-307-2-04`** | **Zero Duplicate Alerts Under RLS** | Two active tenants (Tenant A with 49h stale PR, Tenant B with 3 incidents/60m) swept repeatedly via `sweep_all_active_tenants` with tenant-scoped `get_tenant_db_context` (`app.current_tenant_id`) | Each tenant's session only reads/writes its own rows under RLS; repeat sweeps produce `0` duplicate Risks and `0` duplicate OutboxEvents (`duplicates_suppressed == 2`), verified both in deterministic RLS-enforced simulation and live PostgreSQL 16 `FORCE ROW LEVEL SECURITY` (`test_live_pg_multi_tenant_rls_sweep_and_full_lifecycle_e2e`) | `test_task_307_2_zero_duplicate_alerts_under_rls`, `test_live_pg_multi_tenant_rls_sweep_and_full_lifecycle_e2e` |
+
+---
+
+## 3. Verification Commands
 
 ```bash
 # Unit, state-machine, webhook-reset, and migration contract checks
