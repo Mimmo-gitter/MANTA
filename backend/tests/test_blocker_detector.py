@@ -1577,6 +1577,294 @@ class TestAtomicityDiscoveryAndArqScheduling:
 
 
 # ==============================================================================
+# GROUP 4B: TASK-307-2 (SCRUM-544) BOUNDARY & RLS DUPLICATE-SUPPRESSION TESTS
+# ==============================================================================
+
+
+class TestTask3072BoundaryAndRlsVerification:
+    """Explicit TASK-307-2 acceptance verification: 47h vs 49h PR, repeat-run suppression,
+    activity-based is_stale reset, exact 2-vs-3 incidents/60m, and zero duplicates under RLS.
+    """
+
+    @pytest.mark.asyncio
+    async def test_task_307_2_47h_vs_49h_stale_pr_boundary(self) -> None:
+        """TC-307-2-01: Side-by-side 47h PR stays fresh while 49h PR flags is_stale=True."""
+        tid = uuid.uuid4()
+        store = _InMemoryTenantStore(tid)
+        now = datetime(2026, 11, 25, 12, 0, 0, tzinfo=timezone.utc)
+        t_47h = now - timedelta(hours=47)
+        t_49h = now - timedelta(hours=49)
+
+        proj = _make_project(tid, threshold_hours=48)
+        store.projects[proj.id] = proj
+        repo_id = uuid.uuid4()
+
+        pr_47h = _make_pr(tid, proj.id, repo_id, number=4700, created_at=t_47h)
+        pr_49h = _make_pr(tid, proj.id, repo_id, number=4900, created_at=t_49h)
+        store.pull_requests[pr_47h.id] = pr_47h
+        store.pull_requests[pr_49h.id] = pr_49h
+
+        async with _transactional_memory_context(store) as session:
+            stats = await detect_stale_prs_in_session(session, tenant_id=tid, now=now)
+
+        assert stats.prs_evaluated == 2
+        assert stats.prs_flagged_stale == 1
+        assert stats.risks_created == 1
+        assert stats.outbox_events_staged == 1
+
+        assert store.pull_requests[pr_47h.id].is_stale is False
+        assert store.pull_requests[pr_47h.id].updated_at == t_47h
+
+        assert store.pull_requests[pr_49h.id].is_stale is True
+        assert store.pull_requests[pr_49h.id].updated_at == t_49h
+
+        assert len(store.risks) == 1
+        risk = next(iter(store.risks.values()))
+        assert risk.type == RiskType.STALE_PR.value
+        assert risk.severity == RiskSeverity.HIGH.value
+        assert risk.status == RiskStatus.OPEN.value
+        assert risk.subject_id == str(pr_49h.id)
+
+        assert len(store.outbox_events) == 1
+        outbox = next(iter(store.outbox_events.values()))
+        assert outbox.event_type == RISK_DETECTED_EVENT_TYPE
+        assert outbox.aggregate_id == str(risk.id)
+
+    @pytest.mark.asyncio
+    async def test_task_307_2_repeat_run_suppression_and_activity_reset_lifecycle(self) -> None:
+        """TC-307-2-02: Repeat 15m sweeps suppress duplicates; activity resets is_stale & re-arms."""
+        tid = uuid.uuid4()
+        store = _InMemoryTenantStore(tid)
+        t0 = datetime(2026, 11, 25, 12, 0, 0, tzinfo=timezone.utc)
+
+        proj = _make_project(tid, threshold_hours=48)
+        store.projects[proj.id] = proj
+        repo = Repository(
+            id=uuid.uuid4(),
+            tenant_id=tid,
+            project_id=proj.id,
+            external_repo_id=49010,
+            full_name="acme/task-307-2",
+        )
+        store.repositories[repo.id] = repo
+        pr = _make_pr(
+            tid,
+            proj.id,
+            repo.id,
+            number=4901,
+            created_at=t0 - timedelta(hours=49),
+            head_branch="feat/task-307-2",
+        )
+        store.pull_requests[pr.id] = pr
+
+        # 1. Initial detection at T0 (49h idle) -> 1 Risk + 1 OutboxEvent
+        async with _transactional_memory_context(store) as session:
+            s1 = await detect_stale_prs_in_session(session, tenant_id=tid, now=t0)
+        assert s1.risks_created == 1
+        assert s1.outbox_events_staged == 1
+
+        # 2. Repeat 15m run while OPEN -> 0 duplicates
+        async with _transactional_memory_context(store) as session:
+            s2 = await detect_stale_prs_in_session(
+                session, tenant_id=tid, now=t0 + timedelta(minutes=15)
+            )
+        assert s2.risks_created == 0
+        assert s2.outbox_events_staged == 0
+        assert s2.duplicates_suppressed == 1
+
+        # 3. Repeat 15m run while ACKNOWLEDGED -> 0 duplicates
+        first_risk = next(iter(store.risks.values()))
+        first_risk.status = RiskStatus.ACKNOWLEDGED.value
+        async with _transactional_memory_context(store) as session:
+            s3 = await detect_stale_prs_in_session(
+                session, tenant_id=tid, now=t0 + timedelta(minutes=30)
+            )
+        assert s3.risks_created == 0
+        assert s3.outbox_events_staged == 0
+        assert s3.duplicates_suppressed == 1
+
+        # 4. Activity-based reset via push webhook at T0+45m -> is_stale=False, Risk RESOLVED
+        t_push = t0 + timedelta(minutes=45)
+        push_payload = {
+            "ref": "refs/heads/feat/task-307-2",
+            "repository": {"id": 49010, "full_name": "acme/task-307-2"},
+            "commits": [
+                {
+                    "id": "c" * 40,
+                    "message": "fix: address review feedback",
+                    "timestamp": t_push.isoformat(),
+                    "author": {"username": "dev", "email": "dev@example.com", "name": "Dev"},
+                }
+            ],
+        }
+        norm_push = normalize_push(push_payload)
+        with patch(
+            "app.git.service.resolve_or_create_contributor_pseudonym",
+            new=AsyncMock(return_value="f" * 64),
+        ):
+            async with _transactional_memory_context(store) as session:
+                await process_push(session, tenant_id=tid, n=norm_push)
+
+        assert store.pull_requests[pr.id].is_stale is False
+        assert first_risk.status == RiskStatus.RESOLVED.value
+        assert len(store.outbox_events) == 1
+
+        # 5. Re-arm cleanly after another 49h idle window
+        t_rearm = t_push + timedelta(hours=49)
+        async with _transactional_memory_context(store) as session:
+            s4 = await detect_stale_prs_in_session(session, tenant_id=tid, now=t_rearm)
+        assert s4.risks_created == 1
+        assert s4.outbox_events_staged == 1
+        assert store.pull_requests[pr.id].is_stale is True
+        assert len(store.risks) == 2
+        assert len(store.outbox_events) == 2
+
+    @pytest.mark.asyncio
+    async def test_task_307_2_exact_2_vs_3_incidents_in_60m_boundary(self) -> None:
+        """TC-307-2-03: Exact 2 incidents/60m emits 0 alerts; 3rd incident triggers 1 Risk + Outbox."""
+        tid = uuid.uuid4()
+        store = _InMemoryTenantStore(tid)
+        now = datetime(2026, 11, 25, 12, 0, 0, tzinfo=timezone.utc)
+
+        proj = _make_project(tid)
+        store.projects[proj.id] = proj
+
+        # 2 incidents inside [now - 60m, now] -> below threshold
+        for mins in (45, 15):
+            inc = Incident(
+                id=uuid.uuid4(),
+                tenant_id=tid,
+                project_id=proj.id,
+                started_at=now - timedelta(minutes=mins),
+                severity="SEV-1",
+                created_at=now - timedelta(minutes=mins),
+            )
+            store.incidents[inc.id] = inc
+
+        async with _transactional_memory_context(store) as session:
+            stats_two = await detect_incident_spikes_in_session(session, tenant_id=tid, now=now)
+
+        assert stats_two.spikes_detected == 0
+        assert stats_two.risks_created == 0
+        assert stats_two.outbox_events_staged == 0
+        assert len(store.risks) == 0
+        assert len(store.outbox_events) == 0
+
+        # Add 3rd incident inside 60m window -> exact threshold reached
+        inc_3 = Incident(
+            id=uuid.uuid4(),
+            tenant_id=tid,
+            project_id=proj.id,
+            started_at=now - timedelta(minutes=5),
+            severity="SEV-1",
+            created_at=now - timedelta(minutes=5),
+        )
+        store.incidents[inc_3.id] = inc_3
+
+        async with _transactional_memory_context(store) as session:
+            stats_three = await detect_incident_spikes_in_session(session, tenant_id=tid, now=now)
+
+        assert stats_three.spikes_detected == 1
+        assert stats_three.risks_created == 1
+        assert stats_three.outbox_events_staged == 1
+        assert len(store.risks) == 1
+        risk = next(iter(store.risks.values()))
+        assert risk.type == RiskType.INCIDENT_SPIKE.value
+        assert risk.severity == RiskSeverity.CRITICAL.value
+        assert risk.status == RiskStatus.OPEN.value
+        assert len(store.outbox_events) == 1
+
+        # Repeat 15m sweep while all 3 incidents remain inside 60m -> 0 duplicates
+        async with _transactional_memory_context(store) as session:
+            stats_repeat = await detect_incident_spikes_in_session(
+                session, tenant_id=tid, now=now + timedelta(minutes=10)
+            )
+
+        assert stats_repeat.risks_created == 0
+        assert stats_repeat.outbox_events_staged == 0
+        assert stats_repeat.duplicates_suppressed == 1
+        assert len(store.risks) == 1
+        assert len(store.outbox_events) == 1
+
+    @pytest.mark.asyncio
+    async def test_task_307_2_zero_duplicate_alerts_under_rls(self) -> None:
+        """TC-307-2-04: Multi-tenant RLS sweep produces 0 duplicate alerts and 0 cross-tenant leaks."""
+        tid_a = uuid.uuid4()
+        tid_b = uuid.uuid4()
+        store_a = _InMemoryTenantStore(tid_a)
+        store_b = _InMemoryTenantStore(tid_b)
+        stores_by_tenant = {tid_a: store_a, tid_b: store_b}
+        now = datetime(2026, 11, 25, 12, 0, 0, tzinfo=timezone.utc)
+
+        # Tenant A: 1 PR at 49h + 1 PR at 47h
+        proj_a = _make_project(tid_a, threshold_hours=48, name="Tenant A Core")
+        store_a.projects[proj_a.id] = proj_a
+        repo_a = uuid.uuid4()
+        pr_49 = _make_pr(tid_a, proj_a.id, repo_a, number=1, created_at=now - timedelta(hours=49))
+        pr_47 = _make_pr(tid_a, proj_a.id, repo_a, number=2, created_at=now - timedelta(hours=47))
+        store_a.pull_requests[pr_49.id] = pr_49
+        store_a.pull_requests[pr_47.id] = pr_47
+
+        # Tenant B: 3 incidents in 60m (remain inside 60m window on +15m repeat sweep)
+        proj_b = _make_project(tid_b, threshold_hours=48, name="Tenant B Ops")
+        store_b.projects[proj_b.id] = proj_b
+        for mins in (40, 20, 5):
+            inc = Incident(
+                id=uuid.uuid4(),
+                tenant_id=tid_b,
+                project_id=proj_b.id,
+                started_at=now - timedelta(minutes=mins),
+                severity="SEV-1",
+                created_at=now - timedelta(minutes=mins),
+            )
+            store_b.incidents[inc.id] = inc
+
+        rls_contexts_entered: list[uuid.UUID] = []
+
+        @asynccontextmanager
+        async def _rls_scoped_tenant_context(
+            tenant_id: uuid.UUID,
+        ) -> AsyncGenerator[_InMemoryAsyncSession, None]:
+            assert tenant_id in stores_by_tenant, f"Unexpected tenant_id={tenant_id}"
+            rls_contexts_entered.append(tenant_id)
+            async with _transactional_memory_context(stores_by_tenant[tenant_id]) as session:
+                yield session
+
+        sweep_1 = await sweep_all_active_tenants(
+            now=now,
+            tenant_ids=[tid_a, tid_b],
+            tenant_session_factory=_rls_scoped_tenant_context,
+        )
+        sweep_2 = await sweep_all_active_tenants(
+            now=now + timedelta(minutes=15),
+            tenant_ids=[tid_a, tid_b],
+            tenant_session_factory=_rls_scoped_tenant_context,
+        )
+
+        assert sweep_1.tenants_discovered == 2
+        assert sweep_1.stale_pr_risks_created == 1
+        assert sweep_1.incident_spike_risks_created == 1
+        assert sweep_1.outbox_events_staged == 2
+        assert sweep_1.tenant_errors == 0
+
+        assert sweep_2.total_risks_created == 0
+        assert sweep_2.outbox_events_staged == 0
+        assert sweep_2.duplicates_suppressed == 2
+        assert sweep_2.tenant_errors == 0
+
+        assert rls_contexts_entered == [tid_a, tid_b, tid_a, tid_b]
+
+        # Strict per-tenant isolation: zero cross-tenant alerts or duplicates
+        assert len(store_a.risks) == 1
+        assert next(iter(store_a.risks.values())).type == RiskType.STALE_PR.value
+        assert len(store_a.outbox_events) == 1
+
+        assert len(store_b.risks) == 1
+        assert next(iter(store_b.risks.values())).type == RiskType.INCIDENT_SPIKE.value
+        assert len(store_b.outbox_events) == 1
+
+
+# ==============================================================================
 # GROUP 5: LIVE POSTGRESQL 16 + FORCE ROW LEVEL SECURITY INTEGRATION TESTS
 # ==============================================================================
 
