@@ -20,6 +20,7 @@ from app.ai.client_factory import (
 from app.ai.reindex_service import (
     ADR_REEMBED_JOB_TYPE,
     TenantReindexState,
+    enqueue_adr_embed_job,
     enqueue_adr_reembed_job,
     get_adr_reindex_redis_key,
     get_tenant_reindex_status,
@@ -43,6 +44,7 @@ __all__ = [
     "TenantReindexState",
     "assert_local_only_endpoint",
     "create_ai_client",
+    "enqueue_adr_embed_job",
     "enqueue_adr_reembed_job",
     "get_adr_reindex_redis_key",
     "get_mode_metadata",

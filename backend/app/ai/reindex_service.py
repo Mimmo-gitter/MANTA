@@ -180,6 +180,47 @@ async def enqueue_adr_reembed_job(
     return queued_state
 
 
+async def enqueue_adr_embed_job(
+    *,
+    tenant_id: uuid.UUID,
+    adr_id: uuid.UUID,
+    target_mode: str,
+    priority: str = "high",
+    redis_client: Optional[Any] = None,
+) -> dict[str, Any]:
+    """Enqueue single-ADR vector embedding without mutating the workspace-wide reindexing banner."""
+    norm_mode = normalize_ai_processing_mode(target_mode)
+    meta = get_mode_metadata(norm_mode)
+    norm_priority = priority.strip().lower() if isinstance(priority, str) else "high"
+    if norm_priority not in ("default", "high"):
+        raise ValueError(f"Unsupported queue priority: {priority!r}")
+
+    job_id = str(uuid.uuid4())
+    target_dims = int(meta["embedding_dimensions"])
+    client = redis_client or get_redis()
+
+    envelope = serialize_job_payload(
+        job_id=job_id,
+        tenant_id=str(tenant_id),
+        priority=norm_priority,
+        job_type=ADR_REEMBED_JOB_TYPE,
+        payload={
+            "target_mode": norm_mode,
+            "target_dimensions": target_dims,
+            "adr_id": str(adr_id),
+            "queue": QUEUE_HIGH if norm_priority == "high" else QUEUE_DEFAULT,
+        },
+        provider="internal",
+    )
+    await enqueue_job(client, envelope, priority=norm_priority)
+    return {
+        "job_id": job_id,
+        "adr_id": str(adr_id),
+        "target_mode": norm_mode,
+        "target_dimensions": target_dims,
+    }
+
+
 async def _embed_and_persist_batches(
     db: Any,
     client: BaseAIClient,
@@ -189,6 +230,7 @@ async def _embed_and_persist_batches(
     embedding_column: str,
     state: TenantReindexState,
     redis_client: Optional[Any],
+    track_redis_progress: bool = True,
 ) -> int:
     processed = 0
     for start in range(0, len(adrs), ADR_REEMBED_BATCH_SIZE):
@@ -205,9 +247,10 @@ async def _embed_and_persist_batches(
         processed += len(batch)
         state.reindexed_count = processed
         state.updated_at = _now_iso()
-        await set_tenant_reindex_status(
-            tenant_id, state, redis_client=redis_client, best_effort=True
-        )
+        if track_redis_progress:
+            await set_tenant_reindex_status(
+                tenant_id, state, redis_client=redis_client, best_effort=True
+            )
     return processed
 
 
@@ -217,7 +260,7 @@ async def process_adr_reembed_job(
     ai_client: Optional[BaseAIClient] = None,
     redis_client: Optional[Any] = None,
 ) -> dict[str, Any]:
-    """Worker handler for `job_type == 'adr.reembed'`; re-embeds only approved tenant ADRs."""
+    """Worker handler for `job_type == 'adr.reembed'`; re-embeds approved tenant ADR(s)."""
     raw_tenant_id = parsed_payload.get("tenant_id")
     if not raw_tenant_id:
         raise ValueError("adr.reembed payload missing tenant_id")
@@ -226,6 +269,9 @@ async def process_adr_reembed_job(
     inner = parsed_payload.get("payload")
     inner_dict = inner if isinstance(inner, dict) else {}
     requested_mode = inner_dict.get("target_mode") or parsed_payload.get("target_mode")
+    raw_adr_id = inner_dict.get("adr_id") or parsed_payload.get("adr_id")
+    single_adr_id = uuid.UUID(str(raw_adr_id)) if raw_adr_id else None
+    track_redis_progress = single_adr_id is None
     job_id = str(parsed_payload.get("job_id") or uuid.uuid4())
 
     state = TenantReindexState(
@@ -249,18 +295,18 @@ async def process_adr_reembed_job(
             target_dims = int(meta["embedding_dimensions"])
             embedding_column = str(meta["embedding_column"])
 
-            adrs = list(
-                (
-                    await db.scalars(
-                        select(AnonymizedADR)
-                        .where(
-                            AnonymizedADR.tenant_id == tenant_id,
-                            AnonymizedADR.status == "approved",
-                        )
-                        .order_by(AnonymizedADR.created_at.asc(), AnonymizedADR.id.asc())
-                    )
-                ).all()
+            stmt = (
+                select(AnonymizedADR)
+                .where(
+                    AnonymizedADR.tenant_id == tenant_id,
+                    AnonymizedADR.status == "approved",
+                )
+                .order_by(AnonymizedADR.created_at.asc(), AnonymizedADR.id.asc())
             )
+            if single_adr_id is not None:
+                stmt = stmt.where(AnonymizedADR.id == single_adr_id)
+
+            adrs = list((await db.scalars(stmt)).all())
 
             total_count = len(adrs)
             state.target_mode = effective_mode
@@ -268,9 +314,10 @@ async def process_adr_reembed_job(
             state.total_count = total_count
             state.reindexed_count = 0
             state.updated_at = _now_iso()
-            await set_tenant_reindex_status(
-                tenant_id, state, redis_client=redis_client, best_effort=True
-            )
+            if track_redis_progress:
+                await set_tenant_reindex_status(
+                    tenant_id, state, redis_client=redis_client, best_effort=True
+                )
 
             processed = 0
             if adrs:
@@ -288,6 +335,7 @@ async def process_adr_reembed_job(
                         embedding_column=embedding_column,
                         state=state,
                         redis_client=redis_client,
+                        track_redis_progress=track_redis_progress,
                     )
                 else:
                     async with create_ai_client(effective_mode) as client:
@@ -299,6 +347,7 @@ async def process_adr_reembed_job(
                             embedding_column=embedding_column,
                             state=state,
                             redis_client=redis_client,
+                            track_redis_progress=track_redis_progress,
                         )
 
             completed_state = TenantReindexState(
@@ -312,10 +361,11 @@ async def process_adr_reembed_job(
                 error=None,
                 updated_at=_now_iso(),
             )
-            await set_tenant_reindex_status(
-                tenant_id, completed_state, redis_client=redis_client, best_effort=True
-            )
-            return {
+            if track_redis_progress:
+                await set_tenant_reindex_status(
+                    tenant_id, completed_state, redis_client=redis_client, best_effort=True
+                )
+            res: dict[str, Any] = {
                 "status": "completed",
                 "tenant_id": str(tenant_id),
                 "job_id": job_id,
@@ -324,19 +374,23 @@ async def process_adr_reembed_job(
                 "reindexed_count": processed,
                 "total_count": total_count,
             }
+            if single_adr_id is not None:
+                res["adr_id"] = str(single_adr_id)
+            return res
     except Exception as exc:
-        failed_state = TenantReindexState(
-            reindexing=False,
-            status="failed",
-            target_mode=state.target_mode,
-            target_dimensions=state.target_dimensions,
-            job_id=job_id,
-            reindexed_count=state.reindexed_count,
-            total_count=state.total_count,
-            error=str(exc)[:500],
-            updated_at=_now_iso(),
-        )
-        await set_tenant_reindex_status(
-            tenant_id, failed_state, redis_client=redis_client, best_effort=True
-        )
+        if track_redis_progress:
+            failed_state = TenantReindexState(
+                reindexing=False,
+                status="failed",
+                target_mode=state.target_mode,
+                target_dimensions=state.target_dimensions,
+                job_id=job_id,
+                reindexed_count=state.reindexed_count,
+                total_count=state.total_count,
+                error=str(exc)[:500],
+                updated_at=_now_iso(),
+            )
+            await set_tenant_reindex_status(
+                tenant_id, failed_state, redis_client=redis_client, best_effort=True
+            )
         raise
