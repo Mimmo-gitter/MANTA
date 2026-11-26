@@ -55,6 +55,7 @@ def _node_to_schema(node: SymbolNode) -> ScipGraphNode:
 
 @router.get(
     "/code-quality/me",
+    tags=["Stubs"],
     **stub_route_kwargs(
         Permission.VIEW_OWN_CODE_QUALITY,
         summary="View Personal Code Quality",
@@ -302,6 +303,7 @@ async def query_scip_symbol_callers(
 
 @router.post(
     "/projects/{project_id}/analyze",
+    tags=["Stubs"],
     **stub_route_kwargs(
         Permission.TRIGGER_REFACTOR_ANALYSIS,
         summary="Trigger Refactoring Analysis",

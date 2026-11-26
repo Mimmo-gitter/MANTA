@@ -319,9 +319,7 @@ async def test_scip_persistence_freshness_worker_dispatch_and_rls_isolation(
         )
         async with get_tenant_db_context(tenant_a) as session:
             rows = (
-                await session.scalars(
-                    select(ScipIndex).where(ScipIndex.repository_id == repo_a.id)
-                )
+                await session.scalars(select(ScipIndex).where(ScipIndex.repository_id == repo_a.id))
             ).all()
             assert len(rows) == 1
 
@@ -420,12 +418,8 @@ async def test_refactoring_scip_api_endpoints_and_rbac(tmp_path: Path) -> None:
             storage_dir=str(storage_dir),
         )
 
-        dev_token = _create_jwt(
-            private_key, tenant_id=tenant_a, user_id=user_a, role="DEVELOPER"
-        )
-        sm_token = _create_jwt(
-            private_key, tenant_id=tenant_a, user_id=user_a, role="SCRUM_MASTER"
-        )
+        dev_token = _create_jwt(private_key, tenant_id=tenant_a, user_id=user_a, role="DEVELOPER")
+        sm_token = _create_jwt(private_key, tenant_id=tenant_a, user_id=user_a, role="SCRUM_MASTER")
         tenant_b_token = _create_jwt(
             private_key, tenant_id=tenant_b, user_id=user_b, role="DEVELOPER"
         )
@@ -495,7 +489,9 @@ async def test_refactoring_scip_api_endpoints_and_rbac(tmp_path: Path) -> None:
                     url,
                     headers={"Authorization": f"Bearer {sm_token}"},
                 )
-                assert resp.status_code == 403, f"Expected 403 on {method} {url}, got {resp.status_code}"
+                assert resp.status_code == 403, (
+                    f"Expected 403 on {method} {url}, got {resp.status_code}"
+                )
 
             # 6. Cross-tenant access returns 404
             resp_cross = await client.get(
