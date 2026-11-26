@@ -141,7 +141,10 @@ ACTION_ROUTE_MAP: dict[Permission, tuple[str, str]] = {
         "/api/v1/refactoring/projects/11111111-1111-1111-1111-111111111111/analyze",
     ),
     Permission.SEARCH_ADR: ("GET", "/api/v1/search/adrs"),
-    Permission.APPROVE_ADR_TENANT_PRIVATE: ("POST", "/api/v1/adrs/adr-1/approve"),
+    Permission.APPROVE_ADR_TENANT_PRIVATE: (
+        "POST",
+        "/api/v1/adrs/11111111-1111-1111-1111-111111111111/approve",
+    ),
     Permission.PUBLISH_GLOBAL_ADR: ("POST", "/api/v1/adrs/adr-1/publish-global"),
     Permission.MANAGE_WEBHOOK_INTEGRATIONS: ("GET", "/api/v1/integrations"),
     Permission.MANAGE_TENANT_USERS_AND_ROLES: ("GET", "/api/v1/members"),
@@ -239,6 +242,8 @@ async def test_all_12_stub_endpoints_in_openapi_schema():
         Permission.VIEW_PROJECT_DORA,
         Permission.VIEW_SPRINT_BURNDOWN_WIP,  # Task 76.2: real endpoint now
         Permission.VIEW_TECH_DEBT_AND_SCIP_GRAPH,  # SCRUM-582: real endpoint now
+        Permission.APPROVE_ADR_TENANT_PRIVATE,  # SCRUM-576: real endpoint now
+        Permission.SEARCH_ADR,  # SCRUM-579: real endpoint now
     }
     stub_permissions = {p for p in Permission if p not in real_permissions}
     found_stubs: set[str] = set()
@@ -268,7 +273,7 @@ async def test_all_12_stub_endpoints_in_openapi_schema():
 
         found_stubs.add(perm.value)
 
-    assert len(found_stubs) == 8, f"Expected 8 stub endpoints, found {len(found_stubs)}"
+    assert len(found_stubs) == 6, f"Expected 6 stub endpoints, found {len(found_stubs)}"
 
 
 @pytest.mark.asyncio
@@ -315,6 +320,7 @@ async def test_all_matrix_decisions_enforced(auth_fixture):
 
     from datetime import datetime, timezone
     import uuid
+    from app.adr.schemas import ADRDecisionResponse
     from app.deployments.schemas import (
         DeploymentOutcome,
         DeploymentSignalSource,
@@ -322,6 +328,7 @@ async def test_all_matrix_decisions_enforced(auth_fixture):
     )
     from app.dora.schemas import DoraAggregates, DoraMetricsResponse
     from app.mobile.schemas import RegisterMobileDeviceResponse
+    from app.search.schemas import ADRSearchResponse
 
     mock_deploy_resp = DirectDeploymentResponse(
         id=uuid.UUID("22222222-2222-2222-2222-222222222222"),
@@ -363,6 +370,31 @@ async def test_all_matrix_decisions_enforced(auth_fixture):
         last_seen_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
         created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
         updated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    mock_adr_decision_resp = ADRDecisionResponse(
+        id=uuid.UUID("11111111-1111-1111-1111-111111111111"),
+        tenant_id=uuid.UUID("11111111-1111-1111-1111-111111111111"),
+        status="approved",
+        sanitization_verified=True,
+        visibility="TENANT_PRIVATE",
+        approved_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+        embedding_queued=True,
+        embedding_job_id="job-1",
+        target_embedding_dimensions=1536,
+        updated_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    mock_search_resp = ADRSearchResponse(
+        query="",
+        items=[],
+        total=0,
+        rebuilding=False,
+        reindex_status="idle",
+        reindexed_count=0,
+        reindex_total_count=0,
+        ai_processing_mode="cloud_zdr",
+        active_embedding_dimensions=1536,
+        active_embedding_model="text-embedding-3-small",
+        available_patterns=[],
     )
 
     async def _noop_tenant_db():
@@ -422,6 +454,14 @@ async def test_all_matrix_decisions_enforced(auth_fixture):
                 "app.refactoring.router.list_repository_scip_statuses",
                 mock.AsyncMock(return_value=[]),
             ),
+            mock.patch(
+                "app.adr.router.approve_tenant_adr",
+                mock.AsyncMock(return_value=mock_adr_decision_resp),
+            ),
+            mock.patch(
+                "app.search.router.search_tenant_adrs",
+                mock.AsyncMock(return_value=mock_search_resp),
+            ),
         ):
             async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
                 for role_id, role_actions in matrix.matrix.items():
@@ -462,6 +502,8 @@ async def test_all_matrix_decisions_enforced(auth_fixture):
                                 Permission.MANAGE_OWN_MOBILE_DEVICES,
                                 Permission.VIEW_SPRINT_BURNDOWN_WIP,
                                 Permission.VIEW_TECH_DEBT_AND_SCIP_GRAPH,
+                                Permission.APPROVE_ADR_TENANT_PRIVATE,
+                                Permission.SEARCH_ADR,
                             ):
                                 assert resp.status_code == 200, (
                                     f"Expected 200 for [{role_id}][{action_id}], got {resp.status_code}: {resp.text}"
