@@ -104,9 +104,10 @@ class Settings(BaseSettings):
     FCM_PROJECT_ID: str | None = None
     FCM_CREDENTIALS_JSON: str | None = None
 
-    # Refactoring Sandbox Execution (US-46)
+    # Refactoring Sandbox Execution & SCIP Indexing (US-46)
     SANDBOX_RUNTIME: str = "runsc"
     SANDBOX_IMAGE_DIGEST: str = ""
+    SCIP_STORAGE_DIR: str = "/tmp/manta_scip_indexes"
 
     @property
     def is_production(self) -> bool:
