@@ -95,10 +95,16 @@ class Settings(BaseSettings):
     METRICS_REDIS_TIMEOUT_SECONDS: float = 0.75
     METRICS_REDIS_SCAN_LIMIT: int = 1000
 
-    # AI / LLM Endpoints (US-41: Zero Data Retention & Local Inference)
+    # AI / LLM Endpoints (US-41 / US-62: Zero Data Retention & Local Inference)
     LOCAL_LLM_BASE_URL: str = "http://localhost:11434/v1"
+    LOCAL_LLM_MODEL: str = "llama3.1:8b"
+    LOCAL_EMBEDDING_MODEL: str = "bge-small-en-v1.5"
     CLOUD_ZDR_LLM_BASE_URL: str | None = None
     CLOUD_ZDR_API_KEY: str | None = None
+    CLOUD_ZDR_LLM_MODEL: str = "gpt-4o-mini"
+    CLOUD_ZDR_EMBEDDING_MODEL: str = "text-embedding-3-small"
+    AI_REQUEST_TIMEOUT_SECONDS: float = 30.0
+    AI_REINDEX_STATUS_TTL_SECONDS: int = 86400
 
     # Firebase Cloud Messaging (Mobile Push Dispatch)
     FCM_PROJECT_ID: str | None = None

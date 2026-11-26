@@ -24,6 +24,7 @@ from app.projects import projects_router
 from app.refactoring import refactoring_router
 from app.search import search_router
 from app.tenants import router as tenants_router
+from app.tenants import settings_router as tenants_settings_router
 from app.webhooks import webhooks_router
 from app.mobile import mobile_router
 
@@ -72,8 +73,9 @@ app.add_middleware(
 # Include authentication endpoints
 app.include_router(auth_router)
 
-# Include tenant registration endpoints (SCRUM-289)
+# Include tenant registration and workspace settings endpoints (SCRUM-289, SCRUM-560)
 app.include_router(tenants_router)
+app.include_router(tenants_settings_router)
 
 # Include contributor pseudonym & GDPR erasure endpoints
 app.include_router(contributors_router)

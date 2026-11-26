@@ -1,0 +1,53 @@
+"""Dual-mode AI provider factory and async ADR re-embedding package (SCRUM-560)."""
+
+from app.ai.client_factory import (
+    AI_MODE_CLOUD_ZDR,
+    AI_MODE_LOCAL_ONLY,
+    CLOUD_ZDR_EMBEDDING_DIMENSIONS,
+    LOCAL_EMBEDDING_DIMENSIONS,
+    VALID_AI_PROCESSING_MODES,
+    AIClientConfigurationError,
+    AIClientError,
+    BaseAIClient,
+    CloudZDRAIClient,
+    LocalAIClient,
+    LocalOnlyPolicyViolationError,
+    assert_local_only_endpoint,
+    create_ai_client,
+    get_mode_metadata,
+    normalize_ai_processing_mode,
+)
+from app.ai.reindex_service import (
+    ADR_REEMBED_JOB_TYPE,
+    TenantReindexState,
+    enqueue_adr_reembed_job,
+    get_adr_reindex_redis_key,
+    get_tenant_reindex_status,
+    process_adr_reembed_job,
+    set_tenant_reindex_status,
+)
+
+__all__ = [
+    "ADR_REEMBED_JOB_TYPE",
+    "AI_MODE_CLOUD_ZDR",
+    "AI_MODE_LOCAL_ONLY",
+    "CLOUD_ZDR_EMBEDDING_DIMENSIONS",
+    "LOCAL_EMBEDDING_DIMENSIONS",
+    "VALID_AI_PROCESSING_MODES",
+    "AIClientConfigurationError",
+    "AIClientError",
+    "BaseAIClient",
+    "CloudZDRAIClient",
+    "LocalAIClient",
+    "LocalOnlyPolicyViolationError",
+    "TenantReindexState",
+    "assert_local_only_endpoint",
+    "create_ai_client",
+    "enqueue_adr_reembed_job",
+    "get_adr_reindex_redis_key",
+    "get_mode_metadata",
+    "get_tenant_reindex_status",
+    "normalize_ai_processing_mode",
+    "process_adr_reembed_job",
+    "set_tenant_reindex_status",
+]

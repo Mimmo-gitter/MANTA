@@ -1,8 +1,11 @@
+from datetime import datetime
 import re
 import uuid
-from typing import Optional
+from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+AIProcessingMode = Literal["local_only", "cloud_zdr"]
 
 EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$")
 
@@ -115,3 +118,70 @@ class TenantRegisterResponse(BaseModel):
     industry: Optional[str] = None
     invites_sent: int = 0
     message: str = "Tenant and administrator successfully registered"
+
+
+class TenantSettingsUpdateRequest(BaseModel):
+    """Payload for updating workspace settings and AI compliance mode (SCRUM-560 / US-62)."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    name: Optional[str] = Field(None, min_length=2, max_length=255)
+    allowed_domain: Optional[str] = Field(None, max_length=255)
+    industry: Optional[str] = Field(None, max_length=255)
+    ai_processing_mode: Optional[AIProcessingMode] = None
+    retention_days: Optional[int] = Field(None, ge=7, le=3650)
+
+    @field_validator("name")
+    @classmethod
+    def validate_name_non_blank(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and not v.strip():
+            raise ValueError("Organization name cannot be blank")
+        return v.strip() if v is not None else None
+
+    @field_validator("allowed_domain")
+    @classmethod
+    def normalize_allowed_domain(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        cleaned = v.strip().lower().lstrip("@")
+        return cleaned or None
+
+    @field_validator("industry")
+    @classmethod
+    def normalize_industry_field(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        cleaned = v.strip()
+        return cleaned or None
+
+    @model_validator(mode="after")
+    def reject_explicit_null_required_fields(self) -> "TenantSettingsUpdateRequest":
+        for required_field in ("name", "ai_processing_mode", "retention_days"):
+            if required_field in self.model_fields_set and getattr(self, required_field) is None:
+                raise ValueError(f"Field '{required_field}' cannot be null")
+        return self
+
+
+class TenantSettingsResponse(BaseModel):
+    """Workspace settings and live ADR re-indexing state returned to Tenant Admins."""
+
+    tenant_id: uuid.UUID
+    slug: str
+    name: str
+    allowed_domain: Optional[str] = None
+    industry: Optional[str] = None
+    tier: str
+    status: str
+    max_projects: int
+    ai_processing_mode: AIProcessingMode
+    retention_days: int
+    active_embedding_dimensions: int
+    active_embedding_model: str
+    active_llm_model: str
+    reindexing: bool = False
+    reindex_status: str = "idle"
+    reindexed_count: int = 0
+    reindex_total_count: int = 0
+    reindex_job_id: Optional[str] = None
+    reindex_error: Optional[str] = None
+    updated_at: datetime
