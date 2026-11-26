@@ -910,6 +910,11 @@ async def dispatch_worker_job(parsed_payload: dict[str, Any]) -> Any:
         ctx_arg = inner if isinstance(inner, dict) else {}
         return await run_blocker_detector_cron(ctx_arg)
 
+    if job_type == "scip.index":
+        from app.refactoring.scip_service import process_scip_index_job
+
+        return await process_scip_index_job(parsed_payload)
+
     if job_type == "webhook.process" or "event_id" in parsed_payload:
         from app.webhooks.processor import process_webhook_job
 
@@ -924,6 +929,13 @@ async def process_webhook_event_arq(ctx: dict[str, Any], parsed_payload: dict[st
     from app.webhooks.processor import process_webhook_job
 
     return await process_webhook_job(parsed_payload)
+
+
+async def process_scip_index_arq(ctx: dict[str, Any], parsed_payload: dict[str, Any]) -> Any:
+    """ARQ-compatible task wrapper delegating to process_scip_index_job."""
+    from app.refactoring.scip_service import process_scip_index_job
+
+    return await process_scip_index_job(parsed_payload)
 
 
 async def run_blocker_detector_arq(ctx: dict[str, Any]) -> dict[str, Any]:
@@ -959,7 +971,11 @@ def get_default_redis_settings() -> RedisSettings:
 
 
 class WorkerSettings:
-    functions: list[Any] = [process_webhook_event_arq, run_blocker_detector_arq]
+    functions: list[Any] = [
+        process_webhook_event_arq,
+        process_scip_index_arq,
+        run_blocker_detector_arq,
+    ]
     cron_jobs: list[Any] = _build_default_cron_jobs()
     on_startup = startup
     on_shutdown = shutdown
