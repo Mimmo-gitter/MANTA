@@ -366,6 +366,17 @@ async def seed_database_with_connection(conn: AsyncConnection, plan: SeedPlan) -
         if inserted_tenant is not None:
             tenants_created += 1
 
+    # Ensure every seeded tenant owns an anonymized_adrs partition when US-44 migration is applied
+    has_partition_fn = (
+        await conn.execute(text("SELECT to_regprocedure('ensure_tenant_adr_partition(uuid)')"))
+    ).scalar_one_or_none()
+    if has_partition_fn is not None:
+        for tenant in plan.tenants:
+            await conn.execute(
+                text("SELECT ensure_tenant_adr_partition(:tid)"),
+                {"tid": tenant.id},
+            )
+
     users_created = 0
     user_roles_created = 0
 

@@ -22,6 +22,16 @@ if config.config_file_name is not None:
 
 target_metadata = Base.metadata
 
+
+def include_object(object, name, type_, reflected, compare_to):
+    """Exclude dynamic per-tenant child partitions and their indexes from autogenerate checks."""
+    if type_ == "table" and reflected and name and name.startswith("anonymized_adrs_t_"):
+        return False
+    if type_ == "index" and reflected and name and name.startswith("idx_adr_t_"):
+        return False
+    return True
+
+
 _STEP_LOG_RE = re.compile(
     r"^Running\s+(upgrade|downgrade)\s+([^\s,]*)\s*->\s*([^\s,]*)(?:,\s*(.*))?$"
 )
@@ -109,12 +119,17 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        include_object=include_object,
     )
     _run_migrations_with_tracking()
 
 
 def do_run_migrations(connection: Connection) -> None:
-    context.configure(connection=connection, target_metadata=target_metadata)
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        include_object=include_object,
+    )
     _run_migrations_with_tracking()
 
 

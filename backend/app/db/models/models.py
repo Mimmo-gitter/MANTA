@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 import uuid
 
+from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -1279,6 +1280,7 @@ class AnonymizedADR(Base):
         ),
         Index("idx_anonymized_adrs_tenant_id", "tenant_id"),
         Index("idx_anonymized_adrs_tenant_status", "tenant_id", "status"),
+        {"postgresql_partition_by": "LIST (tenant_id)"},
     )
 
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
@@ -1297,6 +1299,8 @@ class AnonymizedADR(Base):
         String(32), default="draft", server_default="draft", nullable=False
     )
     sanitization_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    embedding_1536: Mapped[Optional[List[float]]] = mapped_column(Vector(1536), nullable=True)
+    embedding_384: Mapped[Optional[List[float]]] = mapped_column(Vector(384), nullable=True)
     approved_by: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
     )
