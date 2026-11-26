@@ -42,6 +42,7 @@ class TestMigrationsCICheck(unittest.TestCase):
         subsequent_cols: set[tuple[str, str]] = set()
         subsequent_dropped_cols: set[tuple[str, str]] = set()
         subsequent_renamed_cols: dict[tuple[str, str], str] = {}
+        subsequent_nullable_overrides: dict[tuple[str, str], bool] = {}
         subsequent_pk_cols: dict[str, list[str]] = {}
         subsequent_indexes: set[tuple[str, str]] = set()
         subsequent_fk_signatures: set[tuple[str, tuple[str, ...], tuple[str, ...]]] = set()
@@ -90,8 +91,26 @@ class TestMigrationsCICheck(unittest.TestCase):
                                         ),
                                         None,
                                     )
+                                    nullable_kw = next(
+                                        (
+                                            kw.value
+                                            for kw in sub_stmt.value.keywords
+                                            if kw.arg == "nullable"
+                                        ),
+                                        None,
+                                    )
                                     if tname_arg and old_cname and new_cname:
                                         subsequent_renamed_cols[(tname_arg, old_cname)] = new_cname
+                                    if tname_arg and old_cname and nullable_kw is not None:
+                                        try:
+                                            nullable_val = ast.literal_eval(nullable_kw)
+                                        except (ValueError, SyntaxError):
+                                            nullable_val = None
+                                        if isinstance(nullable_val, bool):
+                                            target_cname = new_cname or old_cname
+                                            subsequent_nullable_overrides[
+                                                (tname_arg, target_cname)
+                                            ] = nullable_val
                                 elif (
                                     sub_attr == "create_primary_key"
                                     and len(sub_stmt.value.args) >= 3
@@ -187,7 +206,14 @@ class TestMigrationsCICheck(unittest.TestCase):
                                         mig_fks.append((cols, refs, kw.get("ondelete")))
 
                             evolved_mig_cols = {
-                                subsequent_renamed_cols.get((tname, cname), cname): nullable
+                                (
+                                    final_cname := subsequent_renamed_cols.get(
+                                        (tname, cname), cname
+                                    )
+                                ): subsequent_nullable_overrides.get(
+                                    (tname, final_cname),
+                                    subsequent_nullable_overrides.get((tname, cname), nullable),
+                                )
                                 for cname, nullable in mig_cols.items()
                                 if (tname, cname) not in subsequent_dropped_cols
                             }

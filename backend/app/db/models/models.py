@@ -1272,16 +1272,30 @@ class MetricSnapshot(Base):
 class AnonymizedADR(Base):
     __tablename__ = "anonymized_adrs"
 
-    __table_args__ = (Index("idx_anonymized_adrs_tenant_id", "tenant_id"),)
+    __table_args__ = (
+        CheckConstraint(
+            "status IN ('draft', 'pending_review', 'approved', 'quarantined', 'rejected')",
+            name="ck_anonymized_adrs_status",
+        ),
+        Index("idx_anonymized_adrs_tenant_id", "tenant_id"),
+        Index("idx_anonymized_adrs_tenant_status", "tenant_id", "status"),
+    )
 
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     project_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    source_repository_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True), nullable=True
+    )
+    source_commit_sha: Mapped[Optional[str]] = mapped_column(String(40), nullable=True)
+    source_content_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     title: Mapped[str] = mapped_column(Text, nullable=False)
-    decision_summary: Mapped[str] = mapped_column(Text, nullable=False)
+    decision_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     architecture_pattern: Mapped[Optional[str]] = mapped_column(String(128))
     visibility: Mapped[str] = mapped_column(String(32), default="TENANT_PRIVATE", nullable=False)
-    status: Mapped[str] = mapped_column(String(32), default="pending_review", nullable=False)
+    status: Mapped[str] = mapped_column(
+        String(32), default="draft", server_default="draft", nullable=False
+    )
     sanitization_verified: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     approved_by: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL")
@@ -1289,6 +1303,58 @@ class AnonymizedADR(Base):
     approved_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+    )
+
+
+class ADRSource(Base):
+    """Tenant-only storage for raw ADR Markdown and repository paths isolated from anonymized_adrs."""
+
+    __tablename__ = "adr_sources"
+
+    __table_args__ = (
+        Index("idx_adr_sources_tenant_id", "tenant_id"),
+        Index("idx_adr_sources_tenant_adr_id", "tenant_id", "adr_id"),
+        UniqueConstraint("tenant_id", "adr_id", name="uq_adr_sources_tenant_adr"),
+        UniqueConstraint(
+            "tenant_id",
+            "repository_id",
+            "file_path",
+            name="uq_adr_sources_tenant_repo_path",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    project_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("projects.id", ondelete="CASCADE"), nullable=False
+    )
+    repository_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("repositories.id", ondelete="CASCADE"), nullable=False
+    )
+    adr_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    file_path: Mapped[str] = mapped_column(Text, nullable=False)
+    commit_sha: Mapped[str] = mapped_column(String(40), nullable=False)
+    raw_markdown: Mapped[str] = mapped_column(Text, nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    extracted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, nullable=False
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=datetime.utcnow, nullable=False
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
     )
 
 
