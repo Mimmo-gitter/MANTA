@@ -122,6 +122,7 @@ class _InMemorySeedConnection:
         self.tenants: dict[uuid.UUID, dict[str, object]] = {}
         self.users: dict[uuid.UUID, dict[str, object]] = {}
         self.user_roles: set[tuple[uuid.UUID, str]] = set()
+        self.adr_partitions: set[object] = set()
 
     async def execute(self, statement: object, params: dict[str, object] | None = None):
         sql = " ".join(str(statement).split())
@@ -178,6 +179,14 @@ class _InMemorySeedConnection:
             self.user_roles.add(key)  # type: ignore[arg-type]
             return SimpleNamespace(scalar_one_or_none=lambda: key[1])
 
+        if sql == "SELECT to_regprocedure('ensure_tenant_adr_partition(uuid)')":
+            return SimpleNamespace(scalar_one_or_none=lambda: "ensure_tenant_adr_partition(uuid)")
+
+        if sql.startswith("SELECT ensure_tenant_adr_partition(:tid)"):
+            tid = params["tid"]
+            self.adr_partitions.add(tid)
+            return SimpleNamespace(scalar_one=lambda: f"anonymized_adrs_t_{tid}")
+
         raise AssertionError(f"Unexpected SQL in fake connection: {sql}")
 
 
@@ -197,6 +206,7 @@ async def test_seed_database_with_connection_is_idempotent() -> None:
     assert second.user_roles_created == 0
     assert len(conn.tenants) == len(plan.tenants)
     assert len(conn.users) == len(plan.users)
+    assert conn.adr_partitions == {t.id for t in plan.tenants}
 
 
 if __name__ == "__main__":
