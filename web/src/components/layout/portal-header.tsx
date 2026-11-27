@@ -16,6 +16,7 @@ import {
   type WorkspaceItem,
 } from "@/lib/auth";
 import { sidebarSections } from "@/config/navigation";
+import { getEnvLabel } from "@/lib/runtime-config";
 import { cn } from "@/lib/utils";
 
 interface PortalHeaderProps {
@@ -24,12 +25,11 @@ interface PortalHeaderProps {
   isTablet?: boolean;
 }
 
-const ENV_LABEL = process.env.NEXT_PUBLIC_ENV_LABEL || "PRODUCTION";
-
 export function PortalHeader({
   onMobileMenuToggle,
   isTablet = false,
 }: PortalHeaderProps) {
+  const envLabel = getEnvLabel();
   const {
     isAuthenticated,
     displayName,
@@ -500,11 +500,11 @@ export function PortalHeader({
           {/* Environment Badge */}
           <div
             data-testid="environment-badge"
-            aria-label={`Deployment Environment: ${ENV_LABEL}`}
+            aria-label={`Deployment Environment: ${envLabel}`}
             className="hidden min-[769px]:flex bg-[rgba(16,185,129,0.1)] border border-[rgba(16,185,129,0.3)] border-solid gap-[6px] h-[28px] items-center px-[11px] py-px rounded-[6px]"
           >
             <span className="font-mono font-semibold text-[#10b981] text-[11px] leading-[16.5px] tracking-[0.275px] uppercase whitespace-nowrap">
-              {ENV_LABEL}
+              {envLabel}
             </span>
           </div>
 
@@ -659,11 +659,11 @@ export function PortalHeader({
         {/* 2. Environment Badge (Figma 325:2837) */}
         <div
           data-testid="environment-badge"
-          aria-label={`Deployment Environment: ${ENV_LABEL}`}
+          aria-label={`Deployment Environment: ${envLabel}`}
           className="hidden sm:flex h-[28px] min-w-[96px] px-[10px] shrink-0 items-center justify-center bg-[rgba(0,229,153,0.1)] border border-[rgba(0,229,153,0.2)] border-solid rounded-[6px]"
         >
           <span className="font-mono text-[#00e599] text-[10px] leading-[15px] tracking-[0.5px] uppercase whitespace-nowrap">
-            {ENV_LABEL}
+            {envLabel}
           </span>
         </div>
 

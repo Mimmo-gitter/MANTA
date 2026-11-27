@@ -1,6 +1,10 @@
 import { getUserManager } from "@/lib/auth";
+import { getApiBaseUrl } from "@/lib/runtime-config";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+export function buildApiUrl(endpoint: string): string {
+  const normalizedEndpoint = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
+  return `${getApiBaseUrl()}${normalizedEndpoint}`;
+}
 
 interface FastApiValidationItem {
   msg?: string;
@@ -95,7 +99,7 @@ export async function apiRequest<T>(
     throw new Error("Your session has expired. Please log in again.");
   }
 
-  const response = await fetch(`${API_URL}${endpoint}`, {
+  const response = await fetch(buildApiUrl(endpoint), {
     ...options,
     headers: {
       "Content-Type": "application/json",
@@ -115,7 +119,7 @@ export async function publicApiRequest<T>(
   endpoint: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const response = await fetch(`${API_URL}${endpoint}`, {
+  const response = await fetch(buildApiUrl(endpoint), {
     ...options,
     headers: {
       "Content-Type": "application/json",

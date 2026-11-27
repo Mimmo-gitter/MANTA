@@ -1,11 +1,10 @@
 import { getCurrentUser } from "@/lib/auth";
+import { getApiBaseUrl } from "@/lib/runtime-config";
 
 import type {
   FlowMetricsResponse,
   ProjectSprint,
 } from "@/types/sprint-wip";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 interface FetchSprintWipParams {
   projectId: string;
@@ -31,7 +30,7 @@ export async function fetchSprintWipFromApi({
   const query = params.toString();
 
   const url =
-    `${API_URL}/api/v1/projects/${encodeURIComponent(projectId)}/flow-metrics` +
+    `${getApiBaseUrl()}/api/v1/projects/${encodeURIComponent(projectId)}/flow-metrics` +
     (query ? `?${query}` : "");
 
   const response = await fetch(url, {
@@ -76,7 +75,7 @@ export async function fetchProjectSprintsFromApi({
   }
 
   const url =
-    `${API_URL}/api/v1/projects/${encodeURIComponent(projectId)}/sprints`;
+    `${getApiBaseUrl()}/api/v1/projects/${encodeURIComponent(projectId)}/sprints`;
 
   const response = await fetch(url, {
     method: "GET",

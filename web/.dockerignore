@@ -1,8 +1,11 @@
 node_modules/
 .next/
+.tmp-unit-tests/
 playwright-report/
 test-results/
 e2e/
+tests/
+scripts/
 .git/
 .gitignore
 .dockerignore
@@ -10,4 +13,5 @@ e2e/
 .env.local
 .env.*.local
 tsconfig.tsbuildinfo
+tsconfig.unit.json
 *.md

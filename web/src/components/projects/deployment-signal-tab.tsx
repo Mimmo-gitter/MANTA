@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { isApiHttpError } from "@/lib/api-client";
 import { formatRelativeTime } from "@/lib/projects-api";
+import { getApiBaseUrl } from "@/lib/runtime-config";
 import {
   useDeploymentSignalQuery,
   useUpdateDeploymentSignalMutation,
@@ -20,8 +21,6 @@ import {
 import { usePermissions } from "@/hooks/use-permissions";
 import { getPrimaryRoleLabel } from "@/lib/permissions";
 import type { DeploymentSignalType, ProjectItem } from "@/types/project";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 
 const SIGNAL_LABELS: Record<DeploymentSignalType, string> = {
   github_deployments_api: "GitHub Deployments API",
@@ -73,8 +72,9 @@ export function DeploymentSignalTab({ project }: { project: ProjectItem }) {
   }, [toastInfo]);
 
   const isDirty = selectedSignal !== authoritativeSignal;
-  const gitopsWebhookUrl = `${API_URL}/api/v1/webhooks/gitops`;
-  const directApiEndpoint = `${API_URL}/api/v1/projects/${project.id}/deployments`;
+  const apiUrl = getApiBaseUrl();
+  const gitopsWebhookUrl = `${apiUrl}/api/v1/webhooks/gitops`;
+  const directApiEndpoint = `${apiUrl}/api/v1/projects/${project.id}/deployments`;
   const directApiCurl = `curl -X POST ${directApiEndpoint} -H "Authorization: Bearer <SERVICE_TOKEN>" -H "Content-Type: application/json" -d '{"commit_sha":"'$SHA'"}'`;
   const lastUpdatedLabel = formatRelativeTime(
     signalQuery.data?.updated_at || project.updated_at,

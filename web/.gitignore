@@ -35,6 +35,7 @@ next-env.d.ts
 /coverage
 coverage/
 .nyc_output/
+.tmp-unit-tests/
 /test-results/
 /playwright-report/
 /blob-report/

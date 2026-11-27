@@ -10,12 +10,13 @@ import {
   broadcastAuthMessage,
   getTabId,
 } from "@/lib/auth-tab-sync";
-
-const KEYCLOAK_URL = process.env.NEXT_PUBLIC_KEYCLOAK_URL || "http://localhost:8080";
-const REALM = process.env.NEXT_PUBLIC_KEYCLOAK_REALM || "manta";
-const CLIENT_ID = process.env.NEXT_PUBLIC_KEYCLOAK_CLIENT_ID || "manta-portal";
-const AUTHORITY = `${KEYCLOAK_URL}/realms/${REALM}`;
-const BACKEND_API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+import {
+  getApiBaseUrl,
+  getKeycloakAuthority,
+  getKeycloakClientId,
+  getPostLogoutRedirectUri,
+  getRedirectUri,
+} from "@/lib/runtime-config";
 
 export interface BackendUserClaims {
   sub: string;
@@ -53,21 +54,14 @@ export const ACCESS_TOKEN_EXPIRING_NOTIFICATION_TIME_SECONDS = 15;
 export const RENEW_SKIP_THRESHOLD_SECONDS = 45;
 
 export function getOidcSettings(): UserManagerSettings {
-  const redirectUri =
-    process.env.NEXT_PUBLIC_REDIRECT_URI ||
-    (typeof window !== "undefined"
-      ? `${window.location.origin}/auth/callback`
-      : "http://localhost:3000/auth/callback");
-
-  const postLogoutRedirectUri =
-    process.env.NEXT_PUBLIC_POST_LOGOUT_REDIRECT_URI ||
-    (typeof window !== "undefined"
-      ? `${window.location.origin}/signed-out`
-      : "http://localhost:3000/signed-out");
+  const authority = getKeycloakAuthority();
+  const clientId = getKeycloakClientId();
+  const redirectUri = getRedirectUri();
+  const postLogoutRedirectUri = getPostLogoutRedirectUri();
 
   return {
-    authority: AUTHORITY,
-    client_id: CLIENT_ID,
+    authority,
+    client_id: clientId,
     redirect_uri: redirectUri,
     post_logout_redirect_uri: postLogoutRedirectUri,
     response_type: "code",
@@ -76,12 +70,12 @@ export function getOidcSettings(): UserManagerSettings {
     accessTokenExpiringNotificationTimeInSeconds: ACCESS_TOKEN_EXPIRING_NOTIFICATION_TIME_SECONDS,
     // Explicit endpoints so redirection works even before Keycloak network discovery
     metadata: {
-      issuer: AUTHORITY,
-      authorization_endpoint: `${AUTHORITY}/protocol/openid-connect/auth`,
-      token_endpoint: `${AUTHORITY}/protocol/openid-connect/token`,
-      userinfo_endpoint: `${AUTHORITY}/protocol/openid-connect/userinfo`,
-      end_session_endpoint: `${AUTHORITY}/protocol/openid-connect/logout`,
-      jwks_uri: `${AUTHORITY}/protocol/openid-connect/certs`,
+      issuer: authority,
+      authorization_endpoint: `${authority}/protocol/openid-connect/auth`,
+      token_endpoint: `${authority}/protocol/openid-connect/token`,
+      userinfo_endpoint: `${authority}/protocol/openid-connect/userinfo`,
+      end_session_endpoint: `${authority}/protocol/openid-connect/logout`,
+      jwks_uri: `${authority}/protocol/openid-connect/certs`,
     },
     userStore:
       typeof window !== "undefined"
@@ -194,7 +188,14 @@ export async function purgeAllAuthTokens(): Promise<void> {
 }
 
 let userManagerInstance: UserManager | null = null;
+let userManagerSettingsKey: string | null = null;
 let silentRenewPromise: ReturnType<UserManager["signinSilent"]> | null = null;
+
+export function resetUserManagerForTesting(): void {
+  userManagerInstance = null;
+  userManagerSettingsKey = null;
+  silentRenewPromise = null;
+}
 
 let isLoggingOutInProgress = false;
 
@@ -207,12 +208,15 @@ export function getIsLoggingOut(): boolean {
 }
 
 export function getUserManager(): UserManager {
+  const settings = getOidcSettings();
   if (typeof window === "undefined") {
-    return new UserManager(getOidcSettings());
+    return new UserManager(settings);
   }
 
-  if (!userManagerInstance) {
-    userManagerInstance = new UserManager(getOidcSettings());
+  const nextSettingsKey = `${settings.authority}|${settings.client_id}|${settings.redirect_uri}|${settings.post_logout_redirect_uri ?? ""}`;
+  if (!userManagerInstance || userManagerSettingsKey !== nextSettingsKey) {
+    userManagerInstance = new UserManager(settings);
+    userManagerSettingsKey = nextSettingsKey;
 
     const originalSigninSilent =
       userManagerInstance.signinSilent.bind(userManagerInstance);
@@ -432,15 +436,16 @@ export async function loginWithCredentials(
   password: string
 ): Promise<User> {
   const normalizedEmail = email.trim().toLowerCase();
+  const authority = getKeycloakAuthority();
   const body = new URLSearchParams({
     grant_type: "password",
-    client_id: CLIENT_ID,
+    client_id: getKeycloakClientId(),
     username: normalizedEmail,
     password,
     scope: "openid profile email",
   });
 
-  const response = await fetch(`${AUTHORITY}/protocol/openid-connect/token`, {
+  const response = await fetch(`${authority}/protocol/openid-connect/token`, {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
@@ -526,14 +531,10 @@ export async function logoutUser(
     tenantName?.trim() ||
     (user?.profile?.tenant_name as string | undefined)?.trim() ||
     (tenantId ? KNOWN_TENANTS[tenantId] : undefined);
-  const workspaceQuery = resolvedWorkspaceName
-    ? `?workspace=${encodeURIComponent(resolvedWorkspaceName)}`
-    : "";
 
-  const defaultRedirectUri =
-    typeof window !== "undefined"
-      ? `${window.location.origin}/signed-out${workspaceQuery}`
-      : `http://localhost:3000/signed-out${workspaceQuery}`;
+  const defaultRedirectUri = getPostLogoutRedirectUri(
+    resolvedWorkspaceName ? { workspace: resolvedWorkspaceName } : undefined,
+  );
 
   const targetRedirectUri = postLogoutRedirectUri || defaultRedirectUri;
 
@@ -599,7 +600,7 @@ export async function listWorkspaces(): Promise<WorkspaceItem[]> {
   }
   if (!user?.access_token) return [];
 
-  const response = await fetch(`${BACKEND_API_URL}/api/v1/auth/workspaces`, {
+  const response = await fetch(`${getApiBaseUrl()}/api/v1/auth/workspaces`, {
     method: "GET",
     headers: {
       Authorization: `Bearer ${user.access_token}`,
@@ -626,7 +627,7 @@ export async function switchWorkspace(tenantId: string): Promise<WorkspaceItem> 
   }
 
   const response = await fetch(
-    `${BACKEND_API_URL}/api/v1/auth/switch-workspace`,
+    `${getApiBaseUrl()}/api/v1/auth/switch-workspace`,
     {
       method: "POST",
       headers: {
@@ -653,10 +654,10 @@ export async function switchWorkspace(tenantId: string): Promise<WorkspaceItem> 
   if (user.refresh_token) {
     const tokenBody = new URLSearchParams({
       grant_type: "refresh_token",
-      client_id: CLIENT_ID,
+      client_id: getKeycloakClientId(),
       refresh_token: user.refresh_token,
     });
-    const tokenResp = await fetch(`${AUTHORITY}/protocol/openid-connect/token`, {
+    const tokenResp = await fetch(`${getKeycloakAuthority()}/protocol/openid-connect/token`, {
       method: "POST",
       headers: {
         "Content-Type": "application/x-www-form-urlencoded",
@@ -722,7 +723,7 @@ export async function switchWorkspace(tenantId: string): Promise<WorkspaceItem> 
 export async function fetchCurrentUserFromBackend(
   accessToken: string
 ): Promise<BackendUserClaims> {
-  const response = await fetch(`${BACKEND_API_URL}/api/v1/auth/me`, {
+  const response = await fetch(`${getApiBaseUrl()}/api/v1/auth/me`, {
     method: "GET",
     headers: {
       Authorization: `Bearer ${accessToken}`,

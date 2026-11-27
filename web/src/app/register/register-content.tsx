@@ -6,6 +6,7 @@ import { RegisterStep1Card, Step1Data } from "@/components/auth/register-step1-c
 import { RegisterStep2Card, Step2Data } from "@/components/auth/register-step2-card";
 import { RegisterStep3Card, Step3Data } from "@/components/auth/register-step3-card";
 import { RegisterSuccessCard } from "@/components/auth/register-success-card";
+import { getApiBaseUrl } from "@/lib/runtime-config";
 
 export type RegisterStep = 1 | 2 | 3 | "success";
 
@@ -47,7 +48,7 @@ export function RegisterContent() {
     setGeneralError(null);
     setDuplicateError(null);
 
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+    const apiUrl = getApiBaseUrl();
     const cleanInvites = teamInvites
       .map((email) => email.trim().toLowerCase())
       .filter((email) => email.length > 0);
