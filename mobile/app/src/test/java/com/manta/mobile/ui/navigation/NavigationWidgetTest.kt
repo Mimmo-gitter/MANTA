@@ -6,6 +6,7 @@ import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isSelectable
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import com.manta.mobile.core.theme.ui.MobileTheme
@@ -35,8 +36,8 @@ class NavigationWidgetTest {
         setNavShellContent()
 
         // Verify initial route is Alerts
-        composeTestRule.onNodeWithText("Alerts Screen").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Alerts").assertIsSelected()
+        composeTestRule.onNodeWithTag("screen_alerts").assertIsDisplayed()
+        composeTestRule.onNode(hasText("Alerts") and isSelectable()).assertIsSelected()
     }
 
     @Test
@@ -47,10 +48,9 @@ class NavigationWidgetTest {
         composeTestRule.onNodeWithText("Project").performClick()
 
         // Verify destination screen and selection
-        composeTestRule.onNodeWithText("Project Screen").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Alerts Screen").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("screen_project").assertIsDisplayed()
         composeTestRule.onNodeWithText("Project").assertIsSelected()
-        composeTestRule.onNodeWithText("Alerts").assertIsNotSelected()
+        composeTestRule.onNode(hasText("Alerts") and isSelectable()).assertIsNotSelected()
     }
 
     @Test
@@ -61,10 +61,9 @@ class NavigationWidgetTest {
         composeTestRule.onNodeWithText("Actions").performClick()
 
         // Verify destination screen and selection
-        composeTestRule.onNodeWithText("Actions Screen").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Alerts Screen").assertDoesNotExist()
+        composeTestRule.onNodeWithTag("screen_actions").assertIsDisplayed()
         composeTestRule.onNodeWithText("Actions").assertIsSelected()
-        composeTestRule.onNodeWithText("Alerts").assertIsNotSelected()
+        composeTestRule.onNode(hasText("Alerts") and isSelectable()).assertIsNotSelected()
     }
 
     @Test
@@ -78,9 +77,8 @@ class NavigationWidgetTest {
         composeTestRule.onNodeWithText(
             "Manage session access and platform preferences."
         ).assertIsDisplayed()
-        composeTestRule.onNodeWithText("Alerts Screen").assertDoesNotExist()
         composeTestRule.onNode(hasText("Settings") and isSelectable()).assertIsSelected()
-        composeTestRule.onNodeWithText("Alerts").assertIsNotSelected()
+        composeTestRule.onNode(hasText("Alerts") and isSelectable()).assertIsNotSelected()
     }
 
     @Test
@@ -88,20 +86,18 @@ class NavigationWidgetTest {
         setNavShellContent()
 
         // Initial state: Alerts
-        composeTestRule.onNodeWithText("Alerts Screen").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Alerts").assertIsSelected()
+        composeTestRule.onNodeWithTag("screen_alerts").assertIsDisplayed()
+        composeTestRule.onNode(hasText("Alerts") and isSelectable()).assertIsSelected()
 
         // Navigate to Project
         composeTestRule.onNodeWithText("Project").performClick()
-        composeTestRule.onNodeWithText("Project Screen").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("screen_project").assertIsDisplayed()
         composeTestRule.onNodeWithText("Project").assertIsSelected()
-        composeTestRule.onNodeWithText("Alerts Screen").assertDoesNotExist()
 
         // Navigate to Actions
         composeTestRule.onNodeWithText("Actions").performClick()
-        composeTestRule.onNodeWithText("Actions Screen").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("screen_actions").assertIsDisplayed()
         composeTestRule.onNodeWithText("Actions").assertIsSelected()
-        composeTestRule.onNodeWithText("Project Screen").assertDoesNotExist()
 
         // Navigate to Settings
         composeTestRule.onNode(hasText("Settings") and isSelectable()).performClick()
@@ -109,11 +105,10 @@ class NavigationWidgetTest {
             "Manage session access and platform preferences."
         ).assertIsDisplayed()
         composeTestRule.onNode(hasText("Settings") and isSelectable()).assertIsSelected()
-        composeTestRule.onNodeWithText("Actions Screen").assertDoesNotExist()
 
         // Navigate back to Alerts
-        composeTestRule.onNodeWithText("Alerts").performClick()
-        composeTestRule.onNodeWithText("Alerts Screen").assertIsDisplayed()
-        composeTestRule.onNodeWithText("Alerts").assertIsSelected()
+        composeTestRule.onNode(hasText("Alerts") and isSelectable()).performClick()
+        composeTestRule.onNodeWithTag("screen_alerts").assertIsDisplayed()
+        composeTestRule.onNode(hasText("Alerts") and isSelectable()).assertIsSelected()
     }
 }

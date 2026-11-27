@@ -203,7 +203,7 @@ class AuthRepository(
         try {
             activePushRegistrationManager.registerCurrentTokenIfAuthenticated()
         } catch (e: Exception) {
-            Log.w(TAG, "Post-signin FCM registration failed: ${e.message}")
+            Log.w(TAG, "Post-sign-in FCM registration failed: ${e.message}")
         }
     }
 
@@ -278,6 +278,7 @@ class AuthRepository(
         }
 
         purgeLocalSession()
+        Log.d(TAG, "Successfully logged out the user.")
         return@withContext Result.success(Unit)
     }
 

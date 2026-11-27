@@ -158,7 +158,8 @@ class MainActivity : FragmentActivity() {
                     is AuthState.Authenticated -> {
                         NavShell(
                             authRepository = authRepository,
-                            fcmToken = currentFcmToken
+                            fcmToken = currentFcmToken,
+                            biometricPromptManager = biometricPromptManager
                         )
                     }
                 }
