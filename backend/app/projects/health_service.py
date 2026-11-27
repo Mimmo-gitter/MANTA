@@ -51,6 +51,7 @@ from app.db.models.models import (
 from app.db.session import AsyncSessionLocal, get_tenant_db_context
 from app.integrations.crypto import encryption_service, mask_secret
 from app.integrations.service import generate_webhook_secret
+from app.outbox.service import record_outbox_event
 from app.projects.schemas import (
     FailureSessionStatus,
     HealthProbeConfigResponse,
@@ -458,6 +459,24 @@ async def process_health_signal(
         project.updated_at = now
         await db.flush()
 
+        record_outbox_event(
+            db,
+            tenant_id=tenant_id,
+            project_id=project_id,
+            event_type="incident.opened",
+            aggregate_type="production_failure",
+            aggregate_id=session_id,
+            payload={
+                "session_id": str(session_id),
+                "incident_id": str(session_id),
+                "project_id": str(project_id),
+                "deployment_id": str(deployment_id) if deployment_id else None,
+                "probe_source": clean_source,
+                "severity": clean_severity,
+                "started_at": signal_ts.isoformat(),
+            },
+        )
+
         return HealthSignalIngestResponse(
             status="accepted",
             project_id=project_id,
@@ -575,6 +594,25 @@ async def process_health_signal(
     project.health_status = ProjectHealthStatus.HEALTHY.value
     project.updated_at = now
     await db.flush()
+
+    record_outbox_event(
+        db,
+        tenant_id=tenant_id,
+        project_id=project_id,
+        event_type="deployment.recovered",
+        aggregate_type="production_failure",
+        aggregate_id=open_session.id or open_session.incident_id or project_id,
+        payload={
+            "session_id": str(open_session.id),
+            "incident_id": str(open_session.incident_id) if open_session.incident_id else None,
+            "project_id": str(project_id),
+            "deployment_id": str(deployment_id) if deployment_id else None,
+            "probe_source": open_session.probe_source,
+            "started_at": started_utc.isoformat(),
+            "resolved_at": signal_ts.isoformat(),
+            "recovery_time_seconds": recovery_seconds,
+        },
+    )
 
     return HealthSignalIngestResponse(
         status="accepted",

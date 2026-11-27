@@ -11,14 +11,19 @@ from app.adr import adr_router
 from app.auth import JWKSClient, JWTAuthMiddleware, auth_router
 from app.config import settings
 from app.contributors.router import router as contributors_router
+from app.db.session import async_engine
 from app.dead_letters import dead_letters_router
 from app.deployments import deployments_router
 from app.dora import dora_router
 from app.integrations import integrations_router
 from app.observability import (
     close_metrics_redis,
+    instrument_fastapi_app,
+    instrument_sqlalchemy_engine,
     refresh_broker_metrics,
+    setup_opentelemetry,
     setup_prometheus_instrumentation,
+    shutdown_opentelemetry,
 )
 from app.projects import projects_router
 from app.refactoring import refactoring_router
@@ -27,6 +32,7 @@ from app.tenants import router as tenants_router
 from app.tenants import settings_router as tenants_settings_router
 from app.webhooks import webhooks_router
 from app.mobile import mobile_router
+from app.ws import WebSocketGatewayManager, ws_router
 
 
 @asynccontextmanager
@@ -35,7 +41,11 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     try:
         yield
     finally:
+        gateway = getattr(_app.state, "ws_gateway", None)
+        if gateway is not None:
+            await gateway.shutdown()
         await close_metrics_redis()
+        shutdown_opentelemetry(final=False)
 
 
 app = FastAPI(
@@ -44,19 +54,25 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Initialize in-memory JWKS client on application state
+# Initialize OpenTelemetry distributed tracing & DB engine instrumentation (TASK-302-2)
+setup_opentelemetry()
+instrument_sqlalchemy_engine(async_engine)
+
+# Initialize in-memory JWKS client & pod-local WebSocket fanout gateway on app.state
 app.state.jwks_client = JWKSClient(
     jwks_url=settings.jwks_url,
     ttl_seconds=settings.OIDC_JWKS_CACHE_TTL_SECONDS,
     http_timeout=settings.OIDC_JWKS_HTTP_TIMEOUT_SECONDS,
     min_refresh_interval_seconds=settings.OIDC_JWKS_MIN_REFRESH_INTERVAL_SECONDS,
 )
+app.state.ws_gateway = WebSocketGatewayManager()
 
 # Register JWT authentication middleware FIRST (denies unauthenticated requests on non-public paths)
 app.add_middleware(JWTAuthMiddleware)
 
 # Instrument HTTP requests & webhook ACK latency before CORS so CORS stays outermost (TASK-302-1)
 setup_prometheus_instrumentation(app)
+instrument_fastapi_app(app)
 
 # Register CORS middleware LAST so it wraps outermost in Starlette's middleware stack.
 # This ensures that ALL responses (including preflight OPTIONS and 401/403/500 errors from inner middlewares)
@@ -102,6 +118,9 @@ app.include_router(adr_router)
 
 # Mobile FCM token registration endpoints (SCRUM-494)
 app.include_router(mobile_router)
+
+# Real-time WebSocket tenant event stream (TASK-303-1 / TASK-303-2)
+app.include_router(ws_router)
 
 
 @app.get("/health")

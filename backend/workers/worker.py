@@ -51,6 +51,33 @@ try:
 except ImportError:  # pragma: no cover
     settings = None  # type: ignore[assignment]
 
+try:
+    from opentelemetry.trace import SpanKind
+
+    from app.observability.tracing import (
+        instrument_sqlalchemy_engine,
+        setup_opentelemetry,
+        shutdown_opentelemetry,
+        start_linked_span,
+    )
+except ImportError:  # pragma: no cover
+    from contextlib import nullcontext
+
+    SpanKind = None  # type: ignore[assignment]
+
+    def setup_opentelemetry(*_args: Any, **_kwargs: Any) -> Any:
+        return None
+
+    def shutdown_opentelemetry(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    def instrument_sqlalchemy_engine(*_args: Any, **_kwargs: Any) -> None:
+        return None
+
+    def start_linked_span(*_args: Any, **_kwargs: Any) -> Any:
+        return nullcontext()
+
+
 from .fencing import (
     ACQUIRE_LEASE_LUA,
     DEFAULT_SUPERVISOR_SWEEP_SEC,
@@ -175,6 +202,9 @@ def serialize_job_payload(
     provider: str | None = None,
     attempt: int = 0,
     enqueued_at: str | None = None,
+    *,
+    traceparent: str | None = None,
+    tracestate: str | None = None,
 ) -> str:
     """
     Serializes a canonical MantaJobEnvelope into deterministic compact JSON
@@ -183,7 +213,7 @@ def serialize_job_payload(
     norm_priority = priority.strip().lower() if isinstance(priority, str) else ""
     if norm_priority not in VALID_PRIORITIES:
         raise ValueError(f"Unsupported queue priority: {priority!r} (expected 'default' or 'high')")
-    envelope = {
+    envelope: dict[str, Any] = {
         "attempt": int(attempt),
         "enqueued_at": enqueued_at or datetime.now(timezone.utc).isoformat(),
         "event_id": str(event_id) if event_id is not None else None,
@@ -195,6 +225,10 @@ def serialize_job_payload(
         "tenant_id": str(tenant_id),
         "version": 1,
     }
+    if isinstance(traceparent, str) and traceparent.strip():
+        envelope["traceparent"] = traceparent.strip()
+        if isinstance(tracestate, str) and tracestate.strip():
+            envelope["tracestate"] = tracestate.strip()
     return json.dumps(envelope, separators=(",", ":"), sort_keys=True)
 
 
@@ -903,37 +937,85 @@ async def shutdown(ctx: dict[str, Any]) -> None:
 async def dispatch_worker_job(parsed_payload: dict[str, Any]) -> Any:
     """Route a queued MantaJobEnvelope payload to the registered domain processor."""
     job_type = str(parsed_payload.get("job_type") or "").strip().lower()
-    if job_type == "blocker.detect":
-        from .blocker_detector import run_blocker_detector_cron
+    raw_traceparent = parsed_payload.get("traceparent")
+    raw_tracestate = parsed_payload.get("tracestate")
+    traceparent = (
+        raw_traceparent.strip()
+        if isinstance(raw_traceparent, str) and raw_traceparent.strip()
+        else None
+    )
+    tracestate = (
+        raw_tracestate.strip()
+        if isinstance(raw_tracestate, str) and raw_tracestate.strip()
+        else None
+    )
+    span_kwargs: dict[str, Any] = {
+        "traceparent": traceparent,
+        "tracestate": tracestate,
+        "attributes": {
+            "messaging.system": "redis",
+            "manta.job_type": job_type or "unknown",
+            "manta.job_id": str(parsed_payload.get("job_id") or ""),
+            "manta.tenant_id": str(parsed_payload.get("tenant_id") or ""),
+        },
+    }
+    if SpanKind is not None:
+        span_kwargs["kind"] = SpanKind.CONSUMER
 
-        inner = parsed_payload.get("payload")
-        ctx_arg = inner if isinstance(inner, dict) else {}
-        return await run_blocker_detector_cron(ctx_arg)
+    with start_linked_span("arq.worker.process", **span_kwargs):
+        if job_type == "blocker.detect":
+            from .blocker_detector import run_blocker_detector_cron
 
-    if job_type == "scip.index":
-        from app.refactoring.scip_service import process_scip_index_job
+            inner = parsed_payload.get("payload")
+            ctx_arg = inner if isinstance(inner, dict) else {}
+            return await run_blocker_detector_cron(ctx_arg)
 
-        return await process_scip_index_job(parsed_payload)
+        if job_type == "scip.index":
+            from app.refactoring.scip_service import process_scip_index_job
 
-    if job_type == "adr.reembed":
-        from app.ai.reindex_service import process_adr_reembed_job
+            return await process_scip_index_job(parsed_payload)
 
-        return await process_adr_reembed_job(parsed_payload)
+        if job_type == "adr.reembed":
+            from app.ai.reindex_service import process_adr_reembed_job
 
-    if job_type == "webhook.process" or "event_id" in parsed_payload:
-        from app.webhooks.processor import process_webhook_job
+            return await process_adr_reembed_job(parsed_payload)
 
-        return await process_webhook_job(parsed_payload)
+        if job_type == "webhook.process" or "event_id" in parsed_payload:
+            from app.webhooks.processor import process_webhook_job
 
-    logger.info("Ignoring unhandled worker job_type=%s", job_type or "unknown")
-    return f"ignored_job_type:{job_type or 'unknown'}"
+            return await process_webhook_job(parsed_payload)
+
+        logger.info("Ignoring unhandled worker job_type=%s", job_type or "unknown")
+        return f"ignored_job_type:{job_type or 'unknown'}"
 
 
 async def process_webhook_event_arq(ctx: dict[str, Any], parsed_payload: dict[str, Any]) -> Any:
     """ARQ-compatible task wrapper delegating to process_webhook_job."""
     from app.webhooks.processor import process_webhook_job
 
-    return await process_webhook_job(parsed_payload)
+    raw_traceparent = parsed_payload.get("traceparent")
+    raw_tracestate = parsed_payload.get("tracestate")
+    span_kwargs: dict[str, Any] = {
+        "traceparent": (
+            raw_traceparent.strip()
+            if isinstance(raw_traceparent, str) and raw_traceparent.strip()
+            else None
+        ),
+        "tracestate": (
+            raw_tracestate.strip()
+            if isinstance(raw_tracestate, str) and raw_tracestate.strip()
+            else None
+        ),
+        "attributes": {
+            "messaging.system": "arq",
+            "manta.job_id": str(parsed_payload.get("job_id") or ""),
+        },
+    }
+    if SpanKind is not None:
+        span_kwargs["kind"] = SpanKind.CONSUMER
+
+    with start_linked_span("arq.worker.process", **span_kwargs):
+        return await process_webhook_job(parsed_payload)
 
 
 async def process_scip_index_arq(ctx: dict[str, Any], parsed_payload: dict[str, Any]) -> Any:
@@ -1035,6 +1117,8 @@ async def run_worker_daemon() -> None:
         level=os.getenv("LOG_LEVEL", "INFO").upper(),
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
+    setup_opentelemetry(service_name=os.getenv("OTEL_SERVICE_NAME", "manta-worker"))
+    instrument_sqlalchemy_engine(async_engine)
 
     default_metrics_port = getattr(settings, "WORKER_METRICS_PORT", 9101)
     try:
@@ -1115,6 +1199,7 @@ async def run_worker_daemon() -> None:
                     await bg_task
         await redis_client.aclose()
         await async_engine.dispose()
+        shutdown_opentelemetry(final=True)
         logger.info("Worker daemon %s stopped cleanly.", worker_id)
 
 

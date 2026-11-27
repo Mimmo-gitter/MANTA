@@ -17,6 +17,7 @@ from redis.exceptions import RedisError
 
 from app.config import settings
 from app.db.session import get_tenant_db_context
+from app.observability.tracing import inject_trace_carrier
 from app.webhooks.sweeper import mark_event_queued_if_staged
 from workers.worker import QUEUE_DEFAULT, serialize_job_payload
 
@@ -59,11 +60,21 @@ def build_webhook_envelope(
     event_type: str = "unknown",
     priority: str = "default",
     payload: Optional[dict[str, Any]] = None,
+    traceparent: Optional[str] = None,
+    tracestate: Optional[str] = None,
 ) -> str:
     """
     Serializes canonical MantaJobEnvelope into deterministic JSON using
-    the workers.worker.serialize_job_payload helper.
+    the workers.worker.serialize_job_payload helper, propagating active W3C trace context.
     """
+    resolved_tp = traceparent
+    resolved_ts = tracestate
+    if resolved_tp is None:
+        carrier = inject_trace_carrier()
+        resolved_tp = carrier.get("traceparent")
+        if resolved_ts is None:
+            resolved_ts = carrier.get("tracestate")
+
     return serialize_job_payload(
         job_id=str(event_id),
         event_id=str(event_id),
@@ -72,6 +83,8 @@ def build_webhook_envelope(
         job_type=WEBHOOK_JOB_TYPE,
         provider=provider,
         payload=payload if payload is not None else {"event_type": event_type},
+        traceparent=resolved_tp,
+        tracestate=resolved_ts,
     )
 
 
