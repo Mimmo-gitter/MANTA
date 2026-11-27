@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.models import Integration, WebhookEvent
 from app.db.session import get_tenant_db_context
+from app.observability.tracing import get_current_trace_id_hex, start_linked_span
 
 from app.deployments.normalization import (
     NormalizationResult,
@@ -261,9 +262,32 @@ async def process_webhook_job(parsed_payload: dict[str, Any]) -> str:
     tenant-RLS transaction so transient errors roll back cleanly and trigger Task 23.3 retries.
     """
     event_id, tenant_id = _extract_event_and_tenant_ids(parsed_payload)
-    async with get_tenant_db_context(tenant_id) as session:
-        return await process_staged_deployment_event_in_session(
-            session,
-            event_id=event_id,
-            tenant_id=tenant_id,
-        )
+    raw_traceparent = parsed_payload.get("traceparent")
+    raw_tracestate = parsed_payload.get("tracestate")
+    traceparent = (
+        raw_traceparent.strip()
+        if not get_current_trace_id_hex()
+        and isinstance(raw_traceparent, str)
+        and raw_traceparent.strip()
+        else None
+    )
+    tracestate = (
+        raw_tracestate.strip()
+        if traceparent is not None and isinstance(raw_tracestate, str) and raw_tracestate.strip()
+        else None
+    )
+    with start_linked_span(
+        "webhook.processor.execute",
+        traceparent=traceparent,
+        tracestate=tracestate,
+        attributes={
+            "manta.tenant_id": str(tenant_id),
+            "manta.event_id": str(event_id),
+        },
+    ):
+        async with get_tenant_db_context(tenant_id) as session:
+            return await process_staged_deployment_event_in_session(
+                session,
+                event_id=event_id,
+                tenant_id=tenant_id,
+            )

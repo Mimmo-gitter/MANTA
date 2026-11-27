@@ -33,6 +33,7 @@ from app.deployments.schemas import (
     DirectDeploymentIngestRequest,
     DirectDeploymentResponse,
 )
+from app.outbox.service import record_outbox_event
 
 logger = logging.getLogger("app.deployments.service")
 
@@ -166,6 +167,41 @@ async def resolve_argocd_project(
     return None
 
 
+def _stage_deployment_outbox_event(db: AsyncSession, deployment: Deployment) -> None:
+    """Stage transactional outbox events for newly persisted production deployments."""
+    env = (deployment.environment or "").strip().lower()
+    if env != "production":
+        return
+
+    status_val = (deployment.status or "").strip().upper()
+    if status_val in (DeploymentOutcome.FAILED.value, DeploymentOutcome.ROLLED_BACK.value):
+        event_type = "deployment.failed"
+    elif status_val == DeploymentOutcome.SUCCESS.value:
+        event_type = "deployment.succeeded"
+    else:
+        return
+
+    dep_id = deployment.id or uuid.uuid4()
+    record_outbox_event(
+        db,
+        tenant_id=deployment.tenant_id,
+        project_id=deployment.project_id,
+        event_type=event_type,
+        aggregate_type="deployment",
+        aggregate_id=dep_id,
+        occurred_at=deployment.deployed_at,
+        payload={
+            "deployment_id": str(dep_id),
+            "external_deployment_id": deployment.external_deployment_id,
+            "project_id": str(deployment.project_id),
+            "environment": deployment.environment,
+            "status": status_val,
+            "commit_sha": deployment.commit_sha,
+            "is_change_failure": bool(deployment.is_change_failure),
+        },
+    )
+
+
 async def persist_deployment_idempotent(
     db: AsyncSession,
     *,
@@ -228,6 +264,7 @@ async def persist_deployment_idempotent(
             and deployment.status == DeploymentOutcome.SUCCESS.value
         ):
             await resolve_deployment_pull_requests(db, deployment=deployment)
+        _stage_deployment_outbox_event(db, deployment)
         return deployment, False
 
     clean_ext_id = external_deployment_id.strip()[:128]
@@ -291,6 +328,8 @@ async def persist_deployment_idempotent(
         and persisted.status == DeploymentOutcome.SUCCESS.value
     ):
         await resolve_deployment_pull_requests(db, deployment=persisted)
+    if inserted:
+        _stage_deployment_outbox_event(db, persisted)
     return persisted, (not inserted)
 
 

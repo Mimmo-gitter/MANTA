@@ -141,6 +141,10 @@ services:
       - SMTP_FROM=${SMTP_FROM:-noreply@manta.local}
       - SMTP_START_TLS=${SMTP_START_TLS:-false}
       - WEB_BASE_URL=${WEB_BASE_URL:-http://localhost:3000}
+      - OTEL_ENABLED=${OTEL_ENABLED:-true}
+      - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME_APP:-manta-backend}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4317}
+      - OTEL_EXPORTER_OTLP_INSECURE=${OTEL_EXPORTER_OTLP_INSECURE:-true}
     volumes:
       - ../docs/roles-permissions.json:/docs/roles-permissions.json:ro
       - ../infra/keycloak/realm-export.json:/infra/keycloak/realm-export.json:ro
@@ -178,6 +182,10 @@ services:
       - SWEEP_THRESHOLD_SECONDS=${SWEEP_THRESHOLD_SECONDS:-10}
       - SWEEP_BATCH_SIZE=${SWEEP_BATCH_SIZE:-100}
       - SWEEPER_HEARTBEAT_FILE=/tmp/sweeper.heartbeat
+      - OTEL_ENABLED=${OTEL_ENABLED:-true}
+      - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME_SWEEPER:-manta-sweeper}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4317}
+      - OTEL_EXPORTER_OTLP_INSECURE=${OTEL_EXPORTER_OTLP_INSECURE:-true}
     networks:
       - manta_net
     depends_on:
@@ -213,6 +221,10 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - WORKER_HEARTBEAT_FILE=/tmp/worker.heartbeat
       - WORKER_METRICS_PORT=${WORKER_METRICS_PORT:-9101}
+      - OTEL_ENABLED=${OTEL_ENABLED:-true}
+      - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME_WORKER:-manta-worker}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4317}
+      - OTEL_EXPORTER_OTLP_INSECURE=${OTEL_EXPORTER_OTLP_INSECURE:-true}
     networks:
       - manta_net
     depends_on:
@@ -244,6 +256,10 @@ services:
       - REDIS_URL=${REDIS_URL:-redis://valkey:6379/0}
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - OUTBOX_RELAY_HEARTBEAT_FILE=/tmp/outbox_relay.heartbeat
+      - OTEL_ENABLED=${OTEL_ENABLED:-true}
+      - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME_RELAY:-manta-outbox-relay}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4317}
+      - OTEL_EXPORTER_OTLP_INSECURE=${OTEL_EXPORTER_OTLP_INSECURE:-true}
     networks:
       - manta_net
     depends_on:
@@ -262,6 +278,20 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+
+  # 4e. Jaeger All-in-One Collector & UI (TASK-302-2 / US-49)
+  jaeger:
+    image: jaegertracing/all-in-one:1.57
+    container_name: manta_jaeger
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+    ports:
+      - "${JAEGER_UI_PORT:-16686}:16686"
+      - "${JAEGER_OTLP_GRPC_PORT:-4317}:4317"
+      - "${JAEGER_OTLP_HTTP_PORT:-4318}:4318"
+    networks:
+      - manta_net
+    restart: unless-stopped
 
   # 5. Keycloak Identity Provider (OIDC / OAuth2)
   keycloak:

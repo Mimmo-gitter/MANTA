@@ -31,6 +31,8 @@ def record_outbox_event(
     event_id: Optional[uuid.UUID] = None,
     project_id: Optional[uuid.UUID] = None,
     occurred_at: Optional[datetime] = None,
+    traceparent: Optional[str] = None,
+    tracestate: Optional[str] = None,
 ) -> OutboxEvent:
     """
     Stages an OutboxEvent row inside the caller's active database transaction.
@@ -44,6 +46,16 @@ def record_outbox_event(
     ev_id = event_id or generate_uuidv7()
     agg_id = str(aggregate_id) if aggregate_id is not None else str(ev_id)
 
+    resolved_traceparent = traceparent
+    resolved_tracestate = tracestate
+    if resolved_traceparent is None:
+        from app.observability.tracing import inject_trace_carrier
+
+        carrier = inject_trace_carrier()
+        resolved_traceparent = carrier.get("traceparent")
+        if resolved_tracestate is None:
+            resolved_tracestate = carrier.get("tracestate")
+
     # Construct canonical event envelope payload as specified in SRS §3.2.3 and architecture design
     canonical_payload: Dict[str, Any] = {
         "event_id": str(ev_id),
@@ -54,6 +66,10 @@ def record_outbox_event(
         "occurred_at": now.isoformat(),
         "data": payload,
     }
+    if isinstance(resolved_traceparent, str) and resolved_traceparent.strip():
+        canonical_payload["traceparent"] = resolved_traceparent.strip()
+        if isinstance(resolved_tracestate, str) and resolved_tracestate.strip():
+            canonical_payload["tracestate"] = resolved_tracestate.strip()
 
     outbox_event = OutboxEvent(
         id=ev_id,

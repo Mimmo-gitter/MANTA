@@ -95,6 +95,13 @@ class Settings(BaseSettings):
     METRICS_REDIS_TIMEOUT_SECONDS: float = 0.75
     METRICS_REDIS_SCAN_LIMIT: int = 1000
 
+    # OpenTelemetry Distributed Tracing (TASK-302-2 / US-49)
+    OTEL_ENABLED: bool = True
+    OTEL_SERVICE_NAME: str = "manta-backend"
+    OTEL_EXPORTER_OTLP_ENDPOINT: str | None = None
+    OTEL_EXPORTER_OTLP_PROTOCOL: str = "grpc"
+    OTEL_EXPORTER_OTLP_INSECURE: bool = True
+
     # AI / LLM Endpoints (US-41 / US-62: Zero Data Retention & Local Inference)
     LOCAL_LLM_BASE_URL: str = "http://localhost:11434/v1"
     LOCAL_LLM_MODEL: str = "llama3.1:8b"

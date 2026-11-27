@@ -38,6 +38,11 @@ from redis.exceptions import RedisError
 from sqlalchemy import text
 
 from app.db.session import AsyncSessionLocal, async_engine, get_tenant_db_context
+from app.observability.tracing import (
+    instrument_sqlalchemy_engine,
+    setup_opentelemetry,
+    shutdown_opentelemetry,
+)
 from app.webhooks.enqueue import build_webhook_envelope, get_redis
 from app.webhooks.sweeper import claim_stranded_staged_events, mark_events_queued
 from workers.worker import QUEUE_DEFAULT
@@ -271,6 +276,8 @@ async def main() -> None:
         level=os.getenv("LOG_LEVEL", "INFO").upper(),
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
+    setup_opentelemetry(service_name=os.getenv("OTEL_SERVICE_NAME", "manta-sweeper"))
+    instrument_sqlalchemy_engine(async_engine)
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
 
@@ -288,6 +295,7 @@ async def main() -> None:
         logger.info("Cleaning up database and Redis connections on sweeper shutdown...")
         await redis.aclose()
         await async_engine.dispose()
+        shutdown_opentelemetry(final=True)
 
 
 if __name__ == "__main__":

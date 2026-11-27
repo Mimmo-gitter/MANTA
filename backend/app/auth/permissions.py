@@ -11,6 +11,7 @@ import uuid
 
 from fastapi import HTTPException, Request, WebSocket, WebSocketException, status
 import jwt
+from pydantic import ValidationError
 from sqlalchemy import or_, select
 from starlette.requests import HTTPConnection
 from starlette.routing import WebSocketRoute
@@ -176,6 +177,47 @@ async def resolve_caller_roles(user: TokenClaims) -> set[str]:
     return matrix.normalize_roles(db_roles)
 
 
+def _extract_ws_token_and_subprotocol(websocket: WebSocket) -> tuple[str, str | None]:
+    """
+    Extract WebSocket bearer JWT using the confirmed precedence order:
+    1. `Authorization: Bearer <jwt>` header
+    2. `?token=<jwt>` query parameter
+    3. `Sec-WebSocket-Protocol: bearer, <jwt>` subprotocol list
+    """
+    auth_header = websocket.headers.get("authorization")
+    if auth_header is not None:
+        try:
+            return extract_bearer_token(auth_header), None
+        except AuthError as exc:
+            raise WebSocketException(
+                code=status.WS_1008_POLICY_VIOLATION,
+                reason="Not authenticated",
+            ) from exc
+
+    raw_query_token = websocket.query_params.get("token")
+    if raw_query_token and raw_query_token.strip():
+        token = raw_query_token.strip()
+        if token.lower().startswith("bearer "):
+            token = token[7:].strip()
+        if not token:
+            raise WebSocketException(
+                code=status.WS_1008_POLICY_VIOLATION,
+                reason="Not authenticated",
+            )
+        return token, None
+
+    ws_proto_header = websocket.headers.get("sec-websocket-protocol")
+    if ws_proto_header:
+        parts = [part.strip() for part in ws_proto_header.split(",") if part.strip()]
+        if len(parts) >= 2 and parts[0].lower() == "bearer":
+            return parts[1], parts[0]
+
+    raise WebSocketException(
+        code=status.WS_1008_POLICY_VIOLATION,
+        reason="Not authenticated",
+    )
+
+
 async def authenticate_websocket(
     websocket: WebSocket,
     *,
@@ -185,34 +227,10 @@ async def authenticate_websocket(
     Verify RS256 JWT credentials, issuer/audience claims, and tenant boundary on a
     WebSocket upgrade handshake before `websocket.accept()`.
 
-    Token resolution checks the `Authorization: Bearer <token>` header first, then
-    falls back to the `?token=<jwt>` query parameter when no Authorization header is sent
-    (needed by browser WebSocket clients).
+    Token resolution checks `Authorization: Bearer <token>`, then `?token=<jwt>`,
+    then `Sec-WebSocket-Protocol: bearer, <jwt>`.
     """
-    auth_header = websocket.headers.get("authorization")
-    if auth_header is not None:
-        try:
-            token = extract_bearer_token(auth_header)
-        except AuthError as exc:
-            raise WebSocketException(
-                code=status.WS_1008_POLICY_VIOLATION,
-                reason="Not authenticated",
-            ) from exc
-    else:
-        raw_query_token = websocket.query_params.get("token")
-        if not raw_query_token or not raw_query_token.strip():
-            raise WebSocketException(
-                code=status.WS_1008_POLICY_VIOLATION,
-                reason="Not authenticated",
-            )
-        token = raw_query_token.strip()
-        if token.lower().startswith("bearer "):
-            token = token[7:].strip()
-        if not token:
-            raise WebSocketException(
-                code=status.WS_1008_POLICY_VIOLATION,
-                reason="Not authenticated",
-            )
+    token, ws_subprotocol = _extract_ws_token_and_subprotocol(websocket)
 
     client: JWKSClient | None = getattr(websocket.app.state, "jwks_client", None)
     if client is None:
@@ -244,7 +262,17 @@ async def authenticate_websocket(
             reason="Not authenticated",
         ) from exc
 
-    user = TokenClaims.from_claims(claims)
+    try:
+        user = TokenClaims.from_claims(claims)
+        if not user.sub or not user.sub.strip():
+            raise ValueError("Missing subject claim")
+        token_tenant_uuid = user.tenant_uuid
+    except (ValidationError, ValueError, KeyError, TypeError) as exc:
+        logger.debug("WebSocket claims validation rejected: %s", exc)
+        raise WebSocketException(
+            code=status.WS_1008_POLICY_VIOLATION,
+            reason="Not authenticated",
+        ) from exc
 
     target_tenant = (
         expected_tenant_id
@@ -264,10 +292,10 @@ async def authenticate_websocket(
                 reason=FORBIDDEN_DETAIL,
             ) from exc
 
-        if target_uuid != user.tenant_uuid:
+        if target_uuid != token_tenant_uuid:
             logger.warning(
                 "WebSocket cross-tenant access rejected: token tenant %s != target %s",
-                user.tenant_uuid,
+                token_tenant_uuid,
                 target_uuid,
             )
             raise WebSocketException(
@@ -277,7 +305,10 @@ async def authenticate_websocket(
 
     websocket.state.claims = claims
     websocket.state.tenant_id = claims["tenant_id"]
+    websocket.state.tenant_uuid = token_tenant_uuid
     websocket.state.user = user
+    if ws_subprotocol is not None:
+        websocket.state.ws_subprotocol = ws_subprotocol
     return user
 
 

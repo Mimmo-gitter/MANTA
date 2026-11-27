@@ -604,6 +604,7 @@ async def test_route_without_declared_permission_rejected_by_default(auth_fixtur
         handler_called = True
         return {"data": "sensitive"}
 
+    before_len = len(app.routes)
     app.include_router(undeclared_router)
 
     try:
@@ -620,8 +621,13 @@ async def test_route_without_declared_permission_rejected_by_default(auth_fixtur
         assert resp.json() == FORBIDDEN_RESPONSE
         assert handler_called is False, "Handler must not be executed on undeclared route"
     finally:
-        app.routes[:] = [
-            r for r in app.routes if not getattr(r, "path", "").startswith("/api/v1/undeclared")
+        app.router.routes[:] = [
+            r
+            for idx, r in enumerate(app.routes)
+            if idx < before_len
+            and r is not undeclared_router
+            and getattr(r, "original_router", None) is not undeclared_router
+            and not getattr(r, "path", "").startswith("/api/v1/undeclared")
         ]
 
 

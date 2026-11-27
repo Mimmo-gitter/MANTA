@@ -23,6 +23,7 @@ import logging
 from typing import Any, Literal, Optional
 import uuid
 
+from opentelemetry.trace import SpanKind
 from redis.exceptions import ResponseError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -111,6 +112,8 @@ class OutboxStreamMessage:
     event_type: str
     payload: dict[str, Any]
     occurred_at: str
+    traceparent: Optional[str] = None
+    tracestate: Optional[str] = None
 
     @classmethod
     def from_stream_entry(
@@ -145,6 +148,13 @@ class OutboxStreamMessage:
         if not isinstance(parsed_payload, dict):
             parsed_payload = {"value": parsed_payload}
 
+        traceparent = decoded.get("traceparent") or parsed_payload.get("traceparent")
+        if not isinstance(traceparent, str) or not traceparent.strip():
+            traceparent = None
+        tracestate = decoded.get("tracestate") or parsed_payload.get("tracestate")
+        if not isinstance(tracestate, str) or not tracestate.strip():
+            tracestate = None
+
         return cls(
             stream_key=skey,
             stream_entry_id=eid,
@@ -153,6 +163,8 @@ class OutboxStreamMessage:
             event_type=decoded.get("event_type", "unknown"),
             payload=parsed_payload,
             occurred_at=decoded.get("occurred_at", ""),
+            traceparent=traceparent,
+            tracestate=tracestate,
         )
 
 
@@ -332,65 +344,80 @@ class OutboxStreamConsumer:
         redis_client: Optional[Any] = None,
     ) -> ConsumeResult:
         """Process one Redis Stream entry through Tier-1 Redis + Tier-2 PG deduplication."""
+        from app.observability.tracing import start_linked_span
+
         msg = OutboxStreamMessage.from_stream_entry(stream_key, stream_entry_id, raw_fields)
-        client = self._get_redis(redis_client)
-        dedup_key = build_dedup_key(msg.tenant_id, msg.event_id)
+        with start_linked_span(
+            "outbox.consumer.process",
+            traceparent=msg.traceparent,
+            tracestate=msg.tracestate,
+            kind=SpanKind.CONSUMER,
+            attributes={
+                "messaging.system": "redis",
+                "messaging.destination.name": msg.stream_key,
+                "manta.tenant_id": str(msg.tenant_id),
+                "manta.event_id": str(msg.event_id),
+                "manta.event_type": msg.event_type,
+            },
+        ):
+            client = self._get_redis(redis_client)
+            dedup_key = build_dedup_key(msg.tenant_id, msg.event_id)
 
-        # Tier-1 Redis fast path check (read-only so SIGKILL cannot drop uncommitted events)
-        if await client.exists(dedup_key):
-            self._record_duplicate_metric(tier="redis", msg=msg)
-            acked = await self._ack_entry(client, msg.stream_key, msg.stream_entry_id)
-            return ConsumeResult(
-                status="duplicate_redis",
-                event_id=msg.event_id,
-                tenant_id=msg.tenant_id,
-                stream_entry_id=msg.stream_entry_id,
-                acked=acked,
-            )
-
-        # Tier-2 PostgreSQL durable ledger claim + handler inside one tenant RLS transaction
-        if session is not None:
-            claimed = await self._execute_with_tier2_session(
-                session,
-                msg,
-                handler,
-                commit_session=True,
-            )
-        else:
-            async with self.tenant_session_factory(msg.tenant_id) as managed_session:
-                claimed = await self._execute_with_tier2_session(
-                    managed_session,
-                    msg,
-                    handler,
-                    commit_session=False,
+            # Tier-1 Redis fast path check (read-only so SIGKILL cannot drop uncommitted events)
+            if await client.exists(dedup_key):
+                self._record_duplicate_metric(tier="redis", msg=msg)
+                acked = await self._ack_entry(client, msg.stream_key, msg.stream_entry_id)
+                return ConsumeResult(
+                    status="duplicate_redis",
+                    event_id=msg.event_id,
+                    tenant_id=msg.tenant_id,
+                    stream_entry_id=msg.stream_entry_id,
+                    acked=acked,
                 )
 
-        if not claimed:
-            try:
-                await self._warm_tier1_dedup(client, dedup_key)
-            except Exception as exc:
-                logger.warning("Failed to backfill Tier-1 key %s: %s", dedup_key, exc)
-            self._record_duplicate_metric(tier="postgres", msg=msg)
+            # Tier-2 PostgreSQL durable ledger claim + handler inside one tenant RLS transaction
+            if session is not None:
+                claimed = await self._execute_with_tier2_session(
+                    session,
+                    msg,
+                    handler,
+                    commit_session=True,
+                )
+            else:
+                async with self.tenant_session_factory(msg.tenant_id) as managed_session:
+                    claimed = await self._execute_with_tier2_session(
+                        managed_session,
+                        msg,
+                        handler,
+                        commit_session=False,
+                    )
+
+            if not claimed:
+                try:
+                    await self._warm_tier1_dedup(client, dedup_key)
+                except Exception as exc:
+                    logger.warning("Failed to backfill Tier-1 key %s: %s", dedup_key, exc)
+                self._record_duplicate_metric(tier="postgres", msg=msg)
+                acked = await self._ack_entry(client, msg.stream_key, msg.stream_entry_id)
+                return ConsumeResult(
+                    status="duplicate_postgres",
+                    event_id=msg.event_id,
+                    tenant_id=msg.tenant_id,
+                    stream_entry_id=msg.stream_entry_id,
+                    acked=acked,
+                )
+
+            # Post-commit: populate Tier-1 7-day key and XACK the Redis Stream entry
+            await self._warm_tier1_dedup(client, dedup_key)
             acked = await self._ack_entry(client, msg.stream_key, msg.stream_entry_id)
+            self.metrics.processed_total += 1
             return ConsumeResult(
-                status="duplicate_postgres",
+                status="processed",
                 event_id=msg.event_id,
                 tenant_id=msg.tenant_id,
                 stream_entry_id=msg.stream_entry_id,
                 acked=acked,
             )
-
-        # Post-commit: populate Tier-1 7-day key and XACK the Redis Stream entry
-        await self._warm_tier1_dedup(client, dedup_key)
-        acked = await self._ack_entry(client, msg.stream_key, msg.stream_entry_id)
-        self.metrics.processed_total += 1
-        return ConsumeResult(
-            status="processed",
-            event_id=msg.event_id,
-            tenant_id=msg.tenant_id,
-            stream_entry_id=msg.stream_entry_id,
-            acked=acked,
-        )
 
     async def poll_streams_once(
         self,

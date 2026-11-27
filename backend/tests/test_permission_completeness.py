@@ -426,7 +426,7 @@ class TestRegisteredRoutesCompleteness(unittest.TestCase):
         async def _jwks_handler(_req: httpx.Request) -> httpx.Response:
             return httpx.Response(200, json={"keys": [jwk_dict]})
 
-        ws_router = APIRouter(prefix="/api/v1/ws")
+        ws_router = APIRouter(prefix="/api/v1/test-ws")
 
         @ws_router.websocket("/tenants/{tenant_id}/stream")
         async def dep_protected_ws(
@@ -486,7 +486,7 @@ class TestRegisteredRoutesCompleteness(unittest.TestCase):
 
                 # 1. Unauthenticated handshake must close with 1008 before accept()
                 with self.assertRaises(WebSocketDisconnect) as unauth_ctx:
-                    with client.websocket_connect(f"/api/v1/ws/tenants/{tenant_a}/stream"):
+                    with client.websocket_connect(f"/api/v1/test-ws/tenants/{tenant_a}/stream"):
                         pass
                 self.assertEqual(unauth_ctx.exception.code, 1008)
 
@@ -494,7 +494,7 @@ class TestRegisteredRoutesCompleteness(unittest.TestCase):
                 tenant_b_token = _mint_ws_token(tenant_b, ["DEVELOPER"])
                 with self.assertRaises(WebSocketDisconnect) as xtenant_ctx:
                     with client.websocket_connect(
-                        f"/api/v1/ws/tenants/{tenant_a}/stream",
+                        f"/api/v1/test-ws/tenants/{tenant_a}/stream",
                         headers={"Authorization": f"Bearer {tenant_b_token}"},
                     ):
                         pass
@@ -504,7 +504,7 @@ class TestRegisteredRoutesCompleteness(unittest.TestCase):
                 dev_token = _mint_ws_token(tenant_a, ["DEVELOPER"])
                 with self.assertRaises(WebSocketDisconnect) as rbac_ctx:
                     with client.websocket_connect(
-                        f"/api/v1/ws/admin/{tenant_a}",
+                        f"/api/v1/test-ws/admin/{tenant_a}",
                         headers={"Authorization": f"Bearer {dev_token}"},
                     ):
                         pass
@@ -512,7 +512,7 @@ class TestRegisteredRoutesCompleteness(unittest.TestCase):
 
                 # 4. Authorized role via Authorization header succeeds
                 with client.websocket_connect(
-                    f"/api/v1/ws/tenants/{tenant_a}/stream",
+                    f"/api/v1/test-ws/tenants/{tenant_a}/stream",
                     headers={"Authorization": f"Bearer {dev_token}"},
                 ) as ws:
                     msg = ws.receive_json()
@@ -521,7 +521,7 @@ class TestRegisteredRoutesCompleteness(unittest.TestCase):
                 # 5. Authorized decorator-protected WS via ?token= query param succeeds
                 admin_token = _mint_ws_token(tenant_a, ["TENANT_ADMIN"])
                 with client.websocket_connect(
-                    f"/api/v1/ws/admin/{tenant_a}?token={admin_token}",
+                    f"/api/v1/test-ws/admin/{tenant_a}?token={admin_token}",
                 ) as ws:
                     msg = ws.receive_json()
                     self.assertEqual(msg, {"tenant_id": tenant_a, "ok": True})

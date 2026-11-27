@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models.models import Deployment, DeploymentIncident, Issue
+from app.outbox.service import record_outbox_event
 
 logger = logging.getLogger("app.jira.incident_correlation")
 
@@ -69,6 +70,7 @@ async def correlate_incident(db: AsyncSession, issue: Issue) -> Optional[Deploym
             )
         )
     ).scalar_one_or_none()
+    should_emit_outbox = False
     if link is None:
         link = DeploymentIncident(
             tenant_id=issue.tenant_id,
@@ -80,12 +82,32 @@ async def correlate_incident(db: AsyncSession, issue: Issue) -> Optional[Deploym
             is_active=True,
         )
         db.add(link)
+        should_emit_outbox = True
     else:  # previously cancelled incident was reopened
+        should_emit_outbox = not bool(link.is_active)
         link.status = "CONFIRMED"
         link.is_active = True
 
     deployment.is_change_failure = True
     await db.flush()
+
+    if should_emit_outbox:
+        record_outbox_event(
+            db,
+            tenant_id=issue.tenant_id,
+            project_id=issue.project_id,
+            event_type="incident.linked",
+            aggregate_type="deployment_incident",
+            aggregate_id=link.id or deployment.id,
+            payload={
+                "deployment_incident_id": str(link.id) if link.id else None,
+                "deployment_id": str(deployment.id),
+                "issue_id": str(issue.id),
+                "issue_key": issue.external_key,
+                "correlation_source": link.correlation_source,
+                "detected_at": incident_at.isoformat(),
+            },
+        )
     return link
 
 

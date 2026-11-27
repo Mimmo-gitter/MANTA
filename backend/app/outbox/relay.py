@@ -31,6 +31,7 @@ import time
 from typing import Any, Optional
 import uuid
 
+from opentelemetry.trace import SpanKind
 import redis.asyncio as aioredis
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -92,13 +93,21 @@ def build_stream_fields(row: OutboxEvent) -> dict[str, str]:
             created_at = created_at.replace(tzinfo=timezone.utc)
         occurred_at = created_at.astimezone(timezone.utc).isoformat()
 
-    return {
+    fields: dict[str, str] = {
         "event_id": str(row.id),
         "event_type": row.event_type,
         "tenant_id": str(row.tenant_id),
         "payload": json.dumps(row.payload, separators=(",", ":"), sort_keys=True),
         "occurred_at": occurred_at,
     }
+    if isinstance(payload_dict, dict):
+        traceparent = payload_dict.get("traceparent")
+        if isinstance(traceparent, str) and traceparent.strip():
+            fields["traceparent"] = traceparent.strip()
+            tracestate = payload_dict.get("tracestate")
+            if isinstance(tracestate, str) and tracestate.strip():
+                fields["tracestate"] = tracestate.strip()
+    return fields
 
 
 @dataclass
@@ -182,16 +191,31 @@ class OutboxRelayWorker:
             return 0
 
         client = self._get_redis(redis_client)
+        from app.observability.tracing import start_linked_span
+
         try:
             for row in rows:
                 stream_key = build_stream_key(row.tenant_id)
                 fields = build_stream_fields(row)
-                await client.xadd(
-                    stream_key,
-                    fields,
-                    maxlen=self.stream_maxlen,
-                    approximate=True,
-                )
+                with start_linked_span(
+                    "outbox.relay.publish",
+                    traceparent=fields.get("traceparent"),
+                    tracestate=fields.get("tracestate"),
+                    kind=SpanKind.PRODUCER,
+                    attributes={
+                        "messaging.system": "redis",
+                        "messaging.destination.name": stream_key,
+                        "manta.tenant_id": str(row.tenant_id),
+                        "manta.event_id": str(row.id),
+                        "manta.event_type": str(row.event_type),
+                    },
+                ):
+                    await client.xadd(
+                        stream_key,
+                        fields,
+                        maxlen=self.stream_maxlen,
+                        approximate=True,
+                    )
 
             published_at = datetime.now(timezone.utc)
             for row in rows:
@@ -271,10 +295,18 @@ class OutboxRelayWorker:
 
 async def main() -> None:
     """Standalone CLI entrypoint for running the OutboxRelayWorker daemon."""
+    from app.observability.tracing import (
+        instrument_sqlalchemy_engine,
+        setup_opentelemetry,
+        shutdown_opentelemetry,
+    )
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
+    setup_opentelemetry(service_name=os.getenv("OTEL_SERVICE_NAME", "manta-outbox-relay"))
+    instrument_sqlalchemy_engine(async_engine)
     stop_event = asyncio.Event()
     loop = asyncio.get_running_loop()
 
@@ -295,6 +327,7 @@ async def main() -> None:
             if asyncio.iscoroutine(res):
                 await res
         await async_engine.dispose()
+        shutdown_opentelemetry(final=True)
 
 
 if __name__ == "__main__":

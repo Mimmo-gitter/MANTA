@@ -142,6 +142,10 @@ services:
       - SMTP_PASSWORD=${SMTP_PASSWORD:-}
       - SMTP_FROM=${SMTP_FROM:?SMTP_FROM must be set in production}
       - SMTP_START_TLS=${SMTP_START_TLS:-true}
+      - OTEL_ENABLED=${OTEL_ENABLED:-true}
+      - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME_APP:-manta-backend}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4317}
+      - OTEL_EXPORTER_OTLP_INSECURE=${OTEL_EXPORTER_OTLP_INSECURE:-true}
     ports: !reset []
     volumes: !reset
       - ../docs/roles-permissions.json:/docs/roles-permissions.json:ro
@@ -162,6 +166,10 @@ services:
       - SEED_DEV_DATA=false
       - DATABASE_URL=${DATABASE_URL:?DATABASE_URL must be set in production}
       - REDIS_URL=${REDIS_URL:-redis://valkey:6379/0}
+      - OTEL_ENABLED=${OTEL_ENABLED:-true}
+      - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME_SWEEPER:-manta-sweeper}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4317}
+      - OTEL_EXPORTER_OTLP_INSECURE=${OTEL_EXPORTER_OTLP_INSECURE:-true}
     restart: unless-stopped
 
   worker:
@@ -174,6 +182,10 @@ services:
       - ENCRYPTION_KEYRING_JSON=${ENCRYPTION_KEYRING_JSON:-}
       - ACTIVE_ENCRYPTION_KEY_ID=${ACTIVE_ENCRYPTION_KEY_ID:-primary}
       - KEYCLOAK_ADMIN_PASSWORD=${KEYCLOAK_ADMIN_PASSWORD:?KEYCLOAK_ADMIN_PASSWORD must be set in production}
+      - OTEL_ENABLED=${OTEL_ENABLED:-true}
+      - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME_WORKER:-manta-worker}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4317}
+      - OTEL_EXPORTER_OTLP_INSECURE=${OTEL_EXPORTER_OTLP_INSECURE:-true}
     restart: unless-stopped
 
   outbox-relay:
@@ -182,6 +194,14 @@ services:
       - SEED_DEV_DATA=false
       - DATABASE_URL=${DATABASE_URL:?DATABASE_URL must be set in production}
       - REDIS_URL=${REDIS_URL:-redis://valkey:6379/0}
+      - OTEL_ENABLED=${OTEL_ENABLED:-true}
+      - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME_RELAY:-manta-outbox-relay}
+      - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4317}
+      - OTEL_EXPORTER_OTLP_INSECURE=${OTEL_EXPORTER_OTLP_INSECURE:-true}
+    restart: unless-stopped
+
+  jaeger:
+    ports: !reset []
     restart: unless-stopped
 
 volumes:
