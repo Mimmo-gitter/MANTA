@@ -1,0 +1,26 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["dom", "dom.iterable", "es2022"],
+    "module": "commonjs",
+    "moduleResolution": "node",
+    "strict": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "rootDir": ".",
+    "outDir": ".tmp-unit-tests",
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"]
+    }
+  },
+  "include": [
+    "src/lib/runtime-config.ts",
+    "src/lib/auth-tab-sync.ts",
+    "src/lib/auth.ts",
+    "src/lib/api-client.ts",
+    "src/app/env.js/route.ts",
+    "tests/**/*.test.ts"
+  ]
+}
