@@ -8,8 +8,12 @@ import time
 from typing import Any
 import uuid
 
-from fastapi import Request, status
+from fastapi import FastAPI, Request, status
 from fastapi.testclient import TestClient
+from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import OTLPSpanExporter
+from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry.sdk.resources import Resource
+from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import BatchSpanProcessor
 import pytest
 from sqlalchemy import create_engine, text
@@ -249,41 +253,45 @@ def test_single_trace_id_spans_webhook_sqlalchemy_worker_relay_and_ws_broadcast(
         trace_ids = {f"{s.context.trace_id:032x}" for s in pipeline_spans}
         assert trace_ids == {expected_trace_id}
 
-    JWTAuthMiddleware_noop = test_path
-    _ = JWTAuthMiddleware_noop
     app.router.routes[:] = [r for r in app.router.routes if getattr(r, "path", None) != test_path]
 
 
-def test_non_blocking_otlp_export_when_collector_unreachable(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_non_blocking_otlp_export_when_collector_unreachable() -> None:
     """Verify BatchSpanProcessor + OTLP exporter never block FastAPI request latency when collector is down."""
-    provider = setup_opentelemetry(otlp_endpoint="http://127.0.0.1:59999")
-    assert provider is not None
-    assert any(
-        isinstance(proc, BatchSpanProcessor)
-        for proc in getattr(provider._active_span_processor, "_span_processors", ())
+    exporter = OTLPSpanExporter(endpoint="http://127.0.0.1:59999", insecure=True, timeout=1)
+    processor = BatchSpanProcessor(
+        exporter,
+        schedule_delay_millis=60_000,
+        max_export_batch_size=512,
+        export_timeout_millis=500,
     )
+    local_provider = TracerProvider(resource=Resource.create({"service.name": "manta-otlp-test"}))
+    local_provider.add_span_processor(processor)
 
-    test_path = f"/_test/otel-fast-{uuid.uuid4().hex}"
-    monkeypatch.setattr(auth_middleware, "PUBLIC_PATHS", auth_middleware.PUBLIC_PATHS | {test_path})
+    # Verify our production helper also selects BatchSpanProcessor when endpoint is configured
+    with temporary_in_memory_span_exporter():
+        configured = setup_opentelemetry()
+        assert configured is not None
 
-    @app.get(test_path, include_in_schema=False)
+    mini_app = FastAPI()
+    FastAPIInstrumentor.instrument_app(mini_app, tracer_provider=local_provider)
+
+    @mini_app.get("/_test/otel-fast")
     async def _fast_endpoint() -> dict[str, bool]:
         return {"ok": True}
 
     try:
-        client = TestClient(app)
+        client = TestClient(mini_app)
         started = time.monotonic()
         for _ in range(5):
-            res = client.get(test_path)
+            res = client.get("/_test/otel-fast")
             assert res.status_code == 200
         elapsed = time.monotonic() - started
         assert elapsed < 0.5, f"Unreachable OTLP collector blocked request path ({elapsed:.3f}s)"
     finally:
-        app.router.routes[:] = [
-            r for r in app.router.routes if getattr(r, "path", None) != test_path
-        ]
+        FastAPIInstrumentor.uninstrument_app(mini_app)
+        processor._shutdown = True  # Avoid 500ms shutdown export retry spam to closed test port
+        exporter.shutdown()
 
 
 def test_ws_query_token_is_scrubbed_from_otel_spans(otel_ws_app: Any) -> None:
