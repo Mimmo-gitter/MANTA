@@ -26,10 +26,13 @@ Scenarios covered:
 - TC-RBAC-EDGE-004: Unauthenticated request rejected (HTTP 401)
 """
 
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 import json
 import time
 from typing import Any
 import unittest.mock as mock
+import uuid
 
 from cryptography.hazmat.primitives.asymmetric import rsa
 import httpx
@@ -42,8 +45,82 @@ from app.auth.jwks import JWKSClient
 from app.auth.permissions import FORBIDDEN_RESPONSE
 from app.config import settings
 from app.main import app
+from app.refactoring.schemas import RefactoringAnalysisResponse, RepositoryAnalysisResultItem
+from app.refactoring.scip_service import RepositoryScipParity
 
 TENANT_ID = "11111111-1111-1111-1111-111111111111"
+
+
+def _mock_refactoring_analyze_patches():
+    """Patch DB/parity/analysis dependencies for unit RBAC tests on POST /refactoring/projects/{id}/analyze."""
+    repo_id = uuid.UUID("44444444-4444-4444-4444-444444444444")
+    proj_id = uuid.UUID(TENANT_ID)
+    scip_id = uuid.UUID("55555555-5555-5555-5555-555555555555")
+    analysis_id = uuid.UUID("66666666-6666-6666-6666-666666666666")
+    sha = "a" * 40
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+    @asynccontextmanager
+    async def _mock_db(_tenant_id):
+        sess = mock.AsyncMock()
+        scalar_res = mock.MagicMock()
+        scalar_res.first.return_value = object()
+        sess.scalars = mock.AsyncMock(return_value=scalar_res)
+        yield sess
+
+    parity = RepositoryScipParity(
+        repository_id=repo_id,
+        project_id=proj_id,
+        full_name="acme/mock-repo",
+        repository_head_sha=sha,
+        scip_index_metadata_sha=sha,
+        scip_index_id=scip_id,
+        scip_storage_uri=None,
+        symbols_count=10,
+        freshness="FRESH",
+    )
+    item = RepositoryAnalysisResultItem(
+        analysis_id=analysis_id,
+        repository_id=repo_id,
+        full_name="acme/mock-repo",
+        commit_sha=sha,
+        scip_index_id=scip_id,
+        scip_index_metadata_sha=sha,
+        repository_head_sha=sha,
+        symbols_count=10,
+        edges_count=2,
+        graph_loaded_in_ram=False,
+        tech_debt_score=2.0,
+        created_at=now,
+    )
+    resp = RefactoringAnalysisResponse(
+        analysis_id=analysis_id,
+        project_id=proj_id,
+        repository_id=repo_id,
+        commit_sha=sha,
+        repository_head_sha=sha,
+        scip_index_metadata_sha=sha,
+        scip_index_id=scip_id,
+        parity_verified=True,
+        status="completed",
+        symbols_count=10,
+        edges_count=2,
+        graph_loaded_in_ram=False,
+        tech_debt_score=2.0,
+        analyses=[item],
+        created_at=now,
+    )
+    return (
+        mock.patch("app.refactoring.router.get_tenant_db_context", side_effect=_mock_db),
+        mock.patch(
+            "app.refactoring.router.evaluate_project_scip_parity",
+            mock.AsyncMock(return_value=[parity]),
+        ),
+        mock.patch(
+            "app.refactoring.router.execute_refactoring_analysis",
+            mock.AsyncMock(return_value=resp),
+        ),
+    )
 
 
 class MockJWKSServer:
@@ -117,17 +194,19 @@ async def test_developer_allowed_trigger_refactor_analysis(auth_fixture):
     pk = auth_fixture["private_key"]
     token = make_token(pk, roles=["DEVELOPER"], sub="alpha_dev")
 
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-        resp = await ac.post(
-            f"/api/v1/refactoring/projects/{TENANT_ID}/analyze",
-            headers={"Authorization": f"Bearer {token}"},
-        )
+    p_db, p_parity, p_exec = _mock_refactoring_analyze_patches()
+    with p_db, p_parity, p_exec:
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+            resp = await ac.post(
+                f"/api/v1/refactoring/projects/{TENANT_ID}/analyze",
+                headers={"Authorization": f"Bearer {token}"},
+            )
 
-    # Stub endpoint returns HTTP 501 with not_implemented schema
-    assert resp.status_code == 501
+    # SCRUM-585 / TASK-321-1: real endpoint returns HTTP 200 when SCIP parity passes
+    assert resp.status_code == 200
     body = resp.json()
-    assert body["status"] == "not_implemented"
-    assert body["action"] == "TRIGGER_REFACTOR_ANALYSIS"
+    assert body["status"] == "completed"
+    assert body["parity_verified"] is True
 
 
 @pytest.mark.asyncio
@@ -404,9 +483,15 @@ async def test_edge_multi_role_composition(auth_fixture):
     pk = auth_fixture["private_key"]
     token = make_token(pk, roles=["DEVELOPER", "TENANT_ADMIN"], sub="composite_user")
 
-    with mock.patch(
-        "app.integrations.router.list_tenant_integrations",
-        mock.AsyncMock(return_value=[]),
+    p_db, p_parity, p_exec = _mock_refactoring_analyze_patches()
+    with (
+        mock.patch(
+            "app.integrations.router.list_tenant_integrations",
+            mock.AsyncMock(return_value=[]),
+        ),
+        p_db,
+        p_parity,
+        p_exec,
     ):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
             # Granted by TENANT_ADMIN
@@ -421,7 +506,8 @@ async def test_edge_multi_role_composition(auth_fixture):
                 f"/api/v1/refactoring/projects/{TENANT_ID}/analyze",
                 headers={"Authorization": f"Bearer {token}"},
             )
-            assert r_dev.status_code == 501
+            assert r_dev.status_code == 200
+            assert r_dev.json()["parity_verified"] is True
 
 
 @pytest.mark.asyncio

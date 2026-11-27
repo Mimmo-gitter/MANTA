@@ -1,18 +1,22 @@
-"""SCRUM-582 (TASK-320-1): SCIP persistence, queue dispatch, ingestion, and repository status service."""
+"""SCRUM-582 (TASK-320-1) & SCRUM-585 (TASK-321-1): SCIP persistence, queue dispatch, parity guard & analysis service."""
 
 from __future__ import annotations
 
 import base64
+from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 import uuid
 
-from sqlalchemy import desc, select
+from sqlalchemy import desc, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models.models import Commit, Repository, ScipIndex
+from app.db.models.models import CodeAnalysis, Commit, PullRequest, Repository, ScipIndex
 from app.db.session import get_tenant_db_context
+from app.observability.tracing import inject_trace_carrier
+from app.refactoring.schemas import RefactoringAnalysisResponse, RepositoryAnalysisResultItem
 from app.refactoring.scip_indexer import (
     INDEXER_VERSION,
     generate_python_scip_index,
@@ -35,6 +39,36 @@ SCIP_INDEX_JOB_TYPE = "scip.index"
 ZERO_COMMIT_SHA = "0" * 40
 
 
+def normalize_commit_sha(raw: Optional[str]) -> Optional[str]:
+    """Normalize a commit SHA string to lowercase stripped form (max 40 chars)."""
+    if raw is None:
+        return None
+    cleaned = raw.strip().lower()
+    return cleaned[:40] if cleaned else None
+
+
+@dataclass(frozen=True, slots=True)
+class RepositoryScipParity:
+    """Parity evaluation between a repository's HEAD SHA and persisted SCIP index metadata."""
+
+    repository_id: uuid.UUID
+    project_id: uuid.UUID
+    full_name: str
+    repository_head_sha: str
+    scip_index_metadata_sha: Optional[str]
+    scip_index_id: Optional[uuid.UUID]
+    scip_storage_uri: Optional[str]
+    symbols_count: int
+    freshness: str
+
+    @property
+    def is_parity_valid(self) -> bool:
+        return (
+            self.scip_index_metadata_sha is not None
+            and self.repository_head_sha == self.scip_index_metadata_sha
+        )
+
+
 async def enqueue_scip_index_job(
     *,
     tenant_id: uuid.UUID,
@@ -43,6 +77,7 @@ async def enqueue_scip_index_job(
     priority: str = "default",
     repo_path: Optional[str] = None,
     scip_protobuf_b64: Optional[str] = None,
+    reason: Optional[str] = None,
     redis_client: Optional[Any] = None,
 ) -> dict[str, Any]:
     """
@@ -64,7 +99,10 @@ async def enqueue_scip_index_job(
         payload["repo_path"] = repo_path
     if scip_protobuf_b64:
         payload["scip_protobuf_b64"] = scip_protobuf_b64
+    if reason:
+        payload["reason"] = reason
 
+    carrier = inject_trace_carrier()
     envelope = serialize_job_payload(
         job_id=job_id,
         tenant_id=str(tenant_id),
@@ -72,6 +110,8 @@ async def enqueue_scip_index_job(
         job_type=SCIP_INDEX_JOB_TYPE,
         payload=payload,
         provider="github",
+        traceparent=carrier.get("traceparent"),
+        tracestate=carrier.get("tracestate"),
     )
     client = redis_client or get_redis()
     await enqueue_job(client, envelope, priority=norm_priority)
@@ -95,6 +135,7 @@ async def upsert_scip_index(
     indexer_version: str = INDEXER_VERSION,
 ) -> ScipIndex:
     """Idempotently persist or update a `ScipIndex` row keyed by `(repository_id, commit_sha)`."""
+    now = datetime.now(timezone.utc)
     stmt = (
         pg_insert(ScipIndex)
         .values(
@@ -104,6 +145,7 @@ async def upsert_scip_index(
             scip_protobuf_storage_uri=storage_uri,
             symbols_count=int(symbols_count),
             indexer_version=indexer_version,
+            created_at=now,
         )
         .on_conflict_do_update(
             constraint="uq_repo_commit_scip",
@@ -111,6 +153,7 @@ async def upsert_scip_index(
                 "scip_protobuf_storage_uri": storage_uri,
                 "symbols_count": int(symbols_count),
                 "indexer_version": indexer_version,
+                "created_at": now,
             },
         )
         .returning(ScipIndex)
@@ -365,3 +408,341 @@ async def list_repository_scip_statuses(
         )
 
     return items
+
+
+async def get_scip_index_for_commit(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    repository_id: uuid.UUID,
+    commit_sha: str,
+) -> Optional[ScipIndex]:
+    """Return a `ScipIndex` row matching `(repository_id, commit_sha)` under tenant RLS."""
+    normalized = normalize_commit_sha(commit_sha)
+    if not normalized:
+        return None
+    return (
+        await db.scalars(
+            select(ScipIndex)
+            .where(
+                ScipIndex.tenant_id == tenant_id,
+                ScipIndex.repository_id == repository_id,
+                func.lower(ScipIndex.commit_sha) == normalized,
+            )
+            .order_by(desc(ScipIndex.created_at))
+            .limit(1)
+        )
+    ).first()
+
+
+async def resolve_repository_head_sha(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    repository_id: uuid.UUID,
+    explicit_head_sha: Optional[str] = None,
+    pr_head_sha: Optional[str] = None,
+) -> Optional[str]:
+    """
+    Resolve the authoritative `repository_head_sha` for a repository.
+
+    Priority order:
+    1. Explicit `head_sha` passed by caller
+    2. Explicit `pull_request_id`'s `PullRequest.head_sha`
+    3. Most recent `Commit.sha` for the repository (`committed_at DESC, created_at DESC`)
+    4. Fallback to most recent `PullRequest.head_sha` (`updated_at DESC, created_at DESC`)
+    """
+    explicit = normalize_commit_sha(explicit_head_sha)
+    if explicit:
+        return explicit
+
+    pr_sha = normalize_commit_sha(pr_head_sha)
+    if pr_sha:
+        return pr_sha
+
+    latest_commit_sha = (
+        await db.scalars(
+            select(Commit.sha)
+            .where(
+                Commit.tenant_id == tenant_id,
+                Commit.repository_id == repository_id,
+            )
+            .order_by(desc(Commit.committed_at), desc(Commit.created_at))
+            .limit(1)
+        )
+    ).first()
+    if latest_commit_sha:
+        return normalize_commit_sha(latest_commit_sha)
+
+    latest_pr_sha = (
+        await db.scalars(
+            select(PullRequest.head_sha)
+            .where(
+                PullRequest.tenant_id == tenant_id,
+                PullRequest.repository_id == repository_id,
+            )
+            .order_by(desc(PullRequest.updated_at), desc(PullRequest.created_at))
+            .limit(1)
+        )
+    ).first()
+    return normalize_commit_sha(latest_pr_sha)
+
+
+async def evaluate_project_scip_parity(
+    db: AsyncSession,
+    *,
+    tenant_id: uuid.UUID,
+    project_id: uuid.UUID,
+    repository_id: Optional[uuid.UUID] = None,
+    requested_head_sha: Optional[str] = None,
+    pull_request_id: Optional[uuid.UUID] = None,
+) -> list[RepositoryScipParity]:
+    """
+    Evaluate `repository_head_sha == scip_index_metadata_sha` parity for target repositories
+    of a project under tenant RLS.
+    """
+    target_repo_id = repository_id
+    pr_head_sha: Optional[str] = None
+
+    if pull_request_id is not None:
+        pr = (
+            await db.scalars(
+                select(PullRequest).where(
+                    PullRequest.tenant_id == tenant_id,
+                    PullRequest.project_id == project_id,
+                    PullRequest.id == pull_request_id,
+                )
+            )
+        ).first()
+        if pr is None:
+            raise LookupError(f"Pull request {pull_request_id} not found in project {project_id}")
+        if target_repo_id is not None and pr.repository_id != target_repo_id:
+            raise LookupError(
+                f"Pull request {pull_request_id} does not belong to repository {target_repo_id}"
+            )
+        target_repo_id = pr.repository_id
+        pr_head_sha = pr.head_sha
+
+    repo_stmt = select(Repository).where(
+        Repository.tenant_id == tenant_id,
+        Repository.project_id == project_id,
+    )
+    if target_repo_id is not None:
+        repo_stmt = repo_stmt.where(Repository.id == target_repo_id)
+    repo_stmt = repo_stmt.order_by(Repository.full_name.asc())
+    repos = (await db.scalars(repo_stmt)).all()
+
+    if not repos:
+        if target_repo_id is not None:
+            raise LookupError(f"Repository {target_repo_id} not found in project {project_id}")
+        raise LookupError(f"No repositories linked to project {project_id}")
+
+    parity_entries: list[RepositoryScipParity] = []
+    for repo in repos:
+        resolved_head = await resolve_repository_head_sha(
+            db,
+            tenant_id=tenant_id,
+            repository_id=repo.id,
+            explicit_head_sha=requested_head_sha,
+            pr_head_sha=pr_head_sha,
+        )
+
+        if resolved_head is not None:
+            matched_scip = await get_scip_index_for_commit(
+                db,
+                tenant_id=tenant_id,
+                repository_id=repo.id,
+                commit_sha=resolved_head,
+            )
+            if matched_scip is not None:
+                scip_row = matched_scip
+                scip_sha = normalize_commit_sha(matched_scip.commit_sha)
+            else:
+                scip_row = await get_latest_scip_index(
+                    db,
+                    tenant_id=tenant_id,
+                    repository_id=repo.id,
+                )
+                scip_sha = (
+                    normalize_commit_sha(scip_row.commit_sha) if scip_row is not None else None
+                )
+            head_sha = resolved_head
+        else:
+            scip_row = await get_latest_scip_index(
+                db,
+                tenant_id=tenant_id,
+                repository_id=repo.id,
+            )
+            if scip_row is not None:
+                scip_sha = normalize_commit_sha(scip_row.commit_sha)
+                head_sha = scip_sha or ZERO_COMMIT_SHA
+            else:
+                scip_sha = None
+                head_sha = ZERO_COMMIT_SHA
+
+        if scip_sha is None:
+            freshness = "MISSING"
+        elif head_sha != scip_sha:
+            freshness = "STALE"
+        else:
+            freshness = "FRESH"
+
+        parity_entries.append(
+            RepositoryScipParity(
+                repository_id=repo.id,
+                project_id=repo.project_id,
+                full_name=repo.full_name,
+                repository_head_sha=head_sha,
+                scip_index_metadata_sha=scip_sha,
+                scip_index_id=scip_row.id if scip_row is not None else None,
+                scip_storage_uri=scip_row.scip_protobuf_storage_uri
+                if scip_row is not None
+                else None,
+                symbols_count=scip_row.symbols_count if scip_row is not None else 0,
+                freshness=freshness,
+            )
+        )
+
+    return parity_entries
+
+
+async def execute_refactoring_analysis(
+    *,
+    tenant_id: uuid.UUID,
+    project_id: uuid.UUID,
+    parity_entries: list[RepositoryScipParity],
+    target_symbol: Optional[str] = None,
+    registry: SymbolGraphRegistry = symbol_graph_registry,
+) -> RefactoringAnalysisResponse:
+    """
+    Execute refactoring static analysis and persist `CodeAnalysis` record(s) under tenant RLS.
+
+    Defense-in-depth: asserts that every entry passed `repository_head_sha == scip_index_metadata_sha`.
+    """
+    if not parity_entries:
+        raise ValueError("Cannot execute refactoring analysis without target repositories")
+
+    for entry in parity_entries:
+        if not entry.is_parity_valid or entry.scip_index_id is None:
+            raise RuntimeError(
+                f"SCIP parity invariant violated for repository {entry.repository_id}: "
+                f"head_sha={entry.repository_head_sha!r} != scip_sha={entry.scip_index_metadata_sha!r}"
+            )
+
+    analysis_records: list[
+        tuple[RepositoryScipParity, CodeAnalysis, int, int, bool, Optional[int], Optional[int]]
+    ] = []
+    async with get_tenant_db_context(tenant_id) as db:
+        for entry in parity_entries:
+            graph = registry.get(
+                tenant_id=tenant_id,
+                repository_id=entry.repository_id,
+                commit_sha=entry.repository_head_sha,
+            )
+            if graph is None and entry.scip_storage_uri:
+                try:
+                    graph = registry.get_or_load(
+                        tenant_id=tenant_id,
+                        repository_id=entry.repository_id,
+                        commit_sha=entry.repository_head_sha,
+                        storage_uri=entry.scip_storage_uri,
+                    )
+                except (FileNotFoundError, OSError, ValueError):
+                    graph = None
+
+            graph_loaded = graph is not None
+            symbols_count = graph.symbol_count if graph is not None else entry.symbols_count
+            edges_count = graph.edge_count if graph is not None else 0
+            callers_count = (
+                len(graph.get_callers(target_symbol))
+                if (graph is not None and target_symbol)
+                else None
+            )
+            callees_count = (
+                len(graph.get_callees(target_symbol))
+                if (graph is not None and target_symbol)
+                else None
+            )
+            tech_debt_score = (
+                round(min(100.0, (edges_count / symbols_count) * 10.0), 2)
+                if symbols_count > 0 and edges_count > 0
+                else 0.0
+            )
+
+            analysis_row = CodeAnalysis(
+                id=uuid.uuid4(),
+                tenant_id=tenant_id,
+                project_id=project_id,
+                repository_id=entry.repository_id,
+                commit_sha=entry.repository_head_sha,
+                tech_debt_score=tech_debt_score,
+                created_at=datetime.now(timezone.utc),
+            )
+            db.add(analysis_row)
+            analysis_records.append(
+                (
+                    entry,
+                    analysis_row,
+                    symbols_count,
+                    edges_count,
+                    graph_loaded,
+                    callers_count,
+                    callees_count,
+                )
+            )
+
+        await db.flush()
+
+        items: list[RepositoryAnalysisResultItem] = []
+        for (
+            entry,
+            row,
+            symbols_count,
+            edges_count,
+            graph_loaded,
+            callers_count,
+            callees_count,
+        ) in analysis_records:
+            assert entry.scip_index_id is not None
+            assert entry.scip_index_metadata_sha is not None
+            items.append(
+                RepositoryAnalysisResultItem(
+                    analysis_id=row.id,
+                    repository_id=entry.repository_id,
+                    full_name=entry.full_name,
+                    commit_sha=row.commit_sha,
+                    scip_index_id=entry.scip_index_id,
+                    scip_index_metadata_sha=entry.scip_index_metadata_sha,
+                    repository_head_sha=entry.repository_head_sha,
+                    symbols_count=symbols_count,
+                    edges_count=edges_count,
+                    graph_loaded_in_ram=graph_loaded,
+                    tech_debt_score=float(row.tech_debt_score),
+                    callers_count=callers_count,
+                    callees_count=callees_count,
+                    created_at=row.created_at,
+                )
+            )
+
+    primary = items[0]
+    avg_tech_debt = round(sum(item.tech_debt_score for item in items) / len(items), 2)
+    return RefactoringAnalysisResponse(
+        analysis_id=primary.analysis_id,
+        project_id=project_id,
+        repository_id=primary.repository_id,
+        commit_sha=primary.commit_sha,
+        repository_head_sha=primary.repository_head_sha,
+        scip_index_metadata_sha=primary.scip_index_metadata_sha,
+        scip_index_id=primary.scip_index_id,
+        parity_verified=True,
+        status="completed",
+        symbols_count=sum(item.symbols_count for item in items),
+        edges_count=sum(item.edges_count for item in items),
+        graph_loaded_in_ram=all(item.graph_loaded_in_ram for item in items),
+        tech_debt_score=avg_tech_debt,
+        target_symbol=target_symbol,
+        callers_count=primary.callers_count,
+        callees_count=primary.callees_count,
+        analyses=items,
+        created_at=primary.created_at,
+    )
