@@ -1,4 +1,4 @@
-"""SCRUM-582 (TASK-320-1): Refactoring & SCIP Code Intelligence endpoints."""
+"""SCRUM-582 (TASK-320-1) & SCRUM-585 (TASK-321-1): Refactoring & SCIP Code Intelligence endpoints."""
 
 from __future__ import annotations
 
@@ -19,11 +19,14 @@ from app.auth.schemas import StubEndpointResponse, TokenClaims
 from app.db.models.models import Commit, Project, Repository
 from app.db.session import get_tenant_db_context
 from app.refactoring.schemas import (
+    AnalyzeRefactoringRequest,
+    RefactoringAnalysisResponse,
     ScipCallerLookupResponse,
     ScipGraphEdge,
     ScipGraphNode,
     ScipGraphResponse,
     ScipIndexStatusListResponse,
+    ScipParityConflictResponse,
     ScipRepositoryStatusItem,
     TriggerScipIndexRequest,
     TriggerScipIndexResponse,
@@ -31,10 +34,13 @@ from app.refactoring.schemas import (
 from app.refactoring.scip_service import (
     ZERO_COMMIT_SHA,
     enqueue_scip_index_job,
+    evaluate_project_scip_parity,
+    execute_refactoring_analysis,
     get_latest_scip_index,
     list_repository_scip_statuses,
 )
 from app.refactoring.symbol_graph import SymbolNode, symbol_graph_registry
+from workers.worker import QUEUE_HIGH
 
 router = APIRouter(prefix="/api/v1/refactoring", tags=["Code Intelligence & Refactoring"])
 
@@ -303,16 +309,150 @@ async def query_scip_symbol_callers(
 
 @router.post(
     "/projects/{project_id}/analyze",
-    tags=["Stubs"],
-    **stub_route_kwargs(
-        Permission.TRIGGER_REFACTOR_ANALYSIS,
-        summary="Trigger Refactoring Analysis",
-        description="Trigger AI-assisted refactoring analysis and candidate PR generation with 4-tier deterministic sandbox verification.",
+    response_model=RefactoringAnalysisResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Trigger Refactoring Analysis",
+    description=(
+        "Enforce repository_head_sha == scip_index_metadata_sha parity before running "
+        "refactoring analysis. Stale or missing SCIP indexes abort with HTTP 409 and "
+        "automatically enqueue re-indexing on arq:queue:high."
     ),
+    responses={
+        status.HTTP_401_UNAUTHORIZED: {"description": "Not authenticated"},
+        status.HTTP_403_FORBIDDEN: {"description": "Forbidden: insufficient permissions"},
+        status.HTTP_404_NOT_FOUND: {
+            "description": "Project, repository, or pull request not found"
+        },
+        status.HTTP_409_CONFLICT: {
+            "model": ScipParityConflictResponse,
+            "description": (
+                "SCIP index is stale or missing relative to repository HEAD SHA; "
+                "analysis aborted and high-priority re-indexing enqueued on arq:queue:high."
+            ),
+        },
+    },
 )
 async def trigger_refactor_analysis(
-    project_id: str,
-    user: TokenClaims = Depends(require_permission(Permission.TRIGGER_REFACTOR_ANALYSIS)),
-) -> StubEndpointResponse:
-    """Trigger AI-assisted refactoring analysis and candidate PR generation."""
-    return build_stub_response(Permission.TRIGGER_REFACTOR_ANALYSIS)
+    project_id: uuid.UUID,
+    request: Request,
+    repository_id: Optional[uuid.UUID] = Query(default=None),
+    payload: Optional[AnalyzeRefactoringRequest] = Body(default=None),
+    user: TokenClaims = Depends(require_refactor_trigger),
+) -> RefactoringAnalysisResponse:
+    """
+    Trigger refactoring analysis after enforcing `repository_head_sha == scip_index_metadata_sha`.
+
+    If any target repository's SCIP index is missing or stale, aborts analysis with HTTP 409
+    without executing analysis and automatically enqueues high-priority re-indexing onto
+    `arq:queue:high`.
+    """
+    body = payload or AnalyzeRefactoringRequest()
+    if (
+        repository_id is not None
+        and body.repository_id is not None
+        and repository_id != body.repository_id
+    ):
+        raise HTTPException(
+            status_code=getattr(status, "HTTP_422_UNPROCESSABLE_CONTENT", 422),
+            detail="Conflicting repository_id values in query parameter and request body",
+        )
+    target_repository_id = body.repository_id or repository_id
+
+    async with get_tenant_db_context(user.tenant_uuid) as db:
+        project = (
+            await db.scalars(
+                select(Project).where(
+                    Project.tenant_id == user.tenant_uuid,
+                    Project.id == project_id,
+                )
+            )
+        ).first()
+        if project is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Project {project_id} not found",
+            )
+
+        try:
+            parity_entries = await evaluate_project_scip_parity(
+                db,
+                tenant_id=user.tenant_uuid,
+                project_id=project_id,
+                repository_id=target_repository_id,
+                requested_head_sha=body.head_sha,
+                pull_request_id=body.pull_request_id,
+            )
+        except LookupError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=str(exc),
+            ) from exc
+
+    # TASK-321-1 / US-47 parity guard: ASSERT repository_head_sha == scip_index_metadata_sha
+    stale_entries = [
+        entry
+        for entry in parity_entries
+        if entry.scip_index_metadata_sha is None
+        or entry.repository_head_sha != entry.scip_index_metadata_sha
+    ]
+    if stale_entries:
+        redis_override = getattr(request.app.state, "scip_redis", None)
+        reindex_jobs: list[dict[str, object]] = []
+        stale_repos_detail: list[dict[str, object]] = []
+        for entry in stale_entries:
+            enqueued = await enqueue_scip_index_job(
+                tenant_id=user.tenant_uuid,
+                repository_id=entry.repository_id,
+                commit_sha=entry.repository_head_sha,
+                priority="high",
+                repo_path=body.repo_path,
+                reason="stale_scip_parity_guard",
+                redis_client=redis_override,
+            )
+            reindex_jobs.append(
+                {
+                    "job_id": enqueued["job_id"],
+                    "repository_id": str(entry.repository_id),
+                    "commit_sha": enqueued["commit_sha"],
+                    "priority": enqueued["priority"],
+                    "queue": enqueued["queue"],
+                }
+            )
+            stale_repos_detail.append(
+                {
+                    "repository_id": str(entry.repository_id),
+                    "full_name": entry.full_name,
+                    "repository_head_sha": entry.repository_head_sha,
+                    "scip_index_metadata_sha": entry.scip_index_metadata_sha,
+                    "freshness": entry.freshness,
+                    "reindex_job_id": enqueued["job_id"],
+                    "queue": enqueued["queue"],
+                }
+            )
+
+        primary = stale_repos_detail[0]
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "code": "SCIP_INDEX_STALE",
+                "message": (
+                    "SCIP index commit SHA does not match repository HEAD SHA; "
+                    "analysis aborted and high-priority re-indexing enqueued on arq:queue:high."
+                ),
+                "project_id": str(project_id),
+                "repository_id": primary["repository_id"],
+                "repository_head_sha": primary["repository_head_sha"],
+                "scip_index_metadata_sha": primary["scip_index_metadata_sha"],
+                "queue": QUEUE_HIGH,
+                "reindex_job_id": primary["reindex_job_id"],
+                "reindex_jobs": reindex_jobs,
+                "stale_repositories": stale_repos_detail,
+            },
+        )
+
+    return await execute_refactoring_analysis(
+        tenant_id=user.tenant_uuid,
+        project_id=project_id,
+        parity_entries=parity_entries,
+        target_symbol=body.target_symbol,
+    )

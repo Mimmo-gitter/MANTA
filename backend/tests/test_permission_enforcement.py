@@ -242,6 +242,7 @@ async def test_all_12_stub_endpoints_in_openapi_schema():
         Permission.VIEW_PROJECT_DORA,
         Permission.VIEW_SPRINT_BURNDOWN_WIP,  # Task 76.2: real endpoint now
         Permission.VIEW_TECH_DEBT_AND_SCIP_GRAPH,  # SCRUM-582: real endpoint now
+        Permission.TRIGGER_REFACTOR_ANALYSIS,  # SCRUM-585 / TASK-321-1: real endpoint now
         Permission.APPROVE_ADR_TENANT_PRIVATE,  # SCRUM-576: real endpoint now
         Permission.SEARCH_ADR,  # SCRUM-579: real endpoint now
     }
@@ -273,7 +274,7 @@ async def test_all_12_stub_endpoints_in_openapi_schema():
 
         found_stubs.add(perm.value)
 
-    assert len(found_stubs) == 6, f"Expected 6 stub endpoints, found {len(found_stubs)}"
+    assert len(found_stubs) == 5, f"Expected 5 stub endpoints, found {len(found_stubs)}"
 
 
 @pytest.mark.asyncio
@@ -328,6 +329,11 @@ async def test_all_matrix_decisions_enforced(auth_fixture):
     )
     from app.dora.schemas import DoraAggregates, DoraMetricsResponse
     from app.mobile.schemas import RegisterMobileDeviceResponse
+    from app.refactoring.schemas import (
+        RefactoringAnalysisResponse,
+        RepositoryAnalysisResultItem,
+    )
+    from app.refactoring.scip_service import RepositoryScipParity
     from app.search.schemas import ADRSearchResponse
 
     mock_deploy_resp = DirectDeploymentResponse(
@@ -396,6 +402,48 @@ async def test_all_matrix_decisions_enforced(auth_fixture):
         active_embedding_model="text-embedding-3-small",
         available_patterns=[],
     )
+    mock_parity_entry = RepositoryScipParity(
+        repository_id=uuid.UUID("44444444-4444-4444-4444-444444444444"),
+        project_id=uuid.UUID("11111111-1111-1111-1111-111111111111"),
+        full_name="acme/mock-repo",
+        repository_head_sha="a" * 40,
+        scip_index_metadata_sha="a" * 40,
+        scip_index_id=uuid.UUID("55555555-5555-5555-5555-555555555555"),
+        scip_storage_uri=None,
+        symbols_count=10,
+        freshness="FRESH",
+    )
+    mock_analysis_item = RepositoryAnalysisResultItem(
+        analysis_id=uuid.UUID("66666666-6666-6666-6666-666666666666"),
+        repository_id=mock_parity_entry.repository_id,
+        full_name=mock_parity_entry.full_name,
+        commit_sha="a" * 40,
+        scip_index_id=mock_parity_entry.scip_index_id,
+        scip_index_metadata_sha="a" * 40,
+        repository_head_sha="a" * 40,
+        symbols_count=10,
+        edges_count=2,
+        graph_loaded_in_ram=False,
+        tech_debt_score=2.0,
+        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    mock_analysis_resp = RefactoringAnalysisResponse(
+        analysis_id=mock_analysis_item.analysis_id,
+        project_id=mock_parity_entry.project_id,
+        repository_id=mock_parity_entry.repository_id,
+        commit_sha="a" * 40,
+        repository_head_sha="a" * 40,
+        scip_index_metadata_sha="a" * 40,
+        scip_index_id=mock_parity_entry.scip_index_id,
+        parity_verified=True,
+        status="completed",
+        symbols_count=10,
+        edges_count=2,
+        graph_loaded_in_ram=False,
+        tech_debt_score=2.0,
+        analyses=[mock_analysis_item],
+        created_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
 
     async def _noop_tenant_db():
         yield object()
@@ -455,6 +503,14 @@ async def test_all_matrix_decisions_enforced(auth_fixture):
                 mock.AsyncMock(return_value=[]),
             ),
             mock.patch(
+                "app.refactoring.router.evaluate_project_scip_parity",
+                mock.AsyncMock(return_value=[mock_parity_entry]),
+            ),
+            mock.patch(
+                "app.refactoring.router.execute_refactoring_analysis",
+                mock.AsyncMock(return_value=mock_analysis_resp),
+            ),
+            mock.patch(
                 "app.adr.router.approve_tenant_adr",
                 mock.AsyncMock(return_value=mock_adr_decision_resp),
             ),
@@ -502,6 +558,7 @@ async def test_all_matrix_decisions_enforced(auth_fixture):
                                 Permission.MANAGE_OWN_MOBILE_DEVICES,
                                 Permission.VIEW_SPRINT_BURNDOWN_WIP,
                                 Permission.VIEW_TECH_DEBT_AND_SCIP_GRAPH,
+                                Permission.TRIGGER_REFACTOR_ANALYSIS,
                                 Permission.APPROVE_ADR_TENANT_PRIVATE,
                                 Permission.SEARCH_ADR,
                             ):
