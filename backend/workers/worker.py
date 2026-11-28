@@ -980,6 +980,11 @@ async def dispatch_worker_job(parsed_payload: dict[str, Any]) -> Any:
 
             return await process_adr_reembed_job(parsed_payload)
 
+        if job_type == "adr.generalize":
+            from app.adr.generalizer import process_adr_generalize_job
+
+            return await process_adr_generalize_job(parsed_payload)
+
         if job_type == "webhook.process" or "event_id" in parsed_payload:
             from app.webhooks.processor import process_webhook_job
 
@@ -1032,6 +1037,13 @@ async def process_adr_reembed_arq(ctx: dict[str, Any], parsed_payload: dict[str,
     return await process_adr_reembed_job(parsed_payload)
 
 
+async def process_adr_generalize_arq(ctx: dict[str, Any], parsed_payload: dict[str, Any]) -> Any:
+    """ARQ-compatible task wrapper delegating to process_adr_generalize_job."""
+    from app.adr.generalizer import process_adr_generalize_job
+
+    return await process_adr_generalize_job(parsed_payload)
+
+
 async def run_blocker_detector_arq(ctx: dict[str, Any]) -> dict[str, Any]:
     """ARQ scheduled 15-minute blocker detector cron/task entrypoint (TASK-307-1)."""
     from .blocker_detector import run_blocker_detector_cron
@@ -1069,6 +1081,7 @@ class WorkerSettings:
         process_webhook_event_arq,
         process_scip_index_arq,
         process_adr_reembed_arq,
+        process_adr_generalize_arq,
         run_blocker_detector_arq,
     ]
     cron_jobs: list[Any] = _build_default_cron_jobs()
@@ -1244,6 +1257,7 @@ __all__ = [
     "get_in_flight_key",
     "get_lease_key",
     "parse_lease_value",
+    "process_adr_generalize_arq",
     "process_adr_reembed_arq",
     "reclaim_expired_leases",
     "release_job_lease",

@@ -40,6 +40,7 @@ from app.tenants.schemas import (
     TenantRegisterResponse,
     TenantSettingsResponse,
     TenantSettingsUpdateRequest,
+    normalize_tenant_deny_list,
 )
 
 logger = logging.getLogger("app.tenants.router")
@@ -215,6 +216,7 @@ def _settings_snapshot(tenant: Tenant) -> dict[str, object]:
         "industry": tenant.industry,
         "ai_processing_mode": normalize_ai_processing_mode(tenant.ai_processing_mode),
         "retention_days": tenant.retention_days,
+        "adr_deny_list": normalize_tenant_deny_list(tenant.adr_deny_list).model_dump(mode="json"),
     }
 
 
@@ -258,6 +260,7 @@ def _build_tenant_settings_response(
         max_projects=tenant.max_projects,
         ai_processing_mode=meta["mode"],
         retention_days=tenant.retention_days,
+        adr_deny_list=normalize_tenant_deny_list(tenant.adr_deny_list),
         active_embedding_dimensions=int(meta["embedding_dimensions"]),
         active_embedding_model=str(meta["embedding_model"]),
         active_llm_model=str(meta["llm_model"]),
@@ -331,6 +334,15 @@ async def update_tenant_settings(
         if "retention_days" in fields_set and req.retention_days is not None:
             if req.retention_days != tenant.retention_days:
                 tenant.retention_days = req.retention_days
+                mutated = True
+
+        if "adr_deny_list" in fields_set and req.adr_deny_list is not None:
+            new_deny_list = req.adr_deny_list.model_dump(mode="json")
+            current_deny_list = normalize_tenant_deny_list(tenant.adr_deny_list).model_dump(
+                mode="json"
+            )
+            if new_deny_list != current_deny_list:
+                tenant.adr_deny_list = new_deny_list
                 mutated = True
 
         if "ai_processing_mode" in fields_set and req.ai_processing_mode is not None:

@@ -1,13 +1,15 @@
 from datetime import datetime
 import re
+from typing import Any, Literal, Optional
 import uuid
-from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 AIProcessingMode = Literal["local_only", "cloud_zdr"]
+ADRRedactionClass = Literal["EMAIL", "IP_ADDRESS", "API_TOKEN", "COMPANY_NAME"]
 
 EMAIL_REGEX = re.compile(r"^[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+$")
+_NESTED_QUANTIFIER_RE = re.compile(r"\([^)]*(?:\+|\*|\{\d+,?\d*\})[^)]*\)(?:\+|\*|\{\d+,?\d*\})")
 
 
 class TenantRegisterRequest(BaseModel):
@@ -120,6 +122,82 @@ class TenantRegisterResponse(BaseModel):
     message: str = "Tenant and administrator successfully registered"
 
 
+class TenantADRDenyListEntry(BaseModel):
+    """Typed tenant deny-list matching rule for ADR Presidio scrubbing (TASK-315-0)."""
+
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    pattern: str = Field(..., min_length=2, max_length=256)
+    match_mode: Literal["literal", "regex"] = "literal"
+    redaction_class: ADRRedactionClass = "COMPANY_NAME"
+    case_sensitive: bool = False
+
+    @field_validator("pattern")
+    @classmethod
+    def validate_pattern_non_blank(cls, v: str) -> str:
+        cleaned = v.strip()
+        if len(cleaned) < 2:
+            raise ValueError("Deny-list pattern must be at least 2 non-whitespace characters")
+        return cleaned
+
+    @model_validator(mode="after")
+    def validate_regex_safety(self) -> "TenantADRDenyListEntry":
+        if self.match_mode == "regex":
+            if _NESTED_QUANTIFIER_RE.search(self.pattern):
+                raise ValueError("Unsafe nested quantifier detected in deny-list regex pattern")
+            flags = 0 if self.case_sensitive else re.IGNORECASE
+            try:
+                compiled = re.compile(self.pattern, flags)
+            except re.error as exc:
+                raise ValueError(f"Invalid deny-list regex pattern: {exc}") from exc
+            if compiled.match("") is not None:
+                raise ValueError("Deny-list regex pattern must not match empty strings")
+        return self
+
+
+class TenantADRDenyListConfig(BaseModel):
+    """Per-tenant ADR scrubbing deny-list configuration stored in tenants.adr_deny_list."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    version: Literal[1] = 1
+    auto_include_tenant_identity: bool = True
+    terms: list[str] = Field(default_factory=list, max_length=500)
+    entries: list[TenantADRDenyListEntry] = Field(default_factory=list, max_length=500)
+
+    @field_validator("terms")
+    @classmethod
+    def normalize_terms(cls, v: list[str]) -> list[str]:
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for raw in v:
+            if not isinstance(raw, str):
+                raise ValueError("Each deny-list term must be a string")
+            term = raw.strip()
+            if not term:
+                continue
+            if len(term) < 2 or len(term) > 256:
+                raise ValueError("Each deny-list term must be between 2 and 256 characters")
+            key = term.lower()
+            if key not in seen:
+                seen.add(key)
+                cleaned.append(term)
+        return cleaned
+
+
+def normalize_tenant_deny_list(raw: Any) -> TenantADRDenyListConfig:
+    """Normalize persisted JSONB/dict/list tenant deny-list payloads into TenantADRDenyListConfig."""
+    if raw is None or raw == {}:
+        return TenantADRDenyListConfig()
+    if isinstance(raw, TenantADRDenyListConfig):
+        return raw
+    if isinstance(raw, list):
+        return TenantADRDenyListConfig(terms=[str(item) for item in raw])
+    if isinstance(raw, dict):
+        return TenantADRDenyListConfig.model_validate(raw)
+    raise ValueError(f"Unsupported adr_deny_list payload type: {type(raw).__name__}")
+
+
 class TenantSettingsUpdateRequest(BaseModel):
     """Payload for updating workspace settings and AI compliance mode (SCRUM-560 / US-62)."""
 
@@ -130,6 +208,7 @@ class TenantSettingsUpdateRequest(BaseModel):
     industry: Optional[str] = Field(None, max_length=255)
     ai_processing_mode: Optional[AIProcessingMode] = None
     retention_days: Optional[int] = Field(None, ge=7, le=3650)
+    adr_deny_list: Optional[TenantADRDenyListConfig] = None
 
     @field_validator("name")
     @classmethod
@@ -156,7 +235,7 @@ class TenantSettingsUpdateRequest(BaseModel):
 
     @model_validator(mode="after")
     def reject_explicit_null_required_fields(self) -> "TenantSettingsUpdateRequest":
-        for required_field in ("name", "ai_processing_mode", "retention_days"):
+        for required_field in ("name", "ai_processing_mode", "retention_days", "adr_deny_list"):
             if required_field in self.model_fields_set and getattr(self, required_field) is None:
                 raise ValueError(f"Field '{required_field}' cannot be null")
         return self
@@ -175,6 +254,7 @@ class TenantSettingsResponse(BaseModel):
     max_projects: int
     ai_processing_mode: AIProcessingMode
     retention_days: int
+    adr_deny_list: TenantADRDenyListConfig = Field(default_factory=TenantADRDenyListConfig)
     active_embedding_dimensions: int
     active_embedding_model: str
     active_llm_model: str

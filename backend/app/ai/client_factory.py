@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC
+from dataclasses import dataclass
 import ipaddress
 import re
 from typing import Any
@@ -30,8 +31,23 @@ class LocalOnlyPolicyViolationError(AIClientError):
     """Raised fail-closed when local_only policy encounters an external WAN endpoint."""
 
 
+class CloudPolicyViolationError(AIClientError):
+    """Raised fail-closed when a Cloud LLM call is attempted without active cloud_zdr policy."""
+
+
 class AIClientConfigurationError(AIClientError):
     """Raised when required AI provider settings (e.g., Cloud ZDR URL/API key) are missing."""
+
+
+@dataclass(frozen=True, slots=True)
+class ChatCompletionResult:
+    """Structured chat completion text paired with token usage metadata."""
+
+    content: str
+    prompt_tokens: int | None = None
+    completion_tokens: int | None = None
+    total_tokens: int | None = None
+    model: str | None = None
 
 
 def normalize_ai_processing_mode(mode: str | None) -> str:
@@ -194,14 +210,14 @@ class BaseAIClient(ABC):
             vectors.append([float(v) for v in vec])
         return vectors
 
-    async def chat_complete(
+    async def chat_complete_with_usage(
         self,
         messages: list[dict[str, str]],
         *,
         response_format: dict[str, Any] | None = None,
         temperature: float = 0.0,
-    ) -> str:
-        """Execute an OpenAI-compatible chat completion request."""
+    ) -> ChatCompletionResult:
+        """Execute an OpenAI-compatible chat completion and return content + token usage."""
         body: dict[str, Any] = {
             "model": self.llm_model,
             "messages": messages,
@@ -220,7 +236,35 @@ class BaseAIClient(ABC):
         content = message.get("content")
         if content is None:
             raise ValueError("Chat completion choice message contained no content.")
-        return str(content)
+
+        usage = payload.get("usage") if isinstance(payload.get("usage"), dict) else {}
+
+        def _opt_int(key: str) -> int | None:
+            val = usage.get(key)
+            return int(val) if isinstance(val, (int, float)) and not isinstance(val, bool) else None
+
+        return ChatCompletionResult(
+            content=str(content),
+            prompt_tokens=_opt_int("prompt_tokens"),
+            completion_tokens=_opt_int("completion_tokens"),
+            total_tokens=_opt_int("total_tokens"),
+            model=str(payload.get("model")) if payload.get("model") is not None else self.llm_model,
+        )
+
+    async def chat_complete(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        response_format: dict[str, Any] | None = None,
+        temperature: float = 0.0,
+    ) -> str:
+        """Execute an OpenAI-compatible chat completion request."""
+        result = await self.chat_complete_with_usage(
+            messages,
+            response_format=response_format,
+            temperature=temperature,
+        )
+        return result.content
 
 
 class LocalAIClient(BaseAIClient):
@@ -308,6 +352,47 @@ class CloudZDRAIClient(BaseAIClient):
             timeout=timeout,
             transport=transport,
         )
+
+
+def enforce_ai_client_policy(
+    tenant_mode: str | None,
+    *,
+    requested_mode: str | None = None,
+    ai_client: BaseAIClient | None = None,
+) -> str:
+    """
+    Fail-closed US-62 policy guard ensuring local_only tenants never call Cloud/WAN endpoints
+    and unapproved Cloud calls without active cloud_zdr policy are refused before any request.
+    """
+    effective_mode = normalize_ai_processing_mode(tenant_mode)
+
+    if requested_mode is not None:
+        norm_requested = normalize_ai_processing_mode(requested_mode)
+        if norm_requested != effective_mode:
+            if norm_requested == AI_MODE_CLOUD_ZDR:
+                raise CloudPolicyViolationError(
+                    f"Cloud LLM invocation refused: tenant ai_processing_mode is '{effective_mode}', not 'cloud_zdr'."
+                )
+            raise LocalOnlyPolicyViolationError(
+                f"AI mode mismatch: requested '{norm_requested}' while tenant policy requires '{effective_mode}'."
+            )
+
+    if ai_client is not None:
+        client_mode = normalize_ai_processing_mode(getattr(ai_client, "mode", None))
+        if effective_mode == AI_MODE_LOCAL_ONLY:
+            if client_mode != AI_MODE_LOCAL_ONLY or bool(
+                getattr(ai_client, "allows_outbound_wan", True)
+            ):
+                raise CloudPolicyViolationError(
+                    "Unapproved Cloud AI client refused: tenant policy is 'local_only' (0 outbound WAN calls allowed)."
+                )
+            assert_local_only_endpoint(getattr(ai_client, "base_url", None))
+        elif client_mode != AI_MODE_CLOUD_ZDR:
+            raise AIClientConfigurationError(
+                f"AI client mode '{client_mode}' does not match tenant policy '{effective_mode}'."
+            )
+
+    return effective_mode
 
 
 def create_ai_client(

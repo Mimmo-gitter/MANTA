@@ -46,6 +46,9 @@ class Tenant(Base):
     max_projects: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
     ai_processing_mode: Mapped[str] = mapped_column(String(32), default="cloud_zdr", nullable=False)
     retention_days: Mapped[int] = mapped_column(Integer, default=90, nullable=False)
+    adr_deny_list: Mapped[Dict[str, Any]] = mapped_column(
+        JSONB, default=dict, server_default=text("'{}'::jsonb"), nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow, nullable=False
     )
