@@ -221,10 +221,16 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
       - WORKER_HEARTBEAT_FILE=/tmp/worker.heartbeat
       - WORKER_METRICS_PORT=${WORKER_METRICS_PORT:-9101}
+      - SANDBOX_RUNTIME=${SANDBOX_RUNTIME:-runsc}
+      - SANDBOX_IMAGE_DIGEST=${SANDBOX_IMAGE_DIGEST:-}
+      - SANDBOX_SECCOMP_PROFILE=${SANDBOX_SECCOMP_PROFILE:-/sandbox/seccomp/manta-sandbox-seccomp.json}
+      - SANDBOX_TIMEOUT_SECONDS=${SANDBOX_TIMEOUT_SECONDS:-120}
       - OTEL_ENABLED=${OTEL_ENABLED:-true}
       - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME_WORKER:-manta-worker}
       - OTEL_EXPORTER_OTLP_ENDPOINT=${OTEL_EXPORTER_OTLP_ENDPOINT:-http://jaeger:4317}
       - OTEL_EXPORTER_OTLP_INSECURE=${OTEL_EXPORTER_OTLP_INSECURE:-true}
+    volumes:
+      - ../sandbox/seccomp:/sandbox/seccomp:ro
     networks:
       - manta_net
     depends_on:

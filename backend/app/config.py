@@ -117,10 +117,28 @@ class Settings(BaseSettings):
     FCM_PROJECT_ID: str | None = None
     FCM_CREDENTIALS_JSON: str | None = None
 
-    # Refactoring Sandbox Execution & SCIP Indexing (US-46)
+    # WebSocket Reconnection Replay (TASK-305-1 / US-35)
+    WS_REPLAY_BUFFER_SIZE: int = 5000
+
+    # Refactoring Sandbox Execution & SCIP Indexing (US-46 & US-48)
     SANDBOX_RUNTIME: str = "runsc"
     SANDBOX_IMAGE_DIGEST: str = ""
+    SANDBOX_SECCOMP_PROFILE: str | None = None
+    SANDBOX_TIMEOUT_SECONDS: float = 120.0
+    SANDBOX_ALLOW_DOCKER_FALLBACK: bool | None = None
+    SANDBOX_APPLY_SECCOMP_ON_RUNSC: bool = False
+    SANDBOX_MEMORY_LIMIT: str = "512m"
+    SANDBOX_CPU_LIMIT: str = "1.0"
+    SANDBOX_PIDS_LIMIT: int = 128
+    SANDBOX_TMPFS_SIZE: str = "128m"
+    SANDBOX_IMAGE_PULL_POLICY: str = "if-not-present"
     SCIP_STORAGE_DIR: str = "/tmp/manta_scip_indexes"
+
+    @property
+    def sandbox_allow_docker_fallback(self) -> bool:
+        if self.SANDBOX_ALLOW_DOCKER_FALLBACK is not None:
+            return bool(self.SANDBOX_ALLOW_DOCKER_FALLBACK)
+        return not self.is_production
 
     @property
     def is_production(self) -> bool:
@@ -213,6 +231,18 @@ class Settings(BaseSettings):
         ).strip().lower() in {"1", "true", "yes", "on"}
         if seed_env_truthy:
             errors.append("SEED_DEV_DATA must be false in production.")
+
+        if self.SANDBOX_TIMEOUT_SECONDS <= 0 or self.SANDBOX_TIMEOUT_SECONDS > 120.0:
+            errors.append("SANDBOX_TIMEOUT_SECONDS must be within (0, 120.0].")
+
+        configured_digest = (self.SANDBOX_IMAGE_DIGEST or "").strip()
+        if configured_digest:
+            from app.verification.policy import UnpinnedImageError, parse_and_validate_pinned_image
+
+            try:
+                parse_and_validate_pinned_image(configured_digest)
+            except UnpinnedImageError as exc:
+                errors.append(f"SANDBOX_IMAGE_DIGEST is invalid: {exc}")
 
         return errors
 

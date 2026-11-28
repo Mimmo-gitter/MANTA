@@ -18,6 +18,7 @@ import httpx
 import jwt
 from jwt.algorithms import RSAAlgorithm
 import pytest
+from redis.exceptions import ResponseError
 from starlette.routing import WebSocketRoute
 
 from app.auth.jwks import JWKSClient
@@ -89,8 +90,15 @@ class InMemoryStreamsRedis:
 
     def __init__(self) -> None:
         self._streams: dict[str, list[tuple[str, dict[str, str]]]] = {}
+        self._entries_added: dict[str, int] = {}
+        self._max_deleted_id: dict[str, str] = {}
         self._kv: dict[str, str] = {}
         self._seq = 0
+
+    @staticmethod
+    def _parse_id(eid: str) -> tuple[int, int]:
+        parts = eid.split("-", 1)
+        return (int(parts[0]), int(parts[1]) if len(parts) > 1 else 0)
 
     async def xadd(
         self,
@@ -104,9 +112,70 @@ class InMemoryStreamsRedis:
         entry_id = f"{1_795_768_000_000 + self._seq}-0"
         stream = self._streams.setdefault(name, [])
         stream.append((entry_id, {str(k): str(v) for k, v in fields.items()}))
+        self._entries_added[name] = self._entries_added.get(name, 0) + 1
         if maxlen is not None and maxlen > 0 and len(stream) > maxlen:
-            del stream[: len(stream) - maxlen]
+            trim_count = len(stream) - maxlen
+            self._max_deleted_id[name] = stream[trim_count - 1][0]
+            del stream[:trim_count]
         return entry_id
+
+    async def xtrim(
+        self,
+        name: str,
+        *,
+        maxlen: int,
+        approximate: bool = False,
+    ) -> int:
+        stream = self._streams.get(name, [])
+        if maxlen < 0 or len(stream) <= maxlen:
+            return 0
+        trim_count = len(stream) - maxlen
+        if trim_count > 0:
+            self._max_deleted_id[name] = stream[trim_count - 1][0]
+            del stream[:trim_count]
+        return trim_count
+
+    async def xinfo_stream(self, name: str) -> dict[str, Any]:
+        if name not in self._streams:
+            raise ResponseError("ERR no such key")
+        entries = self._streams[name]
+        return {
+            "length": len(entries),
+            "entries-added": self._entries_added.get(name, len(entries)),
+            "max-deleted-entry-id": self._max_deleted_id.get(name, "0-0"),
+            "first-entry": entries[0] if entries else None,
+            "last-entry": entries[-1] if entries else None,
+        }
+
+    def _filter_range(
+        self,
+        entries: list[tuple[str, dict[str, str]]],
+        *,
+        min_id: str,
+        max_id: str,
+    ) -> list[tuple[str, dict[str, str]]]:
+        min_exclusive = min_id.startswith("(")
+        max_exclusive = max_id.startswith("(")
+        min_clean = min_id[1:] if min_exclusive else min_id
+        max_clean = max_id[1:] if max_exclusive else max_id
+        min_tuple = None if min_clean == "-" else self._parse_id(min_clean)
+        max_tuple = None if max_clean == "+" else self._parse_id(max_clean)
+
+        matched: list[tuple[str, dict[str, str]]] = []
+        for eid, flds in entries:
+            eid_tuple = self._parse_id(eid)
+            if min_tuple is not None:
+                if min_exclusive and eid_tuple <= min_tuple:
+                    continue
+                if not min_exclusive and eid_tuple < min_tuple:
+                    continue
+            if max_tuple is not None:
+                if max_exclusive and eid_tuple >= max_tuple:
+                    continue
+                if not max_exclusive and eid_tuple > max_tuple:
+                    continue
+            matched.append((eid, flds))
+        return matched
 
     async def xrevrange(
         self,
@@ -115,7 +184,8 @@ class InMemoryStreamsRedis:
         min: str = "-",
         count: int | None = None,
     ) -> list[tuple[str, dict[str, str]]]:
-        entries = list(reversed(self._streams.get(name, [])))
+        filtered = self._filter_range(self._streams.get(name, []), min_id=min, max_id=max)
+        entries = list(reversed(filtered))
         if count is not None:
             entries = entries[:count]
         return entries
@@ -127,7 +197,7 @@ class InMemoryStreamsRedis:
         max: str = "+",
         count: int | None = None,
     ) -> list[tuple[str, dict[str, str]]]:
-        entries = list(self._streams.get(name, []))
+        entries = self._filter_range(self._streams.get(name, []), min_id=min, max_id=max)
         if count is not None:
             entries = entries[:count]
         return entries

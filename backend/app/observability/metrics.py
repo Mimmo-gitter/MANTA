@@ -35,7 +35,6 @@ from redis.exceptions import RedisError, ResponseError
 from app.config import settings
 from app.outbox.consumer import DEFAULT_GROUP_NAME
 from app.outbox.relay import STREAM_KEY_PREFIX
-import app.webhooks.metrics  # noqa: F401 - ensure dropped_stale_event_total is registered
 from workers.retry import QUEUE_DELAYED
 from workers.worker import IN_FLIGHT_PREFIX, QUEUE_DEFAULT, QUEUE_HIGH
 
@@ -601,3 +600,7 @@ __all__ = [
     "webhook_ack_latency_instrumentation",
     "webhook_ack_latency_seconds",
 ]
+
+# Deferred side-effect import so `app.webhooks.router` (via `app.webhooks.__init__`) sees a
+# fully initialized `app.observability.metrics` module when imported first through verification.
+import app.webhooks.metrics  # noqa: E402, F401 - ensure dropped_stale_event_total is registered
