@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from app.config import Settings, settings
 from app.db.models.models import Project, Repository, TestResult, TestRun
-from app.db.session import get_tenant_db_context
+from app.db.session import async_engine, get_tenant_db_context
 from app.verification import (
     DEFAULT_SANDBOX_TIMEOUT_SECONDS,
     FORBIDDEN_SANDBOX_SYSCALLS,
@@ -659,7 +659,15 @@ async def test_postgres_rls_persists_test_run_passed_and_sandbox_timeout() -> No
         async with get_tenant_db_context(tenant_a) as session:
             u_res = await session.execute(
                 text(
-                    "SELECT user_id FROM provision_tenant(:name, :slug, :email, :admin_name, :tid)"
+                    """
+                    SELECT user_id FROM provision_tenant(
+                        p_name => :name,
+                        p_slug => :slug,
+                        p_admin_email => :email,
+                        p_admin_name => :admin_name,
+                        p_tenant_id => :tid
+                    )
+                    """
                 ),
                 {
                     "name": f"Sbx Tenant {tenant_a.hex[:6]}",
@@ -723,17 +731,22 @@ async def test_postgres_rls_persists_test_run_passed_and_sandbox_timeout() -> No
             ).first()
             assert cross_row is None
     finally:
-        async with probe_engine.begin() as conn:
-            await conn.execute(delete(TestResult).where(TestResult.tenant_id == tenant_a))
-            await conn.execute(delete(TestRun).where(TestRun.tenant_id == tenant_a))
-            await conn.execute(delete(Repository).where(Repository.tenant_id == tenant_a))
-            await conn.execute(delete(Project).where(Project.tenant_id == tenant_a))
-            await conn.execute(
-                text("DELETE FROM user_roles WHERE tenant_id = :tid"), {"tid": tenant_a}
-            )
-            await conn.execute(text("DELETE FROM users WHERE tenant_id = :tid"), {"tid": tenant_a})
-            await conn.execute(text("DELETE FROM tenants WHERE id = :tid"), {"tid": tenant_a})
-        await probe_engine.dispose()
+        try:
+            async with probe_engine.begin() as conn:
+                await conn.execute(delete(TestResult).where(TestResult.tenant_id == tenant_a))
+                await conn.execute(delete(TestRun).where(TestRun.tenant_id == tenant_a))
+                await conn.execute(delete(Repository).where(Repository.tenant_id == tenant_a))
+                await conn.execute(delete(Project).where(Project.tenant_id == tenant_a))
+                await conn.execute(
+                    text("DELETE FROM user_roles WHERE tenant_id = :tid"), {"tid": tenant_a}
+                )
+                await conn.execute(
+                    text("DELETE FROM users WHERE tenant_id = :tid"), {"tid": tenant_a}
+                )
+                await conn.execute(text("DELETE FROM tenants WHERE id = :tid"), {"tid": tenant_a})
+        finally:
+            await probe_engine.dispose()
+            await async_engine.dispose()
 
 
 # ==============================================================================
