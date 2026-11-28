@@ -20,6 +20,8 @@
     "src/lib/auth-tab-sync.ts",
     "src/lib/auth.ts",
     "src/lib/api-client.ts",
+    "src/types/tenant-settings.ts",
+    "src/lib/tenant-settings-api.ts",
     "src/app/env.js/route.ts",
     "tests/**/*.test.ts"
   ]

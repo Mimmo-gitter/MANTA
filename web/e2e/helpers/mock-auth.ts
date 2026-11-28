@@ -5,6 +5,7 @@ import type {
   ProjectItem,
   RepositoryItem,
 } from "../../src/types/project";
+import type { TenantSettingsResponse } from "../../src/types/tenant-settings";
 
 export interface MockMemberRow {
   id: string;
@@ -303,6 +304,39 @@ export async function mockAuthenticatedSession(
           limit: 50,
           offset: 0,
         });
+        return;
+      }
+      await route.fallback();
+    },
+  );
+
+  const isAdminSession = roles.some(
+    (r) => r.trim().toUpperCase() === "TENANT_ADMIN",
+  );
+  await page.route(
+    (url) => url.pathname === "/api/v1/tenants/settings",
+    async (route) => {
+      const method = route.request().method();
+      if (method === "OPTIONS") {
+        await fulfillCorsJson(route, 204);
+        return;
+      }
+      if (!isAdminSession) {
+        await fulfillCorsJson(route, 403, {
+          detail: "Forbidden: insufficient permissions",
+        });
+        return;
+      }
+      if (method === "GET") {
+        await fulfillCorsJson(
+          route,
+          200,
+          makeMockTenantSettings({
+            tenant_id: activeTenantId,
+            slug: defaultSlug,
+            name: activeTenantName,
+          }),
+        );
         return;
       }
       await route.fallback();
@@ -893,4 +927,247 @@ export async function setupStatefulProjectsApi(
   );
 
   return projects;
+}
+
+export function makeMockTenantSettings(
+  overrides: Partial<TenantSettingsResponse> = {},
+): TenantSettingsResponse {
+  const mode = overrides.ai_processing_mode ?? "cloud_zdr";
+  const isLocal = mode === "local_only";
+
+  return {
+    tenant_id: "11111111-1111-1111-1111-111111111111",
+    slug: "alpha-workspace",
+    name: "Alpha Workspace",
+    allowed_domain: "acme.com",
+    industry: "FinTech",
+    tier: "enterprise",
+    status: "active",
+    max_projects: 25,
+    ai_processing_mode: mode,
+    retention_days: 90,
+    active_embedding_dimensions: isLocal ? 384 : 1536,
+    active_embedding_model: isLocal
+      ? "bge-small-en-v1.5"
+      : "text-embedding-3-small",
+    active_llm_model: isLocal ? "llama3.1:8b" : "gpt-4o-mini",
+    reindexing: false,
+    reindex_status: "idle",
+    reindexed_count: 0,
+    reindex_total_count: 0,
+    reindex_job_id: null,
+    reindex_error: null,
+    updated_at: "2026-11-28T10:00:00Z",
+    ...overrides,
+  };
+}
+
+export interface StatefulTenantSettingsApiOptions {
+  currentRoles?: string[];
+  failLocalOnlyWithWanError?: boolean;
+  /**
+   * Optional sequence of reindex state snapshots served on subsequent GET
+   * requests after a mode switch (e.g., running -> completed).
+   */
+  reindexProgression?: Array<
+    Partial<
+      Pick<
+        TenantSettingsResponse,
+        | "reindexing"
+        | "reindex_status"
+        | "reindexed_count"
+        | "reindex_total_count"
+        | "reindex_error"
+      >
+    >
+  >;
+}
+
+/**
+ * Stateful in-memory GET/PATCH /api/v1/tenants/settings mock matching SCRUM-560
+ * semantics (RBAC 403, local_only WAN fail-closed 400, diff-only updates, and
+ * live re-index status progression across polling requests).
+ */
+export async function setupStatefulTenantSettingsApi(
+  page: Page,
+  initial: Partial<TenantSettingsResponse> = {},
+  options: StatefulTenantSettingsApiOptions = {},
+): Promise<{
+  getState: () => TenantSettingsResponse;
+  getPatchPayloads: () => Array<Record<string, unknown>>;
+  getGetCount: () => number;
+  setReindexState: (
+    next: Partial<
+      Pick<
+        TenantSettingsResponse,
+        | "reindexing"
+        | "reindex_status"
+        | "reindexed_count"
+        | "reindex_total_count"
+        | "reindex_job_id"
+        | "reindex_error"
+      >
+    >,
+  ) => void;
+}> {
+  let state = makeMockTenantSettings(initial);
+  const patchPayloads: Array<Record<string, unknown>> = [];
+  let getCount = 0;
+  let progressionCursor = -1;
+  let jobCounter = 1;
+
+  const isRoleAdmin = (options.currentRoles ?? ["TENANT_ADMIN"]).some(
+    (r) => r.trim().toUpperCase() === "TENANT_ADMIN",
+  );
+
+  await page.route(
+    (url) => url.pathname === "/api/v1/tenants/settings",
+    async (route) => {
+      const method = route.request().method();
+      if (method === "OPTIONS") {
+        await fulfillCorsJson(route, 204);
+        return;
+      }
+
+      if (!isRoleAdmin) {
+        await fulfillCorsJson(route, 403, {
+          detail: "Forbidden: insufficient permissions",
+        });
+        return;
+      }
+
+      if (method === "GET") {
+        getCount += 1;
+        if (
+          progressionCursor >= 0 &&
+          options.reindexProgression &&
+          progressionCursor < options.reindexProgression.length
+        ) {
+          state = {
+            ...state,
+            ...options.reindexProgression[progressionCursor],
+          };
+          progressionCursor += 1;
+        }
+        await fulfillCorsJson(route, 200, state);
+        return;
+      }
+
+      if (method === "PATCH") {
+        const body = (route.request().postDataJSON() ?? {}) as Record<
+          string,
+          unknown
+        >;
+        patchPayloads.push(body);
+
+        const allowedKeys = new Set([
+          "name",
+          "allowed_domain",
+          "industry",
+          "ai_processing_mode",
+          "retention_days",
+        ]);
+        for (const key of Object.keys(body)) {
+          if (!allowedKeys.has(key)) {
+            await fulfillCorsJson(route, 422, {
+              detail: `Extra inputs are not permitted: '${key}'`,
+            });
+            return;
+          }
+        }
+
+        if (
+          body.ai_processing_mode === "local_only" &&
+          options.failLocalOnlyWithWanError
+        ) {
+          await fulfillCorsJson(route, 400, {
+            detail:
+              "Outbound WAN endpoint 'api.openai.com' is strictly forbidden when ai_processing_mode='local_only'.",
+          });
+          return;
+        }
+
+        if (
+          body.retention_days !== undefined &&
+          (typeof body.retention_days !== "number" ||
+            !Number.isInteger(body.retention_days) ||
+            body.retention_days < 7 ||
+            body.retention_days > 3650)
+        ) {
+          await fulfillCorsJson(route, 422, {
+            detail: "retention_days must be an integer between 7 and 3650",
+          });
+          return;
+        }
+
+        const previousMode = state.ai_processing_mode;
+        const nextMode =
+          body.ai_processing_mode === "local_only" ||
+          body.ai_processing_mode === "cloud_zdr"
+            ? body.ai_processing_mode
+            : previousMode;
+        const modeChanged = nextMode !== previousMode;
+
+        state = {
+          ...state,
+          name: typeof body.name === "string" ? body.name.trim() : state.name,
+          allowed_domain:
+            "allowed_domain" in body
+              ? typeof body.allowed_domain === "string" &&
+                body.allowed_domain.trim()
+                ? body.allowed_domain.trim().toLowerCase().replace(/^@+/, "")
+                : null
+              : state.allowed_domain,
+          industry:
+            "industry" in body
+              ? typeof body.industry === "string" && body.industry.trim()
+                ? body.industry.trim()
+                : null
+              : state.industry,
+          retention_days:
+            typeof body.retention_days === "number"
+              ? body.retention_days
+              : state.retention_days,
+          ai_processing_mode: nextMode,
+          active_embedding_dimensions: nextMode === "local_only" ? 384 : 1536,
+          active_embedding_model:
+            nextMode === "local_only"
+              ? "bge-small-en-v1.5"
+              : "text-embedding-3-small",
+          active_llm_model:
+            nextMode === "local_only" ? "llama3.1:8b" : "gpt-4o-mini",
+          updated_at: new Date().toISOString(),
+        };
+
+        if (modeChanged) {
+          state = {
+            ...state,
+            reindexing: true,
+            reindex_status: "queued",
+            reindexed_count: 0,
+            reindex_total_count: 0,
+            reindex_job_id: `reembed-job-${jobCounter++}`,
+            reindex_error: null,
+          };
+          if (options.reindexProgression && options.reindexProgression.length > 0) {
+            progressionCursor = 0;
+          }
+        }
+
+        await fulfillCorsJson(route, 200, state);
+        return;
+      }
+
+      await route.fallback();
+    },
+  );
+
+  return {
+    getState: () => state,
+    getPatchPayloads: () => patchPayloads,
+    getGetCount: () => getCount,
+    setReindexState: (next) => {
+      state = { ...state, ...next };
+    },
+  };
 }

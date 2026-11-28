@@ -1,12 +1,5 @@
-import { PlaceholderPage } from "@/components/ui/placeholder-page";
+import { WorkspaceSettingsView } from "@/components/workspace-settings/workspace-settings-view";
 
-export default function Page() {
-  return (
-    <PlaceholderPage
-      title="Workspace Settings"
-      section="ADMINISTRATION"
-      iconSrc="/icons/shell/e0670.svg"
-      description="Global tenant preferences, regional data residency, and workspace configuration. Coming soon."
-    />
-  );
+export default function WorkspaceSettingsPage() {
+  return <WorkspaceSettingsView />;
 }

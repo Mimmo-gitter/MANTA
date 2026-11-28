@@ -109,3 +109,62 @@ input[type="password"]::-ms-reveal {
   border-radius: 9999px !important;
   background: var(--wip-progress-color) !important;
 }
+
+.manta-reindex-progress {
+  appearance: none;
+  border: 0 solid;
+  overflow: clip;
+  border-radius: 9999px;
+  background: #152a40;
+  container-type: inline-size;
+  --manta-progress-fill: #38bdf8;
+  --manta-progress-indeterminate-duration: 1.5s;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .manta-reindex-progress {
+    --manta-progress-indeterminate-duration: 10s;
+  }
+}
+
+.manta-reindex-progress::-webkit-progress-bar {
+  background: transparent;
+}
+
+.manta-reindex-progress::-webkit-progress-value {
+  background: var(--manta-progress-fill);
+  border-radius: 9999px;
+  transition: inline-size 0.3s ease;
+  animation: var(--manta-progress-animation, revert-rule);
+}
+
+.manta-reindex-progress::-moz-progress-bar {
+  background: var(--manta-progress-fill);
+  border-radius: 9999px;
+  transition: inline-size 0.3s ease;
+  animation: var(--manta-progress-animation, revert-rule);
+}
+
+.manta-reindex-progress:indeterminate {
+  --manta-progress-animation: manta-progress-indeterminate
+    var(--manta-progress-indeterminate-duration) infinite linear;
+}
+
+.manta-reindex-progress:indeterminate:dir(rtl) {
+  --manta-progress-animation: manta-progress-indeterminate
+    var(--manta-progress-indeterminate-duration) infinite linear reverse;
+}
+
+@keyframes manta-progress-indeterminate {
+  from,
+  to {
+    inline-size: 32%;
+    margin-right: auto;
+  }
+  from {
+    translate: -100%;
+  }
+  to {
+    translate: 100cqi;
+  }
+}
