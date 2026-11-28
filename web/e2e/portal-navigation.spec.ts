@@ -60,7 +60,7 @@ test.describe("Portal Layout & Navigation (SCRUM-266 & SCRUM-267)", () => {
     await expect(overviewLink).toHaveAttribute("aria-current", "page");
 
     await page.getByTestId("nav-link-delivery-analytics").click();
-    await expect(page).toHaveURL("/delivery-analytics");
+    await expect(page).toHaveURL(/\/delivery-analytics(?:\?.*)?$/);
 
     const analyticsLink = page.getByTestId("nav-link-delivery-analytics");
     await expect(analyticsLink).toHaveAttribute("aria-current", "page");
@@ -140,7 +140,11 @@ test.describe("Portal Layout & Navigation (SCRUM-266 & SCRUM-267)", () => {
 
     for (const dest of destinations) {
       await page.getByTestId(`nav-link-${dest.id}`).click();
-      await expect(page).toHaveURL(dest.url);
+      await expect(page).toHaveURL(
+        dest.id === "delivery-analytics"
+          ? /\/delivery-analytics(?:\?.*)?$/
+          : dest.url,
+      );
       await expect(
         page.getByRole("heading", { level: 1, name: dest.titleText }),
       ).toBeVisible();

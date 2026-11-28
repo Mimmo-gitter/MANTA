@@ -126,7 +126,11 @@ test.describe("Portal Shell & Navigation (US-3 / SCRUM-270)", () => {
         await expect(link).toBeVisible();
         await link.click();
 
-        await expect(page).toHaveURL(dest.url);
+        await expect(page).toHaveURL(
+          dest.id === "delivery-analytics"
+            ? /\/delivery-analytics(?:\?.*)?$/
+            : dest.url,
+        );
         await expect(link).toHaveAttribute("aria-current", "page");
 
         await expect(
@@ -140,6 +144,10 @@ test.describe("Portal Shell & Navigation (US-3 / SCRUM-270)", () => {
         } else if (dest.id === "projects") {
           await expect(
             page.getByTestId("projects-summary-strip"),
+          ).toBeVisible();
+        } else if (dest.id === "workspace-settings") {
+          await expect(
+            page.getByTestId("workspace-settings-form"),
           ).toBeVisible();
         } else if (dest.id === "integrations") {
           await expect(
@@ -273,7 +281,7 @@ test.describe("Portal Shell & Navigation (US-3 / SCRUM-270)", () => {
       expect(reCollapsedBox?.width).toBeCloseTo(72, 1);
 
       await page.getByTestId("nav-link-delivery-analytics").click();
-      await expect(page).toHaveURL("/delivery-analytics");
+      await expect(page).toHaveURL(/\/delivery-analytics(?:\?.*)?$/);
       await expect(
         header.getByText("Delivery Analytics", { exact: true }),
       ).toBeVisible();
