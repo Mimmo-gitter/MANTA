@@ -1470,7 +1470,10 @@ class RefactoringSuggestion(Base):
 class TestRun(Base):
     __tablename__ = "test_runs"
 
-    __table_args__ = (Index("idx_test_runs_tenant_id", "tenant_id"),)
+    __table_args__ = (
+        Index("idx_test_runs_tenant_id", "tenant_id"),
+        Index("idx_test_runs_tenant_repo_created", "tenant_id", "repository_id", "created_at"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(
@@ -1486,6 +1489,12 @@ class TestRun(Base):
     run_index: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     status: Mapped[str] = mapped_column(String(32), default="PENDING", nullable=False)
     duration_ms: Mapped[Optional[int]] = mapped_column(Integer)
+    sandbox_runtime: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    sandbox_image_digest: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    exit_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
+    failure_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    failure_details: Mapped[Optional[Dict[str, Any]]] = mapped_column(JSONB, nullable=True)
+    completed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=datetime.utcnow, nullable=False
     )

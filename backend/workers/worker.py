@@ -985,6 +985,11 @@ async def dispatch_worker_job(parsed_payload: dict[str, Any]) -> Any:
 
             return await process_adr_generalize_job(parsed_payload)
 
+        if job_type == "verification.sandbox":
+            from app.verification.service import process_sandbox_verification_job
+
+            return await process_sandbox_verification_job(parsed_payload)
+
         if job_type == "webhook.process" or "event_id" in parsed_payload:
             from app.webhooks.processor import process_webhook_job
 
@@ -1044,6 +1049,15 @@ async def process_adr_generalize_arq(ctx: dict[str, Any], parsed_payload: dict[s
     return await process_adr_generalize_job(parsed_payload)
 
 
+async def process_sandbox_verification_arq(
+    ctx: dict[str, Any], parsed_payload: dict[str, Any]
+) -> Any:
+    """ARQ-compatible task wrapper delegating to process_sandbox_verification_job."""
+    from app.verification.service import process_sandbox_verification_job
+
+    return await process_sandbox_verification_job(parsed_payload)
+
+
 async def run_blocker_detector_arq(ctx: dict[str, Any]) -> dict[str, Any]:
     """ARQ scheduled 15-minute blocker detector cron/task entrypoint (TASK-307-1)."""
     from .blocker_detector import run_blocker_detector_cron
@@ -1082,6 +1096,7 @@ class WorkerSettings:
         process_scip_index_arq,
         process_adr_reembed_arq,
         process_adr_generalize_arq,
+        process_sandbox_verification_arq,
         run_blocker_detector_arq,
     ]
     cron_jobs: list[Any] = _build_default_cron_jobs()
@@ -1259,6 +1274,7 @@ __all__ = [
     "parse_lease_value",
     "process_adr_generalize_arq",
     "process_adr_reembed_arq",
+    "process_sandbox_verification_arq",
     "reclaim_expired_leases",
     "release_job_lease",
     "renew_job_lease",
